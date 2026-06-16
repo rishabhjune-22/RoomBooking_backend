@@ -1,0 +1,18 @@
+[Unit]
+Description=Room Booking Celery Worker
+After=network.target mysql.service redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=roombooking
+Group=roombooking
+WorkingDirectory=/opt/room-booking
+EnvironmentFile=/opt/room-booking/.env
+ExecStart=/opt/room-booking/venv/bin/celery -A backend worker --loglevel=INFO --concurrency=1 --queues=celery
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
