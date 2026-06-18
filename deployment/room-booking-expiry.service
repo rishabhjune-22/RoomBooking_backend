@@ -1,0 +1,11 @@
+[Unit]
+Description=Expire completed room bookings
+After=mysql.service
+
+[Service]
+Type=oneshot
+User=roombooking
+Group=roombooking
+WorkingDirectory=/opt/room-booking
+EnvironmentFile=/opt/room-booking/.env
+ExecStart=/opt/room-booking/venv/bin/python manage.py expire_bookings

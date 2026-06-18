@@ -1,56 +1,57 @@
 from django.contrib import admin
-from .models import Booking, CancelledBooking
+from .models import Booking, BookingIdempotencyRecord
 
 
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    list_display = [
+    list_display = (
         "id",
         "room",
-        "created_by",
+        "visitor_name",
         "arrival_at",
         "departure_at",
         "status",
         "created_at",
-    ]
+    )
 
-    list_filter = [
+    list_filter = (
         "status",
+        "room",
         "arrival_at",
-        "departure_at",
-    ]
+        "created_at",
+    )
 
-    search_fields = [
-        "created_by__username",
+    search_fields = (
+        "visitor_name",
+        "visitor_mobile",
+        "visitor_email",
+        "requestee_name",
         "room__prefix",
         "room__number",
-    ]
+    )
 
-    readonly_fields = [
-        "created_at",
-    ]
-
-    ordering = ["-created_at"]
+    ordering = ("-created_at",)
 
 
-@admin.register(CancelledBooking)
-class CancelledBookingAdmin(admin.ModelAdmin):
-    list_display = [
+@admin.register(BookingIdempotencyRecord)
+class BookingIdempotencyRecordAdmin(admin.ModelAdmin):
+    list_display = (
         "id",
-        "room_name",
-        "cancelled_by",
-        "arrival_at",
-        "departure_at",
-        "cancelled_at",
-    ]
-
-    list_filter = [
-        "cancelled_at",
-    ]
-
-    search_fields = [
-        "room_name",
-        "cancelled_by__username",
-    ]
-
-    ordering = ["-cancelled_at"]
+        "action",
+        "key",
+        "booking_id",
+        "response_status",
+        "created_at",
+    )
+    list_filter = ("action", "response_status", "created_at")
+    search_fields = ("key", "booking_id")
+    readonly_fields = (
+        "action",
+        "key",
+        "request_hash",
+        "booking_id",
+        "response_status",
+        "response_body",
+        "created_at",
+        "updated_at",
+    )

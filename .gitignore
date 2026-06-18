@@ -1,6 +1,11 @@
 venv/
 __pycache__/
 *.pyc
+*.pem
+*service-account*.json
 db.sqlite3
 .env
+.env.*
+!.env.example
 .idea/
+roombooking-*.json

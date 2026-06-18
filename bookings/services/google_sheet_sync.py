@@ -1,8 +1,7 @@
 import os
 import logging
-from pathlib import Path
 from datetime import datetime, timedelta
-from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -15,21 +14,38 @@ from hostels.models import Room
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 logger = logging.getLogger(__name__)
 
-SERVICE_ACCOUNT_FILE = os.getenv(
-    "GOOGLE_SERVICE_ACCOUNT_FILE",
-    str(Path(settings.BASE_DIR) / "roombooking-495310-9d89fdc8522c.json"),
-)
-SPREADSHEET_ID = os.getenv(
-    "GOOGLE_SHEET_ID",
-    "1VmtE8W_mcfIq7OiikAQP8AY-t_3Dp2wHn0L1wrFwGlo",
-)
-
 SHEET_NAME = "Visitor Room"
 OCCUPANCY_SHEET_NAME = "Visitor Room"
 
 ROOM_HEADER_ROW = 4
 DATE_COLUMN = "A"
 DATA_START_ROW = 5
+
+
+def get_google_sheet_settings():
+    service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
+    missing_settings = [
+        name
+        for name, value in [
+            ("GOOGLE_SERVICE_ACCOUNT_FILE", service_account_file),
+            ("GOOGLE_SHEET_ID", spreadsheet_id),
+        ]
+        if not value
+    ]
+
+    if missing_settings:
+        raise ImproperlyConfigured(
+            "Google Sheet sync requires environment variable(s): "
+            + ", ".join(missing_settings)
+        )
+
+    return service_account_file, spreadsheet_id
+
+
+def get_spreadsheet_id():
+    _, spreadsheet_id = get_google_sheet_settings()
+    return spreadsheet_id
 
 
 def quote_sheet_name(name):
@@ -41,8 +57,9 @@ def sheet_range(sheet_name, cell_range):
 
 
 def get_sheet_service():
+    service_account_file, _ = get_google_sheet_settings()
     creds = Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
+        service_account_file,
         scopes=SCOPES,
     )
     return build("sheets", "v4", credentials=creds)
@@ -50,7 +67,7 @@ def get_sheet_service():
 
 def list_sheet_names():
     service = get_sheet_service()
-    result = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    result = service.spreadsheets().get(spreadsheetId=get_spreadsheet_id()).execute()
 
     for sheet in result["sheets"]:
         logger.info("Google Sheet tab: %s", sheet["properties"]["title"])
@@ -107,7 +124,7 @@ def get_booking_instance(booking_or_id):
 
 def write_sync_result(service, row_number, error_message="", status_message=""):
     service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
+        spreadsheetId=get_spreadsheet_id(),
         range=sheet_range(SHEET_NAME, f"V{row_number}:W{row_number}"),
         valueInputOption="USER_ENTERED",
         body={"values": [[error_message, status_message]]},
@@ -238,7 +255,7 @@ def debug_sheet_headers():
     service = get_sheet_service()
 
     result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
+        spreadsheetId=get_spreadsheet_id(),
         range=sheet_range(OCCUPANCY_SHEET_NAME, "A1:ZZ4"),
     ).execute()
 
@@ -259,7 +276,7 @@ def debug_sheet_headers():
 
 def build_room_column_map(service):
     header_result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
+        spreadsheetId=get_spreadsheet_id(),
         range=sheet_range(OCCUPANCY_SHEET_NAME, f"A1:ZZ{ROOM_HEADER_ROW}"),
     ).execute()
 
@@ -311,7 +328,7 @@ def build_room_column_map(service):
 
 def build_date_row_map(service):
     date_result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
+        spreadsheetId=get_spreadsheet_id(),
         range=sheet_range(OCCUPANCY_SHEET_NAME, f"{DATE_COLUMN}{DATA_START_ROW}:{DATE_COLUMN}"),
         valueRenderOption="FORMATTED_VALUE",
     ).execute()
@@ -355,9 +372,8 @@ def append_name_to_existing_value(existing_value, display_name):
 
     return existing_value + ", " + display_name
 
-
 def build_booking_cell_values(room_column_map, date_row_map):
-    cell_values = {}
+    cell_bookings = {}
 
     bookings = (
         Booking.objects
@@ -386,12 +402,26 @@ def build_booking_cell_values(room_column_map, date_row_map):
                     OCCUPANCY_SHEET_NAME,
                     f"{col_letter}{row_number}",
                 )
-                cell_values[cell_range] = append_name_to_existing_value(
-                    cell_values.get(cell_range, ""),
-                    get_calendar_display_name(booking),
-                )
+
+                if cell_range not in cell_bookings:
+                    cell_bookings[cell_range] = {}
+
+                # Booking ID is the identity.
+                # Same booking edit replaces this value.
+                # Different booking appends separately.
+                cell_bookings[cell_range][booking.id] = get_calendar_display_name(booking)
 
             current_date += timedelta(days=1)
+
+    cell_values = {}
+
+    for cell_range, booking_map in cell_bookings.items():
+        names = [
+            name
+            for booking_id, name in sorted(booking_map.items())
+            if name
+        ]
+        cell_values[cell_range] = ", ".join(names)
 
     return cell_values
 
@@ -400,7 +430,7 @@ CALENDAR_CLEAR_RANGE = "B5:ZZ400"
 
 def clear_calendar_room_cells(service, room_column_map=None, date_row_map=None):
     service.spreadsheets().values().batchClear(
-        spreadsheetId=SPREADSHEET_ID,
+        spreadsheetId=get_spreadsheet_id(),
         body={
             "ranges": [
                 sheet_range(OCCUPANCY_SHEET_NAME, CALENDAR_CLEAR_RANGE)
@@ -437,7 +467,7 @@ def fill_visitor_names_in_calendar():
     if updates:
         logger.info("Writing Google Sheet calendar cells: %s", len(updates))
         service.spreadsheets().values().batchUpdate(
-            spreadsheetId=SPREADSHEET_ID,
+            spreadsheetId=get_spreadsheet_id(),
             body={
                 "valueInputOption": "USER_ENTERED",
                 "data": updates,

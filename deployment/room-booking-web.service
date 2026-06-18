@@ -1,0 +1,17 @@
+[Unit]
+Description=Room Booking Django API
+After=network.target mysql.service
+
+[Service]
+Type=notify
+User=roombooking
+Group=roombooking
+WorkingDirectory=/opt/room-booking
+EnvironmentFile=/opt/room-booking/.env
+ExecStart=/opt/room-booking/venv/bin/gunicorn -c gunicorn.conf.py backend.wsgi:application
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
