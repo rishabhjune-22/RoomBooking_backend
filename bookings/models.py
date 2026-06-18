@@ -32,6 +32,16 @@ class Booking(models.Model):
         (VISITOR_CATEGORY_OTHER, "Other Guest"),
     ]
 
+    BUDGET_HEAD_INDIVIDUAL = "individual"
+    BUDGET_HEAD_INSTITUTE = "institute_head"
+    BUDGET_HEAD_PROJECT = "project_head"
+
+    BUDGET_HEAD_CHOICES = [
+        (BUDGET_HEAD_INDIVIDUAL, "Individual"),
+        (BUDGET_HEAD_INSTITUTE, "Institute Head"),
+        (BUDGET_HEAD_PROJECT, "Project Head"),
+    ]
+
 
     room = models.ForeignKey(
         Room,
@@ -57,11 +67,19 @@ class Booking(models.Model):
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")
 
-    requestee_name = models.CharField(max_length=100, blank=True, default="")
+    budget_head_type = models.CharField(
+        max_length=30,
+        choices=BUDGET_HEAD_CHOICES,
+        blank=True,
+        default="",
+    )
+    budget_head_value = models.CharField(max_length=100, blank=True, default="")
 
-    requestee_designation = models.CharField(max_length=100, blank=True, default="")
-    requestee_department = models.CharField(max_length=100, blank=True, default="")
-    requestee_mobile = models.CharField(max_length=20, blank=True, default="")
+    requestor_name = models.CharField(max_length=100, blank=True, default="")
+
+    requestor_designation = models.CharField(max_length=100, blank=True, default="")
+    requestor_department = models.CharField(max_length=100, blank=True, default="")
+    requestor_mobile = models.CharField(max_length=20, blank=True, default="")
 
     logistics_name = models.CharField(max_length=100, blank=True, default="")
     logistics_designation = models.CharField(max_length=100, blank=True, default="")
@@ -78,9 +96,8 @@ class Booking(models.Model):
     attender_count_per_day = models.PositiveIntegerField(default=0)
 
     attender_general_shift = models.BooleanField(default=False)  # 9 AM - 5 PM
-    attender_morning_shift = models.BooleanField(default=False)  # 6 AM - 2 PM
-    attender_day_shift = models.BooleanField(default=False)      # 2 PM - 10 PM
-    attender_night_shift = models.BooleanField(default=False)    # 10 PM - 6 AM
+    attender_morning_shift = models.BooleanField(default=False)  # 7 AM - 3 PM
+    attender_day_shift = models.BooleanField(default=False)      # 3 PM - 11 PM
 
     room_charges_status = models.CharField(
         max_length=20,

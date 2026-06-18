@@ -7,4 +7,5 @@ google-auth==2.50.0
 gunicorn==23.0.0
 mysqlclient==2.2.8
 redis==7.1.0
+sentry-sdk>=2.0,<3.0
 sqlparse==0.5.5

@@ -173,6 +173,102 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertEqual(first.json(), second.json())
         self.assertFalse(Booking.objects.filter(pk=booking.pk).exists())
 
+    def test_create_accepts_requestor_fields(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+                requestor_name="Requestor One",
+                requestor_designation="Assistant Registrar",
+                requestor_department="Administration",
+                requestor_mobile="9876543211",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.requestor_name, "Requestor One")
+        self.assertEqual(booking.requestor_designation, "Assistant Registrar")
+        self.assertEqual(booking.requestor_department, "Administration")
+        self.assertEqual(booking.requestor_mobile, "9876543211")
+
+        detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail.json()["data"]["requestor_name"], "Requestor One")
+
+    def test_create_rejects_invalid_mobile_numbers(self):
+        invalid_cases = {
+            "visitor_mobile": "123",
+            "requestor_mobile": "abc1234567",
+            "logistics_mobile": "1" * 16,
+        }
+
+        for field, value in invalid_cases.items():
+            with self.subTest(field=field):
+                response = self.client.post(
+                    reverse("booking-create"),
+                    data=self.valid_payload(
+                        room=self.room,
+                        arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                        departure_at=utc_dt(2026, 7, 1, 12, 0),
+                        **{field: value},
+                    ),
+                    content_type="application/json",
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertFalse(response.json()["success"])
+                self.assertIn(field, response.json()["errors"])
+
+    def test_create_accepts_budget_head_fields(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+                budget_head_type=Booking.BUDGET_HEAD_PROJECT,
+                budget_head_value="PRJ-2026-001",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.budget_head_type, Booking.BUDGET_HEAD_PROJECT)
+        self.assertEqual(booking.budget_head_value, "PRJ-2026-001")
+
+        detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail.json()["data"]["budget_head_type"], Booking.BUDGET_HEAD_PROJECT)
+        self.assertEqual(detail.json()["data"]["budget_head_value"], "PRJ-2026-001")
+
+    def test_create_accepts_updated_attender_shifts_without_night_shift(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+                attender_required=True,
+                attender_count_per_day=1,
+                attender_day_shift=True,
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertTrue(booking.attender_day_shift)
+
+        detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertTrue(detail.json()["data"]["attender_day_shift"])
+        self.assertNotIn("attender_night_shift", detail.json()["data"])
+
     def test_booking_list_filters_use_india_local_dates(self):
         booking = self.create_booking(
             self.room,
@@ -295,6 +391,19 @@ class BookingExpiryServiceTests(TestCase):
             Booking.STATUS_EXPIRED,
         )
         sync_mock.assert_called_once()
+
+
+class BackendOperationalTests(TestCase):
+    def test_health_check_returns_request_id_header(self):
+        response = self.client.get(
+            reverse("health-check"),
+            HTTP_X_REQUEST_ID="test-request-id",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["X-Request-ID"], "test-request-id")
+        self.assertTrue(response.json()["success"])
+        self.assertEqual(response.json()["data"]["database"], "ok")
 
 
 def utc_dt(year, month, day, hour, minute):

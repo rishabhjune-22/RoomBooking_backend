@@ -25,7 +25,8 @@ class BookingAdmin(admin.ModelAdmin):
         "visitor_name",
         "visitor_mobile",
         "visitor_email",
-        "requestee_name",
+        "budget_head_value",
+        "requestor_name",
         "room__prefix",
         "room__number",
     )

@@ -23,6 +23,7 @@ if ! getent passwd "${SERVICE_USER}" >/dev/null; then
 fi
 
 install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" "${INSTALL_DIR}"
+install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" /var/backups/room-booking
 
 rsync -a --delete \
     --exclude='.git/' \
@@ -46,12 +47,16 @@ DJANGO_DEBUG=false
 DJANGO_SECRET_KEY=${secret_key}
 DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost,${SERVER_IP}
 DJANGO_CSRF_TRUSTED_ORIGINS=
+DJANGO_ADMIN_ENABLED=false
+DJANGO_ADMIN_PATH=private-admin-console/
 DJANGO_SECURE_SSL_REDIRECT=false
 DJANGO_SESSION_COOKIE_SECURE=false
 DJANGO_CSRF_COOKIE_SECURE=false
 DJANGO_SECURE_HSTS_SECONDS=0
 DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=false
 DJANGO_SECURE_HSTS_PRELOAD=false
+DJANGO_LOG_LEVEL=INFO
+DJANGO_LOG_FORMAT=json
 
 DB_NAME=room_booking
 DB_USER=roomuser
@@ -67,6 +72,14 @@ CELERY_BROKER_URL=redis://127.0.0.1:6379/0
 CELERY_RESULT_BACKEND=
 CELERY_TASK_SOFT_TIME_LIMIT=240
 CELERY_TASK_TIME_LIMIT=300
+
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
+SENTRY_RELEASE=
+SENTRY_TRACES_SAMPLE_RATE=0
+
+BACKUP_DIR=/var/backups/room-booking
+BACKUP_RETENTION_DAYS=14
 EOF
 fi
 
@@ -84,12 +97,16 @@ install -m 644 "${INSTALL_DIR}/deployment/room-booking-web.service" /etc/systemd
 install -m 644 "${INSTALL_DIR}/deployment/room-booking-celery.service" /etc/systemd/system/
 install -m 644 "${INSTALL_DIR}/deployment/room-booking-expiry.service" /etc/systemd/system/
 install -m 644 "${INSTALL_DIR}/deployment/room-booking-expiry.timer" /etc/systemd/system/
+install -m 644 "${INSTALL_DIR}/deployment/room-booking-backup.service" /etc/systemd/system/
+install -m 644 "${INSTALL_DIR}/deployment/room-booking-backup.timer" /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable --now room-booking-web.service
 systemctl enable --now room-booking-celery.service
 systemctl enable --now room-booking-expiry.timer
+systemctl enable --now room-booking-backup.timer
 
 systemctl --no-pager --full status room-booking-web.service
 systemctl --no-pager --full status room-booking-celery.service
 systemctl --no-pager --full status room-booking-expiry.timer
+systemctl --no-pager --full status room-booking-backup.timer

@@ -1,4 +1,5 @@
 from datetime import time
+import re
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -7,6 +8,10 @@ from .constants import COOLING_PERIOD
 from .models import Booking
 
 from zoneinfo import ZoneInfo
+
+
+PHONE_ALLOWED_RE = re.compile(r"^\+?[0-9][0-9\s().-]*$")
+PHONE_DIGIT_RE = re.compile(r"\d")
 
 class BookingSerializer(serializers.ModelSerializer):
     room_name = serializers.SerializerMethodField()
@@ -25,20 +30,21 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_email",
             "purpose_of_visit",
             "visitor_category",
+            "budget_head_type",
+            "budget_head_value",
 "attender_required",
 "attender_count_per_day",
 "attender_general_shift",
 "attender_morning_shift",
 "attender_day_shift",
-"attender_night_shift",
             "room_charges_status",
             "attender_charges_status",
             "room_charges_amount",
             "attender_charges_amount",
-            "requestee_name",
-            "requestee_designation",
-            "requestee_department",
-            "requestee_mobile",
+            "requestor_name",
+            "requestor_designation",
+            "requestor_department",
+            "requestor_mobile",
             "created_by_name",
 
             "logistics_name",
@@ -80,6 +86,8 @@ class BookingSerializer(serializers.ModelSerializer):
         "allow_blank": True
     },
 "visitor_category": {"required": False, "allow_blank": True},
+            "budget_head_type": {"required": False, "allow_blank": True},
+            "budget_head_value": {"required": False, "allow_blank": True},
             "room_charges_status": {"required": False},
             "attender_charges_status": {"required": False},
             "room_charges_amount": {"required": False},
@@ -91,10 +99,10 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_mobile": {"required": False, "allow_blank": True},
             "visitor_email": {"required": False, "allow_blank": True},
             "purpose_of_visit": {"required": False, "allow_blank": True},
-            "requestee_name": {"required": False, "allow_blank": True},
-            "requestee_designation": {"required": False, "allow_blank": True},
-            "requestee_department": {"required": False, "allow_blank": True},
-            "requestee_mobile": {"required": False, "allow_blank": True},
+            "requestor_name": {"required": False, "allow_blank": True},
+            "requestor_designation": {"required": False, "allow_blank": True},
+            "requestor_department": {"required": False, "allow_blank": True},
+            "requestor_mobile": {"required": False, "allow_blank": True},
             "logistics_name": {"required": False, "allow_blank": True},
             "logistics_designation": {"required": False, "allow_blank": True},
             "logistics_mobile": {"required": False, "allow_blank": True},
@@ -112,6 +120,31 @@ class BookingSerializer(serializers.ModelSerializer):
         if value is None:
             return ""
         return value.strip()
+
+    def validate_visitor_mobile(self, value):
+        return self.validate_optional_mobile(value, "Visitor mobile")
+
+    def validate_requestor_mobile(self, value):
+        return self.validate_optional_mobile(value, "Requestor mobile")
+
+    def validate_logistics_mobile(self, value):
+        return self.validate_optional_mobile(value, "Logistics mobile")
+
+    def validate_optional_mobile(self, value, label):
+        if value is None:
+            return ""
+
+        mobile = value.strip()
+        if not mobile:
+            return ""
+
+        digits = PHONE_DIGIT_RE.findall(mobile)
+        if not PHONE_ALLOWED_RE.fullmatch(mobile) or not 7 <= len(digits) <= 15:
+            raise serializers.ValidationError(
+                f"{label} must contain 7 to 15 digits and may only include +, spaces, hyphens, dots or parentheses."
+            )
+
+        return mobile
 
     def validate(self, attrs):
         instance = self.instance
@@ -189,11 +222,6 @@ class BookingSerializer(serializers.ModelSerializer):
             getattr(instance, "attender_day_shift", False)
         )
 
-        night_shift = attrs.get(
-            "attender_night_shift",
-            getattr(instance, "attender_night_shift", False)
-        )
-
         if attender_required and attender_count <= 0:
             raise serializers.ValidationError({
                 "attender_count_per_day": [
@@ -205,7 +233,6 @@ class BookingSerializer(serializers.ModelSerializer):
             general_shift,
             morning_shift,
             day_shift,
-            night_shift,
         ]):
             raise serializers.ValidationError({
                 "attender_shift": [
@@ -218,7 +245,6 @@ class BookingSerializer(serializers.ModelSerializer):
             attrs["attender_general_shift"] = False
             attrs["attender_morning_shift"] = False
             attrs["attender_day_shift"] = False
-            attrs["attender_night_shift"] = False
 
     def set_default_optional_fields(self, attrs):
         optional_fields = [
@@ -230,10 +256,12 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_mobile",
             "visitor_email",
             "purpose_of_visit",
-            "requestee_name",
-            "requestee_designation",
-            "requestee_department",
-            "requestee_mobile",
+            "budget_head_type",
+            "budget_head_value",
+            "requestor_name",
+            "requestor_designation",
+            "requestor_department",
+            "requestor_mobile",
             "logistics_name",
             "logistics_designation",
             "logistics_mobile",

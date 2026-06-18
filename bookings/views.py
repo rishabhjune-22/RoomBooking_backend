@@ -262,9 +262,12 @@ class BookingCreateView(CreateAPIView):
             booking_id=booking.id,
         )
         logger.info(
-            "booking_created booking_id=%s room_id=%s",
-            booking.id,
-            booking.room_id,
+            "booking_created",
+            extra={
+                "event": "booking_created",
+                "booking_id": booking.id,
+                "room_id": booking.room_id,
+            },
         )
 
         return api_success(
@@ -368,9 +371,12 @@ class BookingUpdateView(UpdateAPIView):
         serializer.is_valid(raise_exception=True)
         booking = serializer.save()
         logger.info(
-            "booking_updated booking_id=%s room_id=%s",
-            booking.id,
-            booking.room_id,
+            "booking_updated",
+            extra={
+                "event": "booking_updated",
+                "booking_id": booking.id,
+                "room_id": booking.room_id,
+            },
         )
 
         return api_success(
@@ -400,10 +406,13 @@ class BookingDeleteView(APIView):
 
         booking_id = booking.id
         logger.info(
-            "booking_deleted booking_id=%s room_id=%s visitor_name=%s",
-            booking.id,
-            booking.room_id,
-            booking.visitor_name,
+            "booking_deleted",
+            extra={
+                "event": "booking_deleted",
+                "booking_id": booking.id,
+                "room_id": booking.room_id,
+                "visitor_name": booking.visitor_name,
+            },
         )
         booking.delete()
         response_body = delete_response_body(booking_id)
@@ -568,7 +577,7 @@ class RoomAvailabilityDetailsView(APIView):
             "room_id",
             "visitor_name",
             "visitor_gender",
-            "requestee_name",
+            "requestor_name",
             "arrival_at",
             "departure_at",
             "status",
@@ -602,7 +611,7 @@ class RoomAvailabilityDetailsView(APIView):
                         "guest_name": booking.visitor_name,
                         "guest_gender": booking.visitor_gender,
 
-                        "requestee_name": booking.requestee_name,
+                        "requestor_name": booking.requestor_name,
 
                         "arrival_at": booking.arrival_at,
                         "departure_at": booking.departure_at,

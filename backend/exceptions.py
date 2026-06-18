@@ -1,6 +1,11 @@
+import logging
+
 from rest_framework.views import exception_handler
 
 from backend.responses import error_body
+
+
+logger = logging.getLogger(__name__)
 
 
 def custom_exception_handler(exc, context):
@@ -10,6 +15,17 @@ def custom_exception_handler(exc, context):
         return response
 
     normalized_errors = normalize_errors(response.data)
+    request = context.get("request")
+    logger.warning(
+        "api_request_rejected",
+        extra={
+            "method": getattr(request, "method", ""),
+            "path": getattr(request, "path", ""),
+            "status_code": response.status_code,
+            "view": context.get("view").__class__.__name__ if context.get("view") else "",
+            "error_message": get_first_error_message(normalized_errors),
+        },
+    )
 
     response.data = error_body(
         get_first_error_message(normalized_errors),
