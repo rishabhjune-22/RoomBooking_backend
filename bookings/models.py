@@ -74,6 +74,9 @@ class Booking(models.Model):
         default="",
     )
     budget_head_value = models.CharField(max_length=100, blank=True, default="")
+    budget_head_name = models.CharField(max_length=100, blank=True, default="")
+    budget_head_department_name = models.CharField(max_length=100, blank=True, default="")
+    budget_head_project_code = models.CharField(max_length=100, blank=True, default="")
 
     requestor_name = models.CharField(max_length=100, blank=True, default="")
 

@@ -232,6 +232,9 @@ class BookingApiBusinessRuleTests(TestCase):
                 departure_at=utc_dt(2026, 7, 1, 12, 0),
                 budget_head_type=Booking.BUDGET_HEAD_PROJECT,
                 budget_head_value="PRJ-2026-001",
+                budget_head_name="Project Travel",
+                budget_head_department_name="Computer Science",
+                budget_head_project_code="PRJ-2026-001",
             ),
             content_type="application/json",
         )
@@ -240,11 +243,20 @@ class BookingApiBusinessRuleTests(TestCase):
         booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
         self.assertEqual(booking.budget_head_type, Booking.BUDGET_HEAD_PROJECT)
         self.assertEqual(booking.budget_head_value, "PRJ-2026-001")
+        self.assertEqual(booking.budget_head_name, "Project Travel")
+        self.assertEqual(booking.budget_head_department_name, "Computer Science")
+        self.assertEqual(booking.budget_head_project_code, "PRJ-2026-001")
 
         detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
         self.assertEqual(detail.json()["data"]["budget_head_type"], Booking.BUDGET_HEAD_PROJECT)
         self.assertEqual(detail.json()["data"]["budget_head_value"], "PRJ-2026-001")
+        self.assertEqual(detail.json()["data"]["budget_head_name"], "Project Travel")
+        self.assertEqual(
+            detail.json()["data"]["budget_head_department_name"],
+            "Computer Science",
+        )
+        self.assertEqual(detail.json()["data"]["budget_head_project_code"], "PRJ-2026-001")
 
     def test_create_accepts_updated_attender_shifts_without_night_shift(self):
         response = self.client.post(

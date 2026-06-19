@@ -46,6 +46,9 @@ def action_response_body(message, booking):
             "room_id": booking.room.id,
             "room_name": str(booking.room),
             "status": booking.status,
+            "budget_head_name": booking.budget_head_name,
+            "budget_head_department_name": booking.budget_head_department_name,
+            "budget_head_project_code": booking.budget_head_project_code,
         },
     }
 
