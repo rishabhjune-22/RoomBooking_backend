@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .constants import COOLING_PERIOD
-from .models import Booking
+from .models import Booking, BookingEditHistory
 
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ PHONE_DIGIT_RE = re.compile(r"\d")
 
 class BookingSerializer(serializers.ModelSerializer):
     room_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -58,7 +59,7 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
 
         read_only_fields = [
-            "id", "room_name", "status", "created_at",
+            "id", "room_name", "status", "created_at", "created_by_name",
         ]
 
         extra_kwargs = {
@@ -73,21 +74,11 @@ class BookingSerializer(serializers.ModelSerializer):
         },
     },
 
-    "created_by_name": {
-        "required": False,
-        "allow_blank": True
-    },
-
-
 "visitor_gender": {
     "required": False,
     "allow_blank": True
 },
 
-               "created_by_name": {
-        "required": False,
-        "allow_blank": True
-    },
 "visitor_category": {"required": False, "allow_blank": True},
             "budget_head_type": {"required": False, "allow_blank": True},
             "budget_head_value": {"required": False, "allow_blank": True},
@@ -116,6 +107,14 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def get_room_name(self, obj):
         return str(obj.room)
+
+    def get_created_by_name(self, obj):
+        user = getattr(obj, "created_by", None)
+        if user:
+            full_name = user.get_full_name().strip()
+            return full_name or user.email or user.username
+
+        return obj.created_by_name or ""
 
     def validate_visitor_name(self, value):
         if not value or not value.strip():
@@ -168,7 +167,8 @@ class BookingSerializer(serializers.ModelSerializer):
                 {"departure_at": ["Departure datetime must be after arrival datetime."]}
             )
 
-        self.set_default_optional_fields(attrs)
+        if instance is None or not self.partial:
+            self.set_default_optional_fields(attrs)
         self.validate_attender_fields(attrs)
         self.validate_charge_fields(attrs)
         self.validate_room_conflict(room, arrival_at, departure_at, instance)
@@ -254,8 +254,6 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def set_default_optional_fields(self, attrs):
         optional_fields = [
-                "created_by_name",
-
             "visitor_designation",
             "visitor_organisation",
             "visitor_address",
@@ -462,3 +460,27 @@ class AvailableRoomsByDateRangeQuerySerializer(serializers.Serializer):
             )
 
         return attrs
+
+
+class BookingEditHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingEditHistory
+        fields = [
+            "id",
+            "edited_by_name",
+            "edited_by_email",
+            "field_name",
+            "field_label",
+            "old_value",
+            "new_value",
+            "edited_at",
+        ]
+        read_only_fields = fields
+
+
+class BookingDetailSerializer(BookingSerializer):
+    edit_history = BookingEditHistorySerializer(many=True, read_only=True)
+
+    class Meta(BookingSerializer.Meta):
+        fields = BookingSerializer.Meta.fields + ["edit_history"]
+        read_only_fields = BookingSerializer.Meta.read_only_fields + ["edit_history"]

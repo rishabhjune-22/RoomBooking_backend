@@ -1,5 +1,6 @@
 import calendar
 import logging
+from decimal import Decimal
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from django.db import transaction
@@ -9,7 +10,7 @@ from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.generics import CreateAPIView, ListAPIView, RetrieveAPIView, UpdateAPIView
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
@@ -18,10 +19,11 @@ from hostels.models import Room
 
 from .constants import COOLING_PERIOD
 from .idempotency import begin_idempotent_request, complete_idempotent_request
-from .models import Booking, BookingIdempotencyRecord
+from .models import Booking, BookingEditHistory, BookingIdempotencyRecord
 from .serializers import (
     AvailableRoomsByDateQuerySerializer,
     AvailableRoomsByDateRangeQuerySerializer,
+    BookingDetailSerializer,
     BookingListQuerySerializer,
     BookingSerializer,
     RoomAvailabilityCalendarQuerySerializer,
@@ -31,6 +33,43 @@ from .serializers import (
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 logger = logging.getLogger(__name__)
+
+
+AUDITED_BOOKING_FIELDS = [
+    ("room", "Room"),
+    ("arrival_at", "Arrival"),
+    ("departure_at", "Departure"),
+    ("visitor_name", "Visitor Name"),
+    ("visitor_designation", "Visitor Designation"),
+    ("visitor_organisation", "Visitor Organisation"),
+    ("visitor_gender", "Visitor Gender"),
+    ("visitor_address", "Visitor Address"),
+    ("visitor_mobile", "Visitor Mobile"),
+    ("visitor_email", "Visitor Email"),
+    ("visitor_category", "Visitor Category"),
+    ("purpose_of_visit", "Purpose of Visit"),
+    ("budget_head_type", "Budget Head Type"),
+    ("budget_head_value", "Budget Head Value"),
+    ("budget_head_name", "Budget Head Name"),
+    ("budget_head_department_name", "Budget Head Department Name"),
+    ("budget_head_project_code", "Budget Head Project Code"),
+    ("requestor_name", "Requestor Name"),
+    ("requestor_designation", "Requestor Designation"),
+    ("requestor_department", "Requestor Department"),
+    ("requestor_mobile", "Requestor Mobile"),
+    ("logistics_name", "Logistics Name"),
+    ("logistics_designation", "Logistics Designation"),
+    ("logistics_mobile", "Logistics Mobile"),
+    ("attender_required", "Attender Required"),
+    ("attender_count_per_day", "Attender Count Per Day"),
+    ("attender_general_shift", "Attender General Shift"),
+    ("attender_morning_shift", "Attender Morning Shift"),
+    ("attender_day_shift", "Attender Day Shift"),
+    ("room_charges_status", "Room Charges Status"),
+    ("attender_charges_status", "Attender Charges Status"),
+    ("room_charges_amount", "Room Charges Amount"),
+    ("attender_charges_amount", "Attender Charges Amount"),
+]
 
 
 def invalid_query_params_response(serializer):
@@ -61,6 +100,79 @@ def delete_response_body(booking_id):
             "booking_id": booking_id,
         },
     }
+
+
+def get_user_display_name(user):
+    full_name = user.get_full_name().strip()
+    return full_name or user.email or user.username
+
+
+def get_user_email(user):
+    return user.email or ""
+
+
+def snapshot_booking_audit_values(booking):
+    return {
+        field_name: format_audit_value(booking, field_name)
+        for field_name, _ in AUDITED_BOOKING_FIELDS
+    }
+
+
+def format_audit_value(booking, field_name):
+    if field_name == "room":
+        room = getattr(booking, "room", None)
+        return str(room) if room else ""
+
+    value = getattr(booking, field_name, None)
+
+    if isinstance(value, datetime):
+        return timezone.localtime(value, INDIA_TZ).isoformat()
+
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+
+    display_method = getattr(booking, f"get_{field_name}_display", None)
+    if callable(display_method):
+        display_value = display_method()
+        if display_value:
+            return str(display_value).strip()
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def create_booking_edit_history(booking, old_values, user):
+    edited_by_name = get_user_display_name(user)
+    edited_by_email = get_user_email(user)
+    history_rows = []
+
+    for field_name, field_label in AUDITED_BOOKING_FIELDS:
+        old_value = old_values.get(field_name, "")
+        new_value = format_audit_value(booking, field_name)
+
+        if old_value == new_value:
+            continue
+
+        history_rows.append(BookingEditHistory(
+            booking=booking,
+            edited_by=user,
+            edited_by_name=edited_by_name,
+            edited_by_email=edited_by_email,
+            field_name=field_name,
+            field_label=field_label,
+            old_value=old_value,
+            new_value=new_value,
+        ))
+
+    if history_rows:
+        BookingEditHistory.objects.bulk_create(history_rows)
+
+    return len(history_rows)
 
 
 def get_local_date_bounds(selected_date):
@@ -239,7 +351,7 @@ def lock_rooms_for_booking_write(*room_ids):
 class BookingCreateView(CreateAPIView):
     queryset = Booking.objects.select_related("room").all()
     serializer_class = BookingSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_mutation"
 
@@ -256,7 +368,10 @@ class BookingCreateView(CreateAPIView):
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        booking = serializer.save()
+        booking = serializer.save(
+            created_by=request.user,
+            created_by_name=get_user_display_name(request.user),
+        )
         response_body = action_response_body("Booking created successfully", booking)
         complete_idempotent_request(
             idempotency.record,
@@ -282,7 +397,7 @@ class BookingCreateView(CreateAPIView):
 
 class BookingListView(ListAPIView):
     serializer_class = BookingSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_read"
 
@@ -305,7 +420,7 @@ class BookingListView(ListAPIView):
     def get_queryset(self):
         queryset = (
             Booking.objects
-            .select_related("room")
+            .select_related("room", "created_by")
             .all()
             .order_by("-created_at")
         )
@@ -334,9 +449,14 @@ class BookingListView(ListAPIView):
 
 
 class BookingDetailView(RetrieveAPIView):
-    queryset = Booking.objects.select_related("room").all()
-    serializer_class = BookingSerializer
-    permission_classes = [AllowAny]
+    queryset = (
+        Booking.objects
+        .select_related("room", "created_by")
+        .prefetch_related("edit_history")
+        .all()
+    )
+    serializer_class = BookingDetailSerializer
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_read"
 
@@ -351,9 +471,9 @@ class BookingDetailView(RetrieveAPIView):
 
 
 class BookingUpdateView(UpdateAPIView):
-    queryset = Booking.objects.select_related("room").all()
+    queryset = Booking.objects.select_related("room", "created_by").all()
     serializer_class = BookingSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_mutation"
 
@@ -361,7 +481,7 @@ class BookingUpdateView(UpdateAPIView):
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = get_object_or_404(
-            Booking.objects.select_for_update().select_related("room"),
+            Booking.objects.select_for_update().select_related("room", "created_by"),
             pk=kwargs.get("pk"),
         )
 
@@ -370,15 +490,23 @@ class BookingUpdateView(UpdateAPIView):
             request.data.get("room"),
         )
 
+        old_values = snapshot_booking_audit_values(instance)
+
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         booking = serializer.save()
+        changed_field_count = create_booking_edit_history(
+            booking,
+            old_values,
+            request.user,
+        )
         logger.info(
             "booking_updated",
             extra={
                 "event": "booking_updated",
                 "booking_id": booking.id,
                 "room_id": booking.room_id,
+                "changed_field_count": changed_field_count,
             },
         )
 
@@ -388,7 +516,7 @@ class BookingUpdateView(UpdateAPIView):
         )
 
 class BookingDeleteView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_mutation"
 
@@ -436,7 +564,7 @@ class BookingDeleteView(APIView):
 
 
 class RoomAvailabilityCalendarView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -538,7 +666,7 @@ class RoomAvailabilityCalendarView(APIView):
         )
 
 class RoomAvailabilityDetailsView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -634,7 +762,7 @@ class RoomAvailabilityDetailsView(APIView):
         )
 
 class AvailableRoomsByDateView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -704,7 +832,7 @@ class AvailableRoomsByDateView(APIView):
 
 
 class AvailableRoomsByDateRangeView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 

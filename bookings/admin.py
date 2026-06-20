@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Booking, BookingIdempotencyRecord
+from .models import Booking, BookingEditHistory, BookingIdempotencyRecord
 
 
 @admin.register(Booking)
@@ -59,3 +59,38 @@ class BookingIdempotencyRecordAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
+
+
+@admin.register(BookingEditHistory)
+class BookingEditHistoryAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "booking",
+        "field_label",
+        "edited_by_name",
+        "edited_by_email",
+        "edited_at",
+    )
+    list_filter = ("field_name", "edited_at")
+    search_fields = (
+        "booking__visitor_name",
+        "booking__room__prefix",
+        "booking__room__number",
+        "edited_by_name",
+        "edited_by_email",
+        "field_label",
+        "old_value",
+        "new_value",
+    )
+    readonly_fields = (
+        "booking",
+        "edited_by",
+        "edited_by_name",
+        "edited_by_email",
+        "field_name",
+        "field_label",
+        "old_value",
+        "new_value",
+        "edited_at",
+    )
+    ordering = ("-edited_at", "-id")

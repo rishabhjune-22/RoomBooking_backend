@@ -3,18 +3,34 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from django.core.cache import cache
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from hostels.models import Room
 
-from .models import Booking
+from .models import Booking, BookingEditHistory
 from .services.expiry_service import expire_due_bookings
 
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
+User = get_user_model()
+
+
+def create_user(email="rishabh@example.com", name="Rishabh Kumar"):
+    return User.objects.create_user(
+        username=email,
+        email=email,
+        password="StrongPass123",
+        first_name=name,
+    )
+
+
+def bearer_token(user):
+    return f"Bearer {RefreshToken.for_user(user).access_token}"
 
 
 class BookingApiBusinessRuleTests(TestCase):
@@ -25,6 +41,8 @@ class BookingApiBusinessRuleTests(TestCase):
 
         self.room = Room.objects.create(prefix="Beta", number="101", hostel_name="Palma")
         self.other_room = Room.objects.create(prefix="Beta", number="102", hostel_name="Palma")
+        self.user = create_user()
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.user)
 
     def test_create_rejects_overlapping_booking_for_same_room(self):
         self.create_booking(
@@ -257,6 +275,252 @@ class BookingApiBusinessRuleTests(TestCase):
             "Computer Science",
         )
         self.assertEqual(detail.json()["data"]["budget_head_project_code"], "PRJ-2026-001")
+
+    def test_create_booking_uses_logged_in_user_as_created_by(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.created_by, self.user)
+        self.assertEqual(booking.created_by_name, "Rishabh Kumar")
+
+    def test_old_created_by_name_from_request_is_ignored(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+                created_by_name="Legacy Client Name",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.created_by_name, "Rishabh Kumar")
+
+    def test_booking_detail_includes_created_by_name_and_empty_edit_history(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            created_by=self.user,
+            created_by_name="Stored Name",
+        )
+
+        response = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()["data"]
+        self.assertEqual(data["created_by_name"], "Rishabh Kumar")
+        self.assertIn("created_at", data)
+        self.assertEqual(data["edit_history"], [])
+
+    def test_booking_list_does_not_include_edit_history(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            created_by=self.user,
+        )
+        BookingEditHistory.objects.create(
+            booking=booking,
+            edited_by=self.user,
+            edited_by_name="Rishabh Kumar",
+            edited_by_email=self.user.email,
+            field_name="purpose_of_visit",
+            field_label="Purpose of Visit",
+            old_value="Old",
+            new_value="New",
+        )
+
+        response = self.client.get(reverse("booking-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result = response.json()["data"]["results"][0]
+        self.assertNotIn("edit_history", result)
+
+    def test_unauthenticated_edit_is_rejected(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+        )
+        self.client.defaults.pop("HTTP_AUTHORIZATION", None)
+
+        response = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={"purpose_of_visit": "Updated purpose"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(BookingEditHistory.objects.count(), 0)
+
+    def test_authenticated_edit_creates_one_history_row_for_one_field(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            purpose_of_visit="Old purpose",
+            created_by=self.user,
+        )
+
+        response = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={"purpose_of_visit": "New purpose"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        history = BookingEditHistory.objects.get(booking=booking)
+        self.assertEqual(history.edited_by, self.user)
+        self.assertEqual(history.edited_by_name, "Rishabh Kumar")
+        self.assertEqual(history.edited_by_email, self.user.email)
+        self.assertEqual(history.field_name, "purpose_of_visit")
+        self.assertEqual(history.field_label, "Purpose of Visit")
+        self.assertEqual(history.old_value, "Old purpose")
+        self.assertEqual(history.new_value, "New purpose")
+
+    def test_editing_multiple_fields_creates_multiple_history_rows(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            requestor_name="Old Requestor",
+            budget_head_project_code="OLD-001",
+        )
+
+        response = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={
+                "requestor_name": "New Requestor",
+                "budget_head_project_code": "NEW-002",
+                "departure_at": iso(utc_dt(2026, 7, 1, 13, 0)),
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        history_by_field = {
+            item.field_name: item
+            for item in BookingEditHistory.objects.filter(booking=booking)
+        }
+        self.assertEqual(
+            set(history_by_field),
+            {"requestor_name", "budget_head_project_code", "departure_at"},
+        )
+        self.assertEqual(history_by_field["requestor_name"].old_value, "Old Requestor")
+        self.assertEqual(history_by_field["requestor_name"].new_value, "New Requestor")
+        self.assertEqual(
+            history_by_field["budget_head_project_code"].old_value,
+            "OLD-001",
+        )
+        self.assertEqual(
+            history_by_field["budget_head_project_code"].new_value,
+            "NEW-002",
+        )
+        self.assertIn("2026-07-01T18:30:00", history_by_field["departure_at"].new_value)
+
+    def test_unchanged_submitted_value_does_not_create_history_row(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            purpose_of_visit="Same purpose",
+        )
+
+        response = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={"purpose_of_visit": "Same purpose"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(BookingEditHistory.objects.filter(booking=booking).count(), 0)
+
+    def test_created_by_and_edited_by_from_client_are_ignored_on_edit(self):
+        other_user = create_user("other@example.com", "Other User")
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            purpose_of_visit="Old purpose",
+            created_by=self.user,
+            created_by_name="Rishabh Kumar",
+        )
+
+        response = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={
+                "purpose_of_visit": "Updated purpose",
+                "created_by_name": "Client Supplied Creator",
+                "edited_by": other_user.id,
+                "edited_by_name": "Client Supplied Editor",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking.refresh_from_db()
+        self.assertEqual(booking.created_by_name, "Rishabh Kumar")
+
+        history = BookingEditHistory.objects.get(booking=booking)
+        self.assertEqual(history.edited_by, self.user)
+        self.assertEqual(history.edited_by_name, "Rishabh Kumar")
+        self.assertEqual(history.edited_by_email, self.user.email)
+
+    def test_booking_detail_includes_edit_history_after_edit(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            purpose_of_visit="Old purpose",
+        )
+        self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={"purpose_of_visit": "New purpose"},
+            content_type="application/json",
+        )
+
+        response = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        history = response.json()["data"]["edit_history"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["edited_by_name"], "Rishabh Kumar")
+        self.assertEqual(history[0]["field_label"], "Purpose of Visit")
+        self.assertEqual(history[0]["old_value"], "Old purpose")
+        self.assertEqual(history[0]["new_value"], "New purpose")
+        self.assertIn("edited_at", history[0])
+
+    def test_bookings_endpoint_requires_authentication(self):
+        self.client.defaults.pop("HTTP_AUTHORIZATION", None)
+
+        response = self.client.get(reverse("booking-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_bookings_endpoint_accepts_authenticated_request(self):
+        response = self.client.get(reverse("booking-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_availability_endpoint_requires_authentication(self):
+        self.client.defaults.pop("HTTP_AUTHORIZATION", None)
+
+        response = self.client.get(reverse("room-availability"))
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_create_accepts_updated_attender_shifts_without_night_shift(self):
         response = self.client.post(

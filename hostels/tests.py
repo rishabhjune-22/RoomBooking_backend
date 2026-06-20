@@ -1,9 +1,14 @@
 from django.db import IntegrityError, transaction
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Room
+
+
+User = get_user_model()
 
 
 class RoomModelTests(TestCase):
@@ -17,6 +22,14 @@ class RoomModelTests(TestCase):
 class RoomListApiTests(TestCase):
     def setUp(self):
         Room.objects.all().delete()
+        user = User.objects.create_user(
+            username="rooms@example.com",
+            email="rooms@example.com",
+            password="StrongPass123",
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = (
+            f"Bearer {RefreshToken.for_user(user).access_token}"
+        )
         Room.objects.create(
             prefix="Gamma", number="202", hostel_name="Mainpat", has_attached_bath=True
         )

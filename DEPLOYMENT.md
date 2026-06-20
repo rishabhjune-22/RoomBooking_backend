@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.13
+- Python 3.12+
 - MySQL 8+
 - Redis 7+
 - A reverse proxy providing HTTPS
@@ -11,7 +11,7 @@
 ## Install
 
 ```bash
-python3.13 -m venv venv
+python3 -m venv venv
 ./venv/bin/pip install --requirement requirements.txt
 cp .env.example .env
 ./venv/bin/python manage.py migrate

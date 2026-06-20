@@ -77,7 +77,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
 
+    'accounts.apps.AccountsConfig',
     'hostels',
     'bookings.apps.BookingsConfig',
 ]
@@ -229,8 +231,12 @@ configure_sentry(DJANGO_ENVIRONMENT)
 REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "backend.exceptions.custom_exception_handler",
 
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
 
     "DEFAULT_THROTTLE_CLASSES": [

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from hostels.models import Room
 
@@ -118,6 +119,13 @@ class Booking(models.Model):
 
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_bookings",
+    )
     created_by_name = models.CharField(max_length=100, blank=True, default="")
     def __str__(self):
         return f"Booking #{self.id} - {self.room}"
@@ -126,6 +134,37 @@ class Booking(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["room", "status", "arrival_at", "departure_at"]),
+        ]
+
+
+class BookingEditHistory(models.Model):
+    booking = models.ForeignKey(
+        Booking,
+        related_name="edit_history",
+        on_delete=models.CASCADE,
+    )
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="booking_edits",
+    )
+    edited_by_name = models.CharField(max_length=255, blank=True, default="")
+    edited_by_email = models.EmailField(blank=True, default="")
+    field_name = models.CharField(max_length=100)
+    field_label = models.CharField(max_length=150)
+    old_value = models.TextField(blank=True, default="")
+    new_value = models.TextField(blank=True, default="")
+    edited_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.booking_id} {self.field_name} edited at {self.edited_at}"
+
+    class Meta:
+        ordering = ["-edited_at", "-id"]
+        indexes = [
+            models.Index(fields=["booking", "edited_at"]),
         ]
 
 
