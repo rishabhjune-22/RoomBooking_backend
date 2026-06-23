@@ -1,5 +1,10 @@
 from django.contrib import admin
-from .models import Booking, BookingEditHistory, BookingIdempotencyRecord
+from .models import (
+    Booking,
+    BookingEditHistory,
+    BookingIdempotencyRecord,
+    BookingRequest,
+)
 
 
 @admin.register(Booking)
@@ -94,3 +99,30 @@ class BookingEditHistoryAdmin(admin.ModelAdmin):
         "edited_at",
     )
     ordering = ("-edited_at", "-id")
+
+
+@admin.register(BookingRequest)
+class BookingRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "requester",
+        "status",
+        "preferred_prefix",
+        "preferred_room",
+        "arrival_at",
+        "departure_at",
+        "requested_at",
+        "reviewed_by",
+    )
+    list_filter = ("status", "preferred_prefix", "requested_at", "reviewed_at")
+    search_fields = (
+        "requester__email",
+        "requester__first_name",
+        "visitor_name",
+        "requestor_name",
+        "preferred_prefix",
+        "preferred_room__number",
+        "admin_remarks",
+    )
+    readonly_fields = ("requested_at", "reviewed_at", "reviewed_by", "approved_booking")
+    ordering = ("-requested_at",)

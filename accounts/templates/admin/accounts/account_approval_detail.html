@@ -1,0 +1,177 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{{ back_url }}">{{ title }}</a>
+  &rsaquo; {{ profile.user.email }}
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .approval-page {
+    max-width: 960px;
+  }
+  .approval-card {
+    background: var(--body-bg);
+    border: 1px solid var(--hairline-color);
+    border-radius: 8px;
+    padding: 24px;
+  }
+  .approval-grid {
+    display: grid;
+    gap: 14px 24px;
+    grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+    margin: 22px 0;
+  }
+  .approval-label {
+    color: var(--body-quiet-color);
+    font-weight: 600;
+  }
+  .approval-value {
+    overflow-wrap: anywhere;
+  }
+  .approval-actions {
+    border-top: 1px solid var(--hairline-color);
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+  .approval-actions textarea {
+    box-sizing: border-box;
+    display: block;
+    margin: 8px 0 16px;
+    max-width: 680px;
+    min-height: 110px;
+    width: 100%;
+  }
+  .approval-button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .approval-button {
+    border: 0;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    display: inline-block;
+    font-weight: 600;
+    padding: 10px 16px;
+    text-decoration: none;
+  }
+  .approval-accept {
+    background: #0f7b45;
+  }
+  .approval-reject {
+    background: #b3261e;
+  }
+  .approval-back {
+    background: var(--button-bg);
+  }
+  .status-pill {
+    border-radius: 999px;
+    display: inline-block;
+    font-weight: 600;
+    padding: 4px 9px;
+  }
+  .status-pending {
+    background: #fff4cc;
+    color: #6b4b00;
+  }
+  .status-approved {
+    background: #dff4e8;
+    color: #0f5132;
+  }
+  .status-rejected {
+    background: #fde1df;
+    color: #842029;
+  }
+</style>
+
+<div id="content-main" class="approval-page">
+  <div class="approval-card">
+    <h1>Account Details</h1>
+    <p>
+      Manage this {{ role }} account from the friendly workflow. Technical Django save controls are not used here.
+    </p>
+
+    <div class="approval-grid">
+      <div class="approval-label">Name</div>
+      <div class="approval-value">{{ profile.user.get_full_name|default:profile.user.email }}</div>
+
+      <div class="approval-label">Email</div>
+      <div class="approval-value">{{ profile.user.email }}</div>
+
+      <div class="approval-label">Role</div>
+      <div class="approval-value">{{ profile.get_role_display }}</div>
+
+      <div class="approval-label">Approval Status</div>
+      <div class="approval-value">
+        <span class="status-pill status-{{ profile.approval_status }}">
+          {{ profile.get_approval_status_display }}
+        </span>
+      </div>
+
+      <div class="approval-label">Department</div>
+      <div class="approval-value">{{ profile.department|default:"-" }}</div>
+
+      <div class="approval-label">Designation</div>
+      <div class="approval-value">{{ profile.designation|default:"-" }}</div>
+
+      <div class="approval-label">Mobile</div>
+      <div class="approval-value">{{ profile.mobile|default:"-" }}</div>
+
+      <div class="approval-label">Created At</div>
+      <div class="approval-value">{{ profile.created_at|date:"d M Y, h:i A" }}</div>
+
+      <div class="approval-label">Updated At</div>
+      <div class="approval-value">{{ profile.updated_at|date:"d M Y, h:i A" }}</div>
+
+      <div class="approval-label">Approved By</div>
+      <div class="approval-value">
+        {% if profile.approved_by %}
+        {{ profile.approved_by.get_full_name|default:profile.approved_by.email }}
+        {% else %}
+        -
+        {% endif %}
+      </div>
+
+      <div class="approval-label">Approved At</div>
+      <div class="approval-value">
+        {% if profile.approved_at %}{{ profile.approved_at|date:"d M Y, h:i A" }}{% else %}-{% endif %}
+      </div>
+
+      {% if profile.rejection_reason %}
+      <div class="approval-label">Remarks</div>
+      <div class="approval-value">{{ profile.rejection_reason }}</div>
+      {% endif %}
+    </div>
+
+    <form method="post" class="approval-actions">
+      {% csrf_token %}
+
+      {% if profile.approval_status == "pending" or profile.approval_status == "approved" %}
+      <label class="approval-label" for="remarks">Remarks, optional</label>
+      <textarea id="remarks" name="remarks" rows="4"></textarea>
+      <div class="approval-button-row">
+        {% if profile.approval_status == "pending" %}
+        <button class="approval-button approval-accept" type="submit" name="action" value="accept">Approve</button>
+        {% endif %}
+        <button class="approval-button approval-reject" type="submit" name="action" value="reject">Reject</button>
+        <a class="approval-button approval-back" href="{{ back_url }}">Back</a>
+      </div>
+      {% elif profile.approval_status == "rejected" %}
+      <div class="approval-button-row">
+        <button class="approval-button approval-accept" type="submit" name="action" value="accept">Approve Again</button>
+        <a class="approval-button approval-back" href="{{ back_url }}">Back</a>
+      </div>
+      {% else %}
+      <div class="approval-button-row">
+        <a class="approval-button approval-back" href="{{ back_url }}">Back</a>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

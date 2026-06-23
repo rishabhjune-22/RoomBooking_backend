@@ -10,9 +10,10 @@ from rest_framework import status
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from accounts.roles import APPROVAL_PENDING, ROLE_ADMIN, ROLE_REQUESTER, set_user_role
 from hostels.models import Room
 
-from .models import Booking, BookingEditHistory
+from .models import Booking, BookingEditHistory, BookingRequest
 from .services.expiry_service import expire_due_bookings
 
 
@@ -21,12 +22,25 @@ User = get_user_model()
 
 
 def create_user(email="rishabh@example.com", name="Rishabh Kumar"):
-    return User.objects.create_user(
+    user = User.objects.create_user(
         username=email,
         email=email,
         password="StrongPass123",
         first_name=name,
     )
+    set_user_role(user, ROLE_ADMIN)
+    return user
+
+
+def create_requester(email="requester@example.com", name="Requester One"):
+    user = User.objects.create_user(
+        username=email,
+        email=email,
+        password="StrongPass123",
+        first_name=name,
+    )
+    set_user_role(user, ROLE_REQUESTER)
+    return user
 
 
 def bearer_token(user):
@@ -667,6 +681,777 @@ class BookingExpiryServiceTests(TestCase):
             Booking.STATUS_EXPIRED,
         )
         sync_mock.assert_called_once()
+
+
+class BookingRequestWorkflowTests(TestCase):
+    def setUp(self):
+        self.signal_sync = patch("bookings.signals.request_calendar_sync", return_value=True)
+        self.signal_sync.start()
+        self.addCleanup(self.signal_sync.stop)
+
+        self.room = Room.objects.create(prefix="Delta", number="101", hostel_name="Main")
+        self.other_room = Room.objects.create(prefix="Delta", number="102", hostel_name="Main")
+        self.admin = create_user(email="admin@example.com", name="Admin One")
+        self.requester = create_requester()
+        self.other_requester = create_requester(
+            email="other-requester@example.com",
+            name="Requester Two",
+        )
+
+    def test_requester_cannot_access_admin_booking_apis(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        list_response = self.client.get(reverse("booking-list"))
+        create_response = self.client.post(
+            reverse("booking-create"),
+            data=self.booking_payload(self.room),
+            content_type="application/json",
+        )
+
+        self.assertEqual(list_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_requester_can_access_safe_availability(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.get(
+            reverse("requester-availability"),
+            {"month": 7, "year": 2026},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        day = response.json()["data"]["groups"][0]["calendar"][0]
+        self.assertIn("available_rooms", day)
+        self.assertNotIn("guest_name", day)
+        self.assertNotIn("requestor_name", day)
+
+    def test_unauthenticated_requester_availability_rejected(self):
+        response = self.client.get(reverse("requester-availability"))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_requester_can_access_safe_available_rooms_range(self):
+        Booking.objects.create(
+            room=self.room,
+            arrival_at=local_dt(2026, 7, 3, 10, 0),
+            departure_at=local_dt(2026, 7, 3, 12, 0),
+            visitor_name="Private Visitor",
+            requestor_name="Private Requestor",
+            purpose_of_visit="Private Purpose",
+            created_by=self.admin,
+            created_by_name="Private Admin",
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.get(
+            reverse("requester-available-rooms-range"),
+            {
+                "arrival_date": "2026-07-03",
+                "departure_date": "2026-07-03",
+                "prefix": "Delta",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()["data"]
+        rooms = data["rooms"]
+        by_id = {room["room_id"]: room for room in rooms}
+        self.assertEqual(by_id[self.room.id]["availability_status"], "partial")
+        self.assertIn("available_from_date", by_id[self.room.id])
+        self.assertIn("available_from_time", by_id[self.room.id])
+        self.assertEqual(by_id[self.other_room.id]["availability_status"], "available")
+        private_payload = str(data)
+        self.assertNotIn("Private Visitor", private_payload)
+        self.assertNotIn("Private Requestor", private_payload)
+        self.assertNotIn("Private Purpose", private_payload)
+        self.assertNotIn("created_by", private_payload)
+        self.assertNotIn("edit_history", private_payload)
+
+    def test_requester_available_rooms_range_rejects_unauthenticated_and_pending(self):
+        unauthenticated = self.client.get(
+            reverse("requester-available-rooms-range"),
+            {
+                "arrival_date": "2026-07-03",
+                "departure_date": "2026-07-03",
+                "prefix": "Delta",
+            },
+        )
+        self.assertEqual(unauthenticated.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        pending = create_requester(
+            email="pending-requester@example.com",
+            name="Pending Requester",
+        )
+        set_user_role(pending, ROLE_REQUESTER, approval_status=APPROVAL_PENDING)
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(pending)
+
+        pending_response = self.client.get(
+            reverse("requester-available-rooms-range"),
+            {
+                "arrival_date": "2026-07-03",
+                "departure_date": "2026-07-03",
+                "prefix": "Delta",
+            },
+        )
+
+        self.assertEqual(pending_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_requester_submits_request(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.post(
+            reverse("requester-booking-request-list"),
+            data=self.request_payload(),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(BookingRequest.objects.count(), 1)
+        booking_request = BookingRequest.objects.get()
+        self.assertEqual(booking_request.requester, self.requester)
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+
+    def test_requester_sees_only_own_requests(self):
+        own_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(visitor_name="Own Visitor"),
+        )
+        BookingRequest.objects.create(
+            requester=self.other_requester,
+            **self.request_model_kwargs(visitor_name="Other Visitor"),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.get(reverse("requester-booking-request-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item["id"] for item in response.json()["data"]]
+        self.assertEqual(ids, [own_request.id])
+
+    def test_requester_can_soft_delete_own_request_for_all_statuses(self):
+        statuses = [
+            BookingRequest.STATUS_PENDING,
+            BookingRequest.STATUS_CORRECTION_REQUIRED,
+            BookingRequest.STATUS_APPROVED,
+            BookingRequest.STATUS_REJECTED,
+        ]
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        for request_status in statuses:
+            with self.subTest(request_status=request_status):
+                booking_request = BookingRequest.objects.create(
+                    requester=self.requester,
+                    status=request_status,
+                    **self.request_model_kwargs(visitor_name=f"Visitor {request_status}"),
+                )
+
+                response = self.client.delete(
+                    reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk}),
+                    data={"remarks": "No longer needed"},
+                    content_type="application/json",
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertTrue(response.json()["success"])
+                booking_request.refresh_from_db()
+                self.assertTrue(booking_request.is_deleted)
+                self.assertIsNotNone(booking_request.deleted_at)
+                self.assertEqual(booking_request.deleted_by, self.requester)
+                self.assertEqual(booking_request.deleted_by_name, "Requester One")
+                self.assertEqual(booking_request.delete_reason, "No longer needed")
+
+    def test_requester_cannot_delete_another_requesters_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.other_requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(BookingRequest.objects.filter(pk=booking_request.pk).exists())
+
+    def test_requester_delete_hides_request_from_my_requests(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        delete_response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+        list_response = self.client.get(reverse("requester-booking-request-list"))
+
+        self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(list_response.json()["data"], [])
+
+    def test_requester_delete_approved_request_keeps_real_booking(self):
+        booking = Booking.objects.create(
+            room=self.room,
+            arrival_at=utc_dt(2026, 7, 1, 10, 0),
+            departure_at=utc_dt(2026, 7, 1, 12, 0),
+            visitor_name="Requester Approved Visitor",
+        )
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_APPROVED,
+            approved_booking=booking,
+            **self.request_model_kwargs(visitor_name="Requester Approved Visitor"),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertTrue(booking_request.is_deleted)
+        self.assertTrue(Booking.objects.filter(pk=booking.pk).exists())
+
+    def test_requester_cannot_delete_already_deleted_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            is_deleted=True,
+            deleted_by=self.requester,
+            deleted_at=utc_dt(2026, 7, 1, 13, 0),
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already deleted", response.json()["message"])
+
+    def test_admin_cannot_use_requester_delete_endpoint(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(BookingRequest.objects.filter(pk=booking_request.pk).exists())
+
+    def test_admin_can_soft_delete_request_for_all_statuses(self):
+        statuses = [
+            BookingRequest.STATUS_PENDING,
+            BookingRequest.STATUS_CORRECTION_REQUIRED,
+            BookingRequest.STATUS_APPROVED,
+            BookingRequest.STATUS_REJECTED,
+        ]
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        for request_status in statuses:
+            with self.subTest(request_status=request_status):
+                booking_request = BookingRequest.objects.create(
+                    requester=self.requester,
+                    status=request_status,
+                    **self.request_model_kwargs(visitor_name=f"Admin Delete {request_status}"),
+                )
+
+                response = self.client.delete(
+                    reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk}),
+                    data={"remarks": "Duplicate request"},
+                    content_type="application/json",
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                booking_request.refresh_from_db()
+                self.assertTrue(booking_request.is_deleted)
+                self.assertIsNotNone(booking_request.deleted_at)
+                self.assertEqual(booking_request.deleted_by, self.admin)
+                self.assertEqual(booking_request.deleted_by_name, "Admin One")
+                self.assertEqual(booking_request.deleted_by_role, ROLE_ADMIN)
+                self.assertEqual(booking_request.delete_reason, "Duplicate request")
+                self.assertTrue(response.json()["data"]["is_deleted"])
+                self.assertEqual(response.json()["data"]["remarks"], "Duplicate request")
+
+    def test_admin_delete_hides_request_from_normal_list(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        delete_response = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+        normal_list = self.client.get(reverse("admin-booking-request-list"))
+        deleted_list = self.client.get(
+            reverse("admin-booking-request-list"),
+            {"deleted": "true"},
+        )
+
+        self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(normal_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(deleted_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(normal_list.json()["data"], [])
+        self.assertEqual(deleted_list.json()["data"][0]["id"], booking_request.id)
+
+    def test_admin_delete_approved_request_keeps_real_booking(self):
+        booking = Booking.objects.create(
+            room=self.room,
+            arrival_at=utc_dt(2026, 7, 1, 10, 0),
+            departure_at=utc_dt(2026, 7, 1, 12, 0),
+            visitor_name="Approved Visitor",
+        )
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_APPROVED,
+            approved_booking=booking,
+            **self.request_model_kwargs(visitor_name="Approved Visitor"),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertTrue(booking_request.is_deleted)
+        self.assertTrue(Booking.objects.filter(pk=booking.pk).exists())
+
+    def test_admin_delete_endpoint_rejects_requester_and_unauthenticated(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+
+        unauthenticated = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+        requester_response = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(unauthenticated.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(requester_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_cannot_delete_already_deleted_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            is_deleted=True,
+            deleted_by=self.admin,
+            deleted_at=utc_dt(2026, 7, 1, 13, 0),
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already deleted", response.json()["message"])
+
+    def test_requester_can_edit_own_pending_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(visitor_name="Original Visitor"),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
+            data={
+                "visitor_name": "Edited Visitor",
+                "purpose_of_visit": "Edited purpose",
+                "requestor_department": "Edited Department",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.visitor_name, "Edited Visitor")
+        self.assertEqual(booking_request.purpose_of_visit, "Edited purpose")
+        self.assertEqual(booking_request.requestor_department, "Edited Department")
+
+    def test_requester_cannot_edit_another_requesters_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.other_requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
+            data={"visitor_name": "Edited Visitor"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_requester_cannot_edit_reviewed_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_APPROVED,
+            reviewed_by=self.admin,
+            reviewed_at=utc_dt(2026, 7, 1, 13, 0),
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
+            data={"visitor_name": "Edited Visitor"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Only pending", response.json()["message"])
+
+    def test_admin_cannot_use_requester_edit_endpoint(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
+            data={"visitor_name": "Edited Visitor"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_can_list_pending_requests(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.get(
+            reverse("admin-booking-request-list"),
+            {"status": BookingRequest.STATUS_PENDING},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["data"][0]["id"], booking_request.id)
+
+    def test_admin_approve_creates_booking(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
+            data={"room": self.room.id, "remarks": "Approved."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_APPROVED)
+        self.assertEqual(booking_request.reviewed_by, self.admin)
+        self.assertIsNotNone(booking_request.approved_booking)
+        self.assertEqual(booking_request.approved_booking.room, self.room)
+        self.assertEqual(booking_request.approved_booking.created_by, self.admin)
+
+    def test_admin_approve_can_use_create_booking_form_overrides(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(
+                visitor_name="Original Visitor",
+                purpose_of_visit="Original purpose",
+                requestor_name="Original Requestor",
+            ),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
+            data={
+                "room": self.room.id,
+                "remarks": "Approved from form.",
+                "visitor_name": "Edited Visitor",
+                "purpose_of_visit": "Edited purpose",
+                "requestor_name": "Edited Requestor",
+                "requestor_department": "Edited Department",
+                "room_charges_status": Booking.CHARGE_STATUS_YES,
+                "room_charges_amount": "1200",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        booking = booking_request.approved_booking
+        self.assertIsNotNone(booking)
+        self.assertEqual(booking.visitor_name, "Edited Visitor")
+        self.assertEqual(booking.purpose_of_visit, "Edited purpose")
+        self.assertEqual(booking.requestor_name, "Edited Requestor")
+        self.assertEqual(booking.requestor_department, "Edited Department")
+        self.assertEqual(booking.room_charges_status, Booking.CHARGE_STATUS_YES)
+        self.assertEqual(str(booking.room_charges_amount), "1200.00")
+
+    def test_admin_reject_does_not_create_booking(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-reject", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "Room not available."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_REJECTED)
+        self.assertIsNone(booking_request.approved_booking)
+        self.assertEqual(Booking.objects.count(), 0)
+
+    def test_admin_can_send_back_pending_request_for_correction(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "Correction required. Please update visitor mobile."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_CORRECTION_REQUIRED)
+        self.assertEqual(booking_request.reviewed_by, self.admin)
+        self.assertIsNotNone(booking_request.reviewed_at)
+        self.assertEqual(
+            booking_request.admin_remarks,
+            "Correction required. Please update visitor mobile.",
+        )
+        self.assertIsNone(booking_request.approved_booking)
+        self.assertEqual(response.json()["data"]["status"], BookingRequest.STATUS_CORRECTION_REQUIRED)
+
+    def test_send_back_requires_remarks(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": booking_request.pk}),
+            data={"remarks": ""},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+
+    def test_requester_cannot_send_back_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "Needs correction."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_unauthenticated_user_cannot_send_back_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+
+        response = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "Needs correction."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_admin_cannot_send_back_reviewed_request(self):
+        approved_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_APPROVED,
+            reviewed_by=self.admin,
+            reviewed_at=utc_dt(2026, 7, 1, 13, 0),
+            **self.request_model_kwargs(),
+        )
+        rejected_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_REJECTED,
+            reviewed_by=self.admin,
+            reviewed_at=utc_dt(2026, 7, 1, 13, 0),
+            **self.request_model_kwargs(visitor_name="Rejected Visitor"),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        approved_response = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": approved_request.pk}),
+            data={"remarks": "Needs correction."},
+            content_type="application/json",
+        )
+        rejected_response = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": rejected_request.pk}),
+            data={"remarks": "Needs correction."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(approved_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(rejected_response.status_code, status.HTTP_400_BAD_REQUEST)
+        approved_request.refresh_from_db()
+        rejected_request.refresh_from_db()
+        self.assertEqual(approved_request.status, BookingRequest.STATUS_APPROVED)
+        self.assertEqual(rejected_request.status, BookingRequest.STATUS_REJECTED)
+
+    def test_requester_can_resubmit_correction_required_request(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_CORRECTION_REQUIRED,
+            reviewed_by=self.admin,
+            reviewed_at=utc_dt(2026, 7, 1, 13, 0),
+            admin_remarks="Update mobile.",
+            **self.request_model_kwargs(visitor_mobile="9876543210"),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
+            data={
+                "visitor_mobile": "9123456789",
+                "purpose_of_visit": "Corrected purpose",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+        self.assertIsNone(booking_request.reviewed_by)
+        self.assertIsNone(booking_request.reviewed_at)
+        self.assertEqual(booking_request.visitor_mobile, "9123456789")
+        self.assertEqual(booking_request.purpose_of_visit, "Corrected purpose")
+        self.assertEqual(booking_request.admin_remarks, "Update mobile.")
+        self.assertEqual(response.json()["data"]["status"], BookingRequest.STATUS_PENDING)
+
+    def test_admin_can_approve_after_requester_resubmits(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_CORRECTION_REQUIRED,
+            reviewed_by=self.admin,
+            reviewed_at=utc_dt(2026, 7, 1, 13, 0),
+            admin_remarks="Update purpose.",
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+        resubmit_response = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
+            data={"purpose_of_visit": "Corrected purpose"},
+            content_type="application/json",
+        )
+        self.assertEqual(resubmit_response.status_code, status.HTTP_200_OK)
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+        approve_response = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
+            data={"room": self.room.id, "remarks": "Approved after correction."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_APPROVED)
+        self.assertIsNotNone(booking_request.approved_booking)
+
+    def test_approve_rechecks_availability(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        Booking.objects.create(
+            room=self.room,
+            arrival_at=booking_request.arrival_at,
+            departure_at=booking_request.departure_at,
+            visitor_name="Conflicting Visitor",
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
+            data={"room": self.room.id, "remarks": "Approved."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no longer available", response.json()["message"])
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+        self.assertIsNone(booking_request.approved_booking)
+
+    def request_payload(self, **overrides):
+        payload = {
+            "arrival_at": iso(utc_dt(2026, 7, 1, 10, 0)),
+            "departure_at": iso(utc_dt(2026, 7, 1, 12, 0)),
+            "preferred_prefix": "Delta",
+            "visitor_name": "Requester Visitor",
+            "visitor_mobile": "9876543210",
+            "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
+            "purpose_of_visit": "Official visit",
+            "requestor_name": "Requester One",
+            "requestor_email": "requester@example.com",
+        }
+        payload.update(overrides)
+        return payload
+
+    def request_model_kwargs(self, **overrides):
+        data = {
+            "arrival_at": utc_dt(2026, 7, 1, 10, 0),
+            "departure_at": utc_dt(2026, 7, 1, 12, 0),
+            "preferred_prefix": "Delta",
+            "visitor_name": "Requester Visitor",
+            "visitor_mobile": "9876543210",
+            "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
+            "purpose_of_visit": "Official visit",
+            "requestor_name": "Requester One",
+            "requestor_email": "requester@example.com",
+        }
+        data.update(overrides)
+        return data
+
+    def booking_payload(self, room):
+        return {
+            "room": room.id,
+            "arrival_at": iso(utc_dt(2026, 7, 1, 10, 0)),
+            "departure_at": iso(utc_dt(2026, 7, 1, 12, 0)),
+            "visitor_name": "Visitor One",
+            "visitor_mobile": "9876543210",
+            "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
+        }
 
 
 class BackendOperationalTests(TestCase):

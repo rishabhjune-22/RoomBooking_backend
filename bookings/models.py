@@ -168,6 +168,110 @@ class BookingEditHistory(models.Model):
         ]
 
 
+class BookingRequest(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_CORRECTION_REQUIRED = "correction_required"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_CORRECTION_REQUIRED, "Correction Required"),
+    ]
+
+    requester = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="booking_requests",
+        on_delete=models.CASCADE,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    requested_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="reviewed_booking_requests",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    admin_remarks = models.TextField(blank=True, default="")
+    approved_booking = models.OneToOneField(
+        Booking,
+        related_name="source_request",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    is_deleted = models.BooleanField(default=False, db_index=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="deleted_booking_requests",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    deleted_by_name = models.CharField(max_length=255, blank=True, default="")
+    deleted_by_role = models.CharField(max_length=30, blank=True, default="")
+    delete_reason = models.TextField(blank=True, default="")
+
+    arrival_at = models.DateTimeField(db_index=True)
+    departure_at = models.DateTimeField(db_index=True)
+    preferred_prefix = models.CharField(max_length=50, blank=True, default="")
+    preferred_room = models.ForeignKey(
+        Room,
+        related_name="preferred_booking_requests",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    room_preference_note = models.TextField(blank=True, default="")
+
+    visitor_name = models.CharField(max_length=100)
+    visitor_category = models.CharField(
+        max_length=50,
+        choices=Booking.VISITOR_CATEGORY_CHOICES,
+        blank=True,
+        default="",
+    )
+    visitor_designation = models.CharField(max_length=100, blank=True, default="")
+    visitor_organisation = models.CharField(max_length=100, blank=True, default="")
+    visitor_gender = models.CharField(max_length=20, blank=True, default="")
+    visitor_address = models.TextField(blank=True, default="")
+    visitor_mobile = models.CharField(max_length=20, blank=True, default="")
+    visitor_email = models.EmailField(blank=True, default="")
+    purpose_of_visit = models.TextField(blank=True, default="")
+
+    attender_required = models.BooleanField(default=False)
+    attender_count_per_day = models.PositiveIntegerField(default=0)
+    attender_general_shift = models.BooleanField(default=False)
+    attender_morning_shift = models.BooleanField(default=False)
+    attender_day_shift = models.BooleanField(default=False)
+
+    requestor_name = models.CharField(max_length=100, blank=True, default="")
+    requestor_designation = models.CharField(max_length=100, blank=True, default="")
+    requestor_department = models.CharField(max_length=100, blank=True, default="")
+    requestor_mobile = models.CharField(max_length=20, blank=True, default="")
+    requestor_email = models.EmailField(blank=True, default="")
+
+    def __str__(self):
+        return f"Request #{self.id} {self.status}"
+
+    class Meta:
+        ordering = ["-requested_at"]
+        indexes = [
+            models.Index(fields=["requester", "status", "requested_at"]),
+            models.Index(fields=["status", "requested_at"]),
+        ]
+
+
 class BookingIdempotencyRecord(models.Model):
     ACTION_CREATE = "booking_create"
     ACTION_DELETE = "booking_delete"

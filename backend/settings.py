@@ -8,6 +8,25 @@ from backend.observability import configure_sentry
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def load_dotenv_file(path):
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key:
+            os.environ.setdefault(key, value)
+
+
+load_dotenv_file(BASE_DIR / ".env")
+
+
 def env_bool(name, default=False):
     return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
@@ -38,6 +57,7 @@ IS_DEPLOYED = DJANGO_ENVIRONMENT in {"production", "staging"}
 
 DEBUG = env_bool("DJANGO_DEBUG", not IS_DEPLOYED)
 SECRET_KEY = env_required("DJANGO_SECRET_KEY", "development-only-secret-key")
+ADMIN_SIGNUP_CODE = env_required("ADMIN_SIGNUP_CODE", "" if IS_DEPLOYED else "dev-admin-signup-code")
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
     "" if IS_DEPLOYED else "127.0.0.1,localhost,192.168.1.19,10.10.3.189,10.50.48.251",

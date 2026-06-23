@@ -5,7 +5,8 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .constants import COOLING_PERIOD
-from .models import Booking, BookingEditHistory
+from .models import Booking, BookingEditHistory, BookingRequest
+from hostels.models import Room
 
 from zoneinfo import ZoneInfo
 
@@ -402,6 +403,8 @@ class RoomAvailabilityDaySerializer(serializers.Serializer):
     total_rooms = serializers.IntegerField()
     booked_rooms = serializers.IntegerField()
     available_rooms = serializers.IntegerField()
+    has_before_6pm_booking = serializers.BooleanField(required=False)
+    has_partial_booking = serializers.BooleanField(required=False)
 
 
 class RoomAvailabilityGroupSerializer(serializers.Serializer):
@@ -484,3 +487,226 @@ class BookingDetailSerializer(BookingSerializer):
     class Meta(BookingSerializer.Meta):
         fields = BookingSerializer.Meta.fields + ["edit_history"]
         read_only_fields = BookingSerializer.Meta.read_only_fields + ["edit_history"]
+
+
+class BookingRequestBaseSerializer(serializers.ModelSerializer):
+    requester_name = serializers.SerializerMethodField()
+    requester_email = serializers.SerializerMethodField()
+    preferred_room_name = serializers.SerializerMethodField()
+    approved_booking_id = serializers.SerializerMethodField()
+    assigned_room_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+    remarks = serializers.CharField(source="delete_reason", read_only=True)
+
+    class Meta:
+        model = BookingRequest
+        fields = [
+            "id",
+            "requester",
+            "requester_name",
+            "requester_email",
+            "status",
+            "requested_at",
+            "reviewed_at",
+            "reviewed_by",
+            "reviewed_by_name",
+            "admin_remarks",
+            "approved_booking_id",
+            "assigned_room_name",
+            "is_deleted",
+            "deleted_at",
+            "deleted_by_name",
+            "deleted_by_role",
+            "remarks",
+            "arrival_at",
+            "departure_at",
+            "preferred_prefix",
+            "preferred_room",
+            "preferred_room_name",
+            "room_preference_note",
+            "visitor_name",
+            "visitor_designation",
+            "visitor_organisation",
+            "visitor_gender",
+            "visitor_address",
+            "visitor_mobile",
+            "visitor_email",
+            "visitor_category",
+            "purpose_of_visit",
+            "attender_required",
+            "attender_count_per_day",
+            "attender_general_shift",
+            "attender_morning_shift",
+            "attender_day_shift",
+            "requestor_name",
+            "requestor_designation",
+            "requestor_department",
+            "requestor_mobile",
+            "requestor_email",
+        ]
+        read_only_fields = [
+            "id",
+            "requester",
+            "requester_name",
+            "requester_email",
+            "status",
+            "requested_at",
+            "reviewed_at",
+            "reviewed_by",
+            "reviewed_by_name",
+            "admin_remarks",
+            "approved_booking_id",
+            "assigned_room_name",
+            "is_deleted",
+            "deleted_at",
+            "deleted_by_name",
+            "deleted_by_role",
+            "remarks",
+            "preferred_room_name",
+        ]
+
+    def get_requester_name(self, obj):
+        user = getattr(obj, "requester", None)
+        if not user:
+            return ""
+        return user.get_full_name().strip() or user.email or user.username
+
+    def get_requester_email(self, obj):
+        user = getattr(obj, "requester", None)
+        return user.email if user else ""
+
+    def get_preferred_room_name(self, obj):
+        room = getattr(obj, "preferred_room", None)
+        return str(room) if room else ""
+
+    def get_approved_booking_id(self, obj):
+        booking = getattr(obj, "approved_booking", None)
+        return booking.id if booking else None
+
+    def get_assigned_room_name(self, obj):
+        booking = getattr(obj, "approved_booking", None)
+        return str(booking.room) if booking and booking.room else ""
+
+    def get_reviewed_by_name(self, obj):
+        user = getattr(obj, "reviewed_by", None)
+        if not user:
+            return ""
+        return user.get_full_name().strip() or user.email or user.username
+
+
+class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
+    class Meta(BookingRequestBaseSerializer.Meta):
+        read_only_fields = BookingRequestBaseSerializer.Meta.read_only_fields
+        extra_kwargs = {
+            "visitor_name": {
+                "required": True,
+                "allow_blank": False,
+                "trim_whitespace": True,
+                "error_messages": {
+                    "blank": "Visitor name is required.",
+                    "required": "Visitor name is required.",
+                },
+            },
+            "visitor_designation": {"required": False, "allow_blank": True},
+            "visitor_organisation": {"required": False, "allow_blank": True},
+            "visitor_gender": {"required": False, "allow_blank": True},
+            "visitor_address": {"required": False, "allow_blank": True},
+            "visitor_mobile": {"required": False, "allow_blank": True},
+            "visitor_email": {"required": False, "allow_blank": True},
+            "visitor_category": {"required": False, "allow_blank": True},
+            "purpose_of_visit": {"required": False, "allow_blank": True},
+            "preferred_prefix": {"required": False, "allow_blank": True},
+            "room_preference_note": {"required": False, "allow_blank": True},
+            "requestor_name": {"required": False, "allow_blank": True},
+            "requestor_designation": {"required": False, "allow_blank": True},
+            "requestor_department": {"required": False, "allow_blank": True},
+            "requestor_mobile": {"required": False, "allow_blank": True},
+            "requestor_email": {"required": False, "allow_blank": True},
+        }
+
+    def validate_visitor_mobile(self, value):
+        return BookingSerializer().validate_optional_mobile(value, "Visitor mobile")
+
+    def validate_requestor_mobile(self, value):
+        return BookingSerializer().validate_optional_mobile(value, "Requestor mobile")
+
+    def validate(self, attrs):
+        instance = self.instance
+        arrival_at = attrs.get("arrival_at", getattr(instance, "arrival_at", None))
+        departure_at = attrs.get("departure_at", getattr(instance, "departure_at", None))
+
+        if not arrival_at or not departure_at:
+            raise serializers.ValidationError(
+                "Arrival datetime and departure datetime are required."
+            )
+
+        if departure_at <= arrival_at:
+            raise serializers.ValidationError({
+                "departure_at": ["Departure datetime must be after arrival datetime."]
+            })
+
+        attender_required = attrs.get(
+            "attender_required",
+            getattr(instance, "attender_required", False),
+        )
+        attender_count = attrs.get(
+            "attender_count_per_day",
+            getattr(instance, "attender_count_per_day", 0),
+        )
+        has_shift = any([
+            attrs.get(
+                "attender_general_shift",
+                getattr(instance, "attender_general_shift", False),
+            ),
+            attrs.get(
+                "attender_morning_shift",
+                getattr(instance, "attender_morning_shift", False),
+            ),
+            attrs.get(
+                "attender_day_shift",
+                getattr(instance, "attender_day_shift", False),
+            ),
+        ])
+
+        if attender_required and attender_count <= 0:
+            raise serializers.ValidationError({
+                "attender_count_per_day": ["Enter number of attenders required per day."]
+            })
+
+        if attender_required and not has_shift:
+            raise serializers.ValidationError({
+                "attender_shift": ["Please select at least one attender shift."]
+            })
+
+        if not attender_required:
+            attrs["attender_count_per_day"] = 0
+            attrs["attender_general_shift"] = False
+            attrs["attender_morning_shift"] = False
+            attrs["attender_day_shift"] = False
+
+        return attrs
+
+
+class RequesterBookingRequestListSerializer(BookingRequestBaseSerializer):
+    pass
+
+
+class AdminBookingRequestSerializer(BookingRequestBaseSerializer):
+    pass
+
+
+class BookingRequestApproveSerializer(serializers.Serializer):
+    room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.all())
+    remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+
+
+class BookingRequestRejectSerializer(serializers.Serializer):
+    remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+
+
+class BookingRequestSendBackSerializer(serializers.Serializer):
+    remarks = serializers.CharField(required=True, allow_blank=False, trim_whitespace=True)
+
+
+class BookingRequestDeleteSerializer(serializers.Serializer):
+    remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)

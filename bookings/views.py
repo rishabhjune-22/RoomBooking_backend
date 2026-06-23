@@ -10,22 +10,29 @@ from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.generics import CreateAPIView, ListAPIView, RetrieveAPIView, UpdateAPIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from backend.responses import api_success, serializer_error_response
+from accounts.permissions import IsAdminRole, IsRequesterRole
+from backend.responses import api_error, api_success, serializer_error_response
 from hostels.models import Room
 
 from .constants import COOLING_PERIOD
 from .idempotency import begin_idempotent_request, complete_idempotent_request
-from .models import Booking, BookingEditHistory, BookingIdempotencyRecord
+from .models import Booking, BookingEditHistory, BookingIdempotencyRecord, BookingRequest
 from .serializers import (
+    AdminBookingRequestSerializer,
     AvailableRoomsByDateQuerySerializer,
     AvailableRoomsByDateRangeQuerySerializer,
     BookingDetailSerializer,
+    BookingRequestApproveSerializer,
+    BookingRequestDeleteSerializer,
+    BookingRequestRejectSerializer,
+    BookingRequestSendBackSerializer,
     BookingListQuerySerializer,
     BookingSerializer,
+    RequesterBookingRequestCreateSerializer,
+    RequesterBookingRequestListSerializer,
     RoomAvailabilityCalendarQuerySerializer,
     RoomAvailabilityDetailsQuerySerializer,
 )
@@ -109,6 +116,33 @@ def get_user_display_name(user):
 
 def get_user_email(user):
     return user.email or ""
+
+
+def get_user_role_name(user):
+    profile = getattr(user, "profile", None)
+    role = getattr(profile, "role", "")
+    return role or ""
+
+
+def soft_delete_booking_request(booking_request, user, remarks=""):
+    if booking_request.is_deleted:
+        return False
+
+    booking_request.is_deleted = True
+    booking_request.deleted_at = timezone.now()
+    booking_request.deleted_by = user
+    booking_request.deleted_by_name = get_user_display_name(user)
+    booking_request.deleted_by_role = get_user_role_name(user)
+    booking_request.delete_reason = remarks or ""
+    booking_request.save(update_fields=[
+        "is_deleted",
+        "deleted_at",
+        "deleted_by",
+        "deleted_by_name",
+        "deleted_by_role",
+        "delete_reason",
+    ])
+    return True
 
 
 def snapshot_booking_audit_values(booking):
@@ -348,10 +382,83 @@ def lock_rooms_for_booking_write(*room_ids):
         )
 
 
+def booking_payload_from_request(booking_request, room):
+    return {
+        "room": room.id,
+        "arrival_at": booking_request.arrival_at,
+        "departure_at": booking_request.departure_at,
+        "visitor_name": booking_request.visitor_name,
+        "visitor_designation": booking_request.visitor_designation,
+        "visitor_organisation": booking_request.visitor_organisation,
+        "visitor_gender": booking_request.visitor_gender,
+        "visitor_address": booking_request.visitor_address,
+        "visitor_mobile": booking_request.visitor_mobile,
+        "visitor_email": booking_request.visitor_email,
+        "visitor_category": booking_request.visitor_category,
+        "purpose_of_visit": booking_request.purpose_of_visit,
+        "requestor_name": booking_request.requestor_name,
+        "requestor_designation": booking_request.requestor_designation,
+        "requestor_department": booking_request.requestor_department,
+        "requestor_mobile": booking_request.requestor_mobile,
+        "attender_required": booking_request.attender_required,
+        "attender_count_per_day": booking_request.attender_count_per_day,
+        "attender_general_shift": booking_request.attender_general_shift,
+        "attender_morning_shift": booking_request.attender_morning_shift,
+        "attender_day_shift": booking_request.attender_day_shift,
+        "room_charges_status": Booking.CHARGE_STATUS_NO,
+        "attender_charges_status": Booking.CHARGE_STATUS_NO,
+        "room_charges_amount": 0,
+        "attender_charges_amount": 0,
+    }
+
+
+APPROVAL_BOOKING_OVERRIDE_FIELDS = [
+    "arrival_at",
+    "departure_at",
+    "visitor_name",
+    "visitor_designation",
+    "visitor_organisation",
+    "visitor_gender",
+    "visitor_address",
+    "visitor_mobile",
+    "visitor_email",
+    "visitor_category",
+    "purpose_of_visit",
+    "requestor_name",
+    "requestor_designation",
+    "requestor_department",
+    "requestor_mobile",
+    "attender_required",
+    "attender_count_per_day",
+    "attender_general_shift",
+    "attender_morning_shift",
+    "attender_day_shift",
+    "room_charges_status",
+    "attender_charges_status",
+    "room_charges_amount",
+    "attender_charges_amount",
+    "budget_head_type",
+    "budget_head_value",
+    "budget_head_name",
+    "budget_head_department_name",
+    "budget_head_project_code",
+    "logistics_name",
+    "logistics_designation",
+    "logistics_mobile",
+]
+
+
+def apply_booking_request_approval_overrides(payload, data):
+    for field_name in APPROVAL_BOOKING_OVERRIDE_FIELDS:
+        if field_name in data:
+            payload[field_name] = data.get(field_name)
+    return payload
+
+
 class BookingCreateView(CreateAPIView):
     queryset = Booking.objects.select_related("room").all()
     serializer_class = BookingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_mutation"
 
@@ -397,7 +504,7 @@ class BookingCreateView(CreateAPIView):
 
 class BookingListView(ListAPIView):
     serializer_class = BookingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_read"
 
@@ -456,7 +563,7 @@ class BookingDetailView(RetrieveAPIView):
         .all()
     )
     serializer_class = BookingDetailSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_read"
 
@@ -473,7 +580,7 @@ class BookingDetailView(RetrieveAPIView):
 class BookingUpdateView(UpdateAPIView):
     queryset = Booking.objects.select_related("room", "created_by").all()
     serializer_class = BookingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_mutation"
 
@@ -516,7 +623,7 @@ class BookingUpdateView(UpdateAPIView):
         )
 
 class BookingDeleteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_mutation"
 
@@ -564,7 +671,7 @@ class BookingDeleteView(APIView):
 
 
 class RoomAvailabilityCalendarView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -666,7 +773,7 @@ class RoomAvailabilityCalendarView(APIView):
         )
 
 class RoomAvailabilityDetailsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -762,7 +869,7 @@ class RoomAvailabilityDetailsView(APIView):
         )
 
 class AvailableRoomsByDateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -832,7 +939,7 @@ class AvailableRoomsByDateView(APIView):
 
 
 class AvailableRoomsByDateRangeView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "availability"
 
@@ -901,4 +1008,387 @@ class AvailableRoomsByDateRangeView(APIView):
                 "total_available_rooms": len(room_data),
                 "rooms": room_data,
             },
+        )
+
+
+class RequesterAvailabilityCalendarView(RoomAvailabilityCalendarView):
+    permission_classes = [IsRequesterRole]
+
+
+class RequesterAvailableRoomsByDateRangeView(AvailableRoomsByDateRangeView):
+    permission_classes = [IsRequesterRole]
+
+
+class RequesterBookingRequestListCreateView(APIView):
+    permission_classes = [IsRequesterRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    def get(self, request):
+        queryset = (
+            BookingRequest.objects
+            .select_related("requester", "preferred_room", "approved_booking__room", "reviewed_by")
+            .filter(requester=request.user)
+            .filter(is_deleted=False)
+            .order_by("-requested_at")
+        )
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        return api_success(
+            "Booking requests fetched successfully.",
+            RequesterBookingRequestListSerializer(queryset, many=True).data,
+        )
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = RequesterBookingRequestCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Booking request could not be submitted.")
+
+        booking_request = serializer.save(requester=request.user)
+
+        return api_success(
+            "Booking request submitted successfully.",
+            RequesterBookingRequestListSerializer(booking_request).data,
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+class RequesterBookingRequestDetailView(APIView):
+    permission_classes = [IsRequesterRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_read"
+
+    def get(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_related(
+                "requester",
+                "preferred_room",
+                "approved_booking__room",
+                "reviewed_by",
+            ),
+            pk=pk,
+            requester=request.user,
+            is_deleted=False,
+        )
+        return api_success(
+            "Booking request fetched successfully.",
+            RequesterBookingRequestListSerializer(booking_request).data,
+        )
+
+    @transaction.atomic
+    def patch(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_for_update().select_related(
+                "requester",
+                "preferred_room",
+                "approved_booking__room",
+                "reviewed_by",
+            ),
+            pk=pk,
+            requester=request.user,
+            is_deleted=False,
+        )
+        editable_statuses = {
+            BookingRequest.STATUS_PENDING,
+            BookingRequest.STATUS_CORRECTION_REQUIRED,
+        }
+        if booking_request.status not in editable_statuses:
+            return api_error(
+                "Only pending or correction-required booking requests can be edited.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        was_correction_required = booking_request.status == BookingRequest.STATUS_CORRECTION_REQUIRED
+
+        serializer = RequesterBookingRequestCreateSerializer(
+            booking_request,
+            data=request.data,
+            partial=True,
+        )
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Booking request could not be updated.")
+
+        booking_request = serializer.save()
+        if was_correction_required:
+            booking_request.status = BookingRequest.STATUS_PENDING
+            booking_request.reviewed_by = None
+            booking_request.reviewed_at = None
+            booking_request.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+
+        return api_success(
+            "Booking request resubmitted successfully."
+            if was_correction_required
+            else "Booking request updated successfully.",
+            RequesterBookingRequestListSerializer(booking_request).data,
+        )
+
+
+class RequesterBookingRequestDeleteView(APIView):
+    permission_classes = [IsRequesterRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    @transaction.atomic
+    def delete(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_for_update(),
+            pk=pk,
+            requester=request.user,
+        )
+        if booking_request.is_deleted:
+            return api_error(
+                "Booking request is already deleted.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BookingRequestDeleteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Booking request could not be deleted.")
+
+        soft_delete_booking_request(
+            booking_request,
+            request.user,
+            serializer.validated_data.get("remarks", ""),
+        )
+
+        return api_success(
+            "Booking request deleted successfully.",
+            RequesterBookingRequestListSerializer(booking_request).data,
+        )
+
+
+class AdminBookingRequestListView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_read"
+
+    def get(self, request):
+        queryset = (
+            BookingRequest.objects
+            .select_related("requester", "preferred_room", "approved_booking__room", "reviewed_by")
+            .all()
+            .order_by("-requested_at")
+        )
+        deleted_filter = request.query_params.get("deleted", "false")
+        if deleted_filter == "true":
+            queryset = queryset.filter(is_deleted=True)
+        elif deleted_filter == "all":
+            pass
+        else:
+            queryset = queryset.filter(is_deleted=False)
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        return api_success(
+            "Booking requests fetched successfully.",
+            AdminBookingRequestSerializer(queryset, many=True).data,
+        )
+
+
+class AdminBookingRequestDetailView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_read"
+
+    def get(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_related(
+                "requester",
+                "preferred_room",
+                "approved_booking__room",
+                "reviewed_by",
+            ),
+            pk=pk,
+            is_deleted=False,
+        )
+        return api_success(
+            "Booking request fetched successfully.",
+            AdminBookingRequestSerializer(booking_request).data,
+        )
+
+
+class AdminBookingRequestApproveView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    @transaction.atomic
+    def post(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_for_update().select_related("requester"),
+            pk=pk,
+        )
+        if booking_request.status != BookingRequest.STATUS_PENDING:
+            return api_error(
+                "Only pending booking requests can be approved.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BookingRequestApproveSerializer(data={
+            "room": request.data.get("room"),
+            "remarks": request.data.get("remarks", ""),
+        })
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Booking request could not be approved.")
+
+        room = serializer.validated_data["room"]
+        remarks = serializer.validated_data.get("remarks", "")
+        lock_rooms_for_booking_write(room.id)
+
+        booking_payload = apply_booking_request_approval_overrides(
+            booking_payload_from_request(booking_request, room),
+            request.data,
+        )
+        booking_serializer = BookingSerializer(
+            data=booking_payload,
+        )
+        if not booking_serializer.is_valid():
+            return api_error(
+                "Selected room is no longer available for this time range.",
+                errors=booking_serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        booking = booking_serializer.save(
+            created_by=request.user,
+            created_by_name=get_user_display_name(request.user),
+        )
+        booking_request.status = BookingRequest.STATUS_APPROVED
+        booking_request.reviewed_by = request.user
+        booking_request.reviewed_at = timezone.now()
+        booking_request.admin_remarks = remarks
+        booking_request.approved_booking = booking
+        booking_request.save(update_fields=[
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "admin_remarks",
+            "approved_booking",
+        ])
+
+        return api_success(
+            "Booking request approved successfully.",
+            AdminBookingRequestSerializer(booking_request).data,
+        )
+
+
+class AdminBookingRequestRejectView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    @transaction.atomic
+    def post(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_for_update().select_related("requester"),
+            pk=pk,
+        )
+        if booking_request.status != BookingRequest.STATUS_PENDING:
+            return api_error(
+                "Only pending booking requests can be rejected.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BookingRequestRejectSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Booking request could not be rejected.")
+
+        remarks = serializer.validated_data.get("remarks", "")
+        booking_request.status = BookingRequest.STATUS_REJECTED
+        booking_request.reviewed_by = request.user
+        booking_request.reviewed_at = timezone.now()
+        booking_request.admin_remarks = remarks
+        booking_request.save(update_fields=[
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "admin_remarks",
+        ])
+
+        return api_success(
+            "Booking request rejected successfully.",
+            AdminBookingRequestSerializer(booking_request).data,
+        )
+
+
+class AdminBookingRequestDeleteView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    @transaction.atomic
+    def delete(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_for_update().select_related(
+                "requester",
+                "preferred_room",
+                "approved_booking__room",
+                "reviewed_by",
+            ),
+            pk=pk,
+        )
+        if booking_request.is_deleted:
+            return api_error(
+                "Booking request is already deleted.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BookingRequestDeleteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Booking request could not be deleted.")
+
+        soft_delete_booking_request(
+            booking_request,
+            request.user,
+            serializer.validated_data.get("remarks", ""),
+        )
+
+        return api_success(
+            "Booking request deleted successfully.",
+            AdminBookingRequestSerializer(booking_request).data,
+        )
+
+
+class AdminBookingRequestSendBackView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    @transaction.atomic
+    def post(self, request, pk):
+        booking_request = get_object_or_404(
+            BookingRequest.objects.select_for_update().select_related("requester"),
+            pk=pk,
+        )
+        if booking_request.status != BookingRequest.STATUS_PENDING:
+            return api_error(
+                "Only pending booking requests can be sent back for correction.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BookingRequestSendBackSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_error_response(
+                serializer,
+                "Booking request could not be sent back for correction.",
+            )
+
+        booking_request.status = BookingRequest.STATUS_CORRECTION_REQUIRED
+        booking_request.reviewed_by = request.user
+        booking_request.reviewed_at = timezone.now()
+        booking_request.admin_remarks = serializer.validated_data["remarks"]
+        booking_request.save(update_fields=[
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "admin_remarks",
+        ])
+
+        return api_success(
+            "Booking request sent back for correction.",
+            AdminBookingRequestSerializer(booking_request).data,
         )

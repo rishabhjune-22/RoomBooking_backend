@@ -5,6 +5,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from accounts.roles import ROLE_ADMIN, set_user_role
+
 from .models import Room
 
 
@@ -27,6 +29,7 @@ class RoomListApiTests(TestCase):
             email="rooms@example.com",
             password="StrongPass123",
         )
+        set_user_role(user, ROLE_ADMIN)
         self.client.defaults["HTTP_AUTHORIZATION"] = (
             f"Bearer {RefreshToken.for_user(user).access_token}"
         )

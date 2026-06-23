@@ -1,0 +1,169 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .approval-page {
+    max-width: 1280px;
+  }
+  .approval-card {
+    background: var(--body-bg);
+    border: 1px solid var(--hairline-color);
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .approval-summary {
+    color: var(--body-quiet-color);
+    margin: 0 0 18px;
+  }
+  .approval-filters {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .approval-filter {
+    border: 1px solid var(--hairline-color);
+    border-radius: 999px;
+    color: var(--link-fg);
+    padding: 7px 12px;
+    text-decoration: none;
+  }
+  .approval-filter.active {
+    background: var(--button-bg);
+    color: var(--button-fg);
+    font-weight: 600;
+  }
+  .approval-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .approval-table th,
+  .approval-table td {
+    border-bottom: 1px solid var(--hairline-color);
+    padding: 12px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .approval-table th {
+    color: var(--body-quiet-color);
+    font-weight: 600;
+  }
+  .approval-empty {
+    color: var(--body-quiet-color);
+    padding: 24px 10px;
+  }
+  .clickable-row {
+    cursor: pointer;
+  }
+  .clickable-row:hover {
+    background: var(--darkened-bg);
+  }
+  .approval-value {
+    overflow-wrap: anywhere;
+  }
+  .status-pill {
+    border-radius: 999px;
+    display: inline-block;
+    font-weight: 600;
+    padding: 4px 9px;
+  }
+  .status-pending {
+    background: #fff4cc;
+    color: #6b4b00;
+  }
+  .status-approved {
+    background: #dff4e8;
+    color: #0f5132;
+  }
+  .status-rejected {
+    background: #fde1df;
+    color: #842029;
+  }
+</style>
+
+<div id="content-main" class="approval-page">
+  <div class="approval-card">
+    <h1>{{ title }}</h1>
+    <p class="approval-summary">
+      Click any account row to open the friendly account detail page. Approval metadata is recorded automatically.
+    </p>
+
+    <div class="approval-filters" aria-label="Approval status filters">
+      <a class="approval-filter{% if not status_filter %} active{% endif %}" href="?">All</a>
+      {% for value, label in status_choices %}
+      <a class="approval-filter{% if status_filter == value %} active{% endif %}" href="?status={{ value }}">{{ label }}</a>
+      {% endfor %}
+    </div>
+
+    <table class="approval-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Role</th>
+          <th>Approval Status</th>
+          <th>Approval</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for profile in profiles %}
+        {% if is_admin_role %}
+        <tr class="clickable-row" data-href="{% url 'admin:accounts_admin_approval_detail' profile.id %}">
+        {% else %}
+        <tr class="clickable-row" data-href="{% url 'admin:accounts_requester_approval_detail' profile.id %}">
+        {% endif %}
+          <td>{{ profile.id }}</td>
+          <td class="approval-value">{{ profile.user.get_full_name|default:profile.user.email }}</td>
+          <td>{{ profile.get_role_display }}</td>
+          <td>
+            <span class="status-pill status-{{ profile.approval_status }}">
+              {{ profile.get_approval_status_display }}
+            </span>
+          </td>
+          <td>
+            {% if is_admin_role %}
+            <a class="approval-button" data-no-row-click href="{% url 'admin:accounts_admin_approval_detail' profile.id %}">Open admin account</a>
+            {% else %}
+            <a class="approval-button" data-no-row-click href="{% url 'admin:accounts_requester_approval_detail' profile.id %}">Open requester account</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td class="approval-empty" colspan="5">No account requests found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".clickable-row[data-href]").forEach(function (row) {
+      row.addEventListener("click", function (event) {
+        if (event.target.closest("[data-no-row-click], a, button, input, textarea, select, label")) {
+          return;
+        }
+        window.location.href = row.dataset.href;
+      });
+      row.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          window.location.href = row.dataset.href;
+        }
+      });
+      row.setAttribute("tabindex", "0");
+      row.setAttribute("role", "link");
+    });
+  });
+</script>
+{% endblock %}

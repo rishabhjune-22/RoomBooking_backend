@@ -9,6 +9,7 @@ urlpatterns = [
 
     # Public APIs
     path('api/auth/', include('accounts.urls')),
+    path('api/', include('accounts.approval_urls')),
     path('api/', include('hostels.urls')),
     path('api/', include('bookings.urls')),
 ]

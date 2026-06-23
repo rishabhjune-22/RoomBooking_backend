@@ -1,13 +1,13 @@
 from rest_framework.generics import ListAPIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter
+from accounts.permissions import IsAdminRole
 from .models import Room
 from .serializers import RoomSerializer
 
 
 class RoomListView(ListAPIView):
     serializer_class = RoomSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
     filter_backends = [SearchFilter]
     search_fields = ["prefix", "number"]
 
