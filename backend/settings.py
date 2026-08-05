@@ -102,6 +102,7 @@ INSTALLED_APPS = [
     'accounts.apps.AccountsConfig',
     'hostels',
     'bookings.apps.BookingsConfig',
+    'webapp.apps.WebappConfig',
 ]
 
 MIDDLEWARE = [

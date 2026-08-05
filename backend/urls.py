@@ -6,6 +6,7 @@ from backend.views import health_check
 
 urlpatterns = [
     path('health/', health_check, name='health-check'),
+    path('web/', include('webapp.urls')),
 
     # Public APIs
     path('api/auth/', include('accounts.urls')),
