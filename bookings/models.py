@@ -1,6 +1,12 @@
+import secrets
+
 from django.conf import settings
 from django.db import models
 from hostels.models import Room
+
+
+def generate_booking_share_token():
+    return secrets.token_urlsafe(24)
 
 
 class Booking(models.Model):
@@ -63,7 +69,6 @@ class Booking(models.Model):
     visitor_designation = models.CharField(max_length=100, blank=True, default="")
     visitor_organisation = models.CharField(max_length=100, blank=True, default="")
     visitor_gender = models.CharField(max_length=20, blank=True, default="")
-    visitor_address = models.TextField(blank=True, default="")
     visitor_mobile = models.CharField(max_length=20, blank=True, default="")
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")
@@ -127,8 +132,14 @@ class Booking(models.Model):
         related_name="created_bookings",
     )
     created_by_name = models.CharField(max_length=100, blank=True, default="")
+
+    @property
+    def booking_reference_number(self):
+        return f"{self.pk:06d}" if self.pk else ""
+
     def __str__(self):
-        return f"Booking #{self.id} - {self.room}"
+        reference = self.booking_reference_number or self.id
+        return f"Booking #{reference} - {self.room}"
 
     class Meta:
         ordering = ["-created_at"]
@@ -165,6 +176,82 @@ class BookingEditHistory(models.Model):
         ordering = ["-edited_at", "-id"]
         indexes = [
             models.Index(fields=["booking", "edited_at"]),
+        ]
+
+
+class BookingChargeSheet(models.Model):
+    booking = models.OneToOneField(
+        Booking,
+        related_name="charge_sheet",
+        on_delete=models.CASCADE,
+    )
+    requestor_name = models.CharField(max_length=100, blank=True, default="")
+    guest_name = models.CharField(max_length=100, blank=True, default="")
+    purpose_event = models.TextField(blank=True, default="")
+    room_charges_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    attender_charges_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    payment_received_date = models.DateField(null=True, blank=True)
+    budget_head_name = models.CharField(max_length=100, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def total_charges(self):
+        return self.room_charges_amount + self.attender_charges_amount
+
+    def __str__(self):
+        return f"Charge sheet #{self.id} - Booking {self.booking.booking_reference_number}"
+
+    class Meta:
+        ordering = ["booking__departure_at", "id"]
+        indexes = [
+            models.Index(fields=["payment_received_date"]),
+            models.Index(fields=["updated_at"]),
+        ]
+
+
+class BookingShare(models.Model):
+    SHARE_TYPE_BOOKING_SHEET = "booking_sheet"
+    SHARE_TYPE_CHARGE_SHEET = "charge_sheet"
+
+    SHARE_TYPE_CHOICES = [
+        (SHARE_TYPE_BOOKING_SHEET, "Booking Sheet"),
+        (SHARE_TYPE_CHARGE_SHEET, "Charges Sheet"),
+    ]
+
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        default=generate_booking_share_token,
+    )
+    share_type = models.CharField(
+        max_length=40,
+        choices=SHARE_TYPE_CHOICES,
+        default=SHARE_TYPE_BOOKING_SHEET,
+    )
+    title = models.CharField(max_length=120, blank=True, default="Booking Sheet")
+    filters = models.JSONField(blank=True, default=dict)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_booking_shares",
+    )
+    created_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.get_share_type_display()} - {self.token}"
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["share_type", "is_active", "created_at"]),
         ]
 
 
@@ -244,7 +331,6 @@ class BookingRequest(models.Model):
     visitor_designation = models.CharField(max_length=100, blank=True, default="")
     visitor_organisation = models.CharField(max_length=100, blank=True, default="")
     visitor_gender = models.CharField(max_length=20, blank=True, default="")
-    visitor_address = models.TextField(blank=True, default="")
     visitor_mobile = models.CharField(max_length=20, blank=True, default="")
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")

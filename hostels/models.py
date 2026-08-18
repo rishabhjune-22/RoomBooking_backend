@@ -31,6 +31,7 @@ class Room(models.Model):
         default=ROOM_TYPE_ROOM,
     )
     display_order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True, db_index=True)
 
     @property
     def selection_label(self):

@@ -1,0 +1,88 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ share.title|default:"Charges Sheet" }}</title>
+    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260818-share-validity">
+</head>
+<body class="shared-page">
+    <header class="shared-header">
+        <div class="brand-row shared-brand-row">
+            <div class="brand-mark">RB</div>
+            <div>
+                <h1>{{ share.title|default:"Charges Sheet" }}</h1>
+                <p>Read-only shared charges sheet</p>
+            </div>
+        </div>
+        <div class="shared-meta">
+            {% if filters.prefix %}<span>{{ filters.prefix }}</span>{% endif %}
+            {% if filters.payment %}<span>{{ filters.payment|title }}</span>{% endif %}
+            {% if share.expires_at %}<span>Valid until {{ share.expires_at|date:"d M Y, h:i A" }}</span>{% endif %}
+        </div>
+    </header>
+
+    <main class="shared-dashboard wide-dashboard">
+        <section class="surface sheet-panel">
+            <div class="sheet-summary">
+                <div>
+                    <h3>Charges Sheet</h3>
+                    <p>{{ rows|length }} row{{ rows|length|pluralize }}</p>
+                </div>
+                <div class="sheet-summary-actions">
+                    <span>Generated {{ share.created_at|date:"d M Y, h:i A" }}</span>
+                </div>
+            </div>
+            <div class="sheet-scroll shared-sheet-scroll" role="region" aria-label="Shared charges sheet view">
+                <table class="excel-table charge-sheet-table shared-charge-sheet-table">
+                    <thead>
+                        <tr>
+                            <th>Serial NO</th>
+                            <th>Check in</th>
+                            <th>Check out</th>
+                            <th>Booking Reference ID</th>
+                            <th>Requestor Name</th>
+                            <th>Name of Guest</th>
+                            <th>Purpose(Event)</th>
+                            <th>Delta</th>
+                            <th>Gamma</th>
+                            <th>Beta</th>
+                            <th>Room Charges Amount</th>
+                            <th>Attender Charges Amount</th>
+                            <th>Total Charges</th>
+                            <th>Payment Received Date</th>
+                            <th>Budget Head Name</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td>{{ row.id }}</td>
+                                <td>{{ row.booking.arrival_at|date:"d M Y, h:i A" }}</td>
+                                <td>{{ row.booking.departure_at|date:"d M Y, h:i A" }}</td>
+                                <td>{{ row.booking.booking_reference_number }}</td>
+                                <td>{{ row.requestor_name|default:"-" }}</td>
+                                <td>{{ row.guest_name|default:"-" }}</td>
+                                <td>{{ row.purpose_event|default:"-" }}</td>
+                                <td>{% if row.booking.room.prefix == "Delta" %}{{ row.booking.room.number }}{% endif %}</td>
+                                <td>{% if row.booking.room.prefix == "Gamma" %}{{ row.booking.room.number }}{% endif %}</td>
+                                <td>{% if row.booking.room.prefix == "Beta" %}{{ row.booking.room.number }}{% endif %}</td>
+                                <td>{{ row.room_charges_amount }}</td>
+                                <td>{{ row.attender_charges_amount }}</td>
+                                <td>{{ row.total_charges }}</td>
+                                <td>{{ row.payment_received_date|default:"-" }}</td>
+                                <td>{{ row.budget_head_name|default:"-" }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr>
+                                <td colspan="15">No charge sheet rows match this shared view.</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

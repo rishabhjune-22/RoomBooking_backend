@@ -1,11 +1,11 @@
-from datetime import time
+from datetime import time, timedelta
 import re
 
 from django.utils import timezone
 from rest_framework import serializers
 
 from .constants import COOLING_PERIOD
-from .models import Booking, BookingEditHistory, BookingRequest
+from .models import Booking, BookingChargeSheet, BookingEditHistory, BookingRequest, BookingShare
 from hostels.models import Room
 
 from zoneinfo import ZoneInfo
@@ -15,19 +15,20 @@ PHONE_ALLOWED_RE = re.compile(r"^\+?[0-9][0-9\s().-]*$")
 PHONE_DIGIT_RE = re.compile(r"\d")
 
 class BookingSerializer(serializers.ModelSerializer):
+    room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.filter(is_active=True))
     room_name = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
+    booking_reference_number = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
-            "id", "room", "room_name", "arrival_at", "departure_at",
+            "id", "booking_reference_number", "room", "room_name", "arrival_at", "departure_at",
 
             "visitor_name",
             "visitor_designation",
             "visitor_organisation",
             "visitor_gender",
-            "visitor_address",
             "visitor_mobile",
             "visitor_email",
             "purpose_of_visit",
@@ -60,7 +61,12 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
 
         read_only_fields = [
-            "id", "room_name", "status", "created_at", "created_by_name",
+            "id",
+            "booking_reference_number",
+            "room_name",
+            "status",
+            "created_at",
+            "created_by_name",
         ]
 
         extra_kwargs = {
@@ -93,7 +99,6 @@ class BookingSerializer(serializers.ModelSerializer):
 
             "visitor_designation": {"required": False, "allow_blank": True},
             "visitor_organisation": {"required": False, "allow_blank": True},
-            "visitor_address": {"required": False, "allow_blank": True},
             "visitor_mobile": {"required": False, "allow_blank": True},
             "visitor_email": {"required": False, "allow_blank": True},
             "purpose_of_visit": {"required": False, "allow_blank": True},
@@ -116,6 +121,9 @@ class BookingSerializer(serializers.ModelSerializer):
             return full_name or user.email or user.username
 
         return obj.created_by_name or ""
+
+    def get_booking_reference_number(self, obj):
+        return obj.booking_reference_number
 
     def validate_visitor_name(self, value):
         if not value or not value.strip():
@@ -257,7 +265,6 @@ class BookingSerializer(serializers.ModelSerializer):
         optional_fields = [
             "visitor_designation",
             "visitor_organisation",
-            "visitor_address",
             "visitor_mobile",
             "visitor_email",
             "purpose_of_visit",
@@ -435,6 +442,233 @@ class BookingListQuerySerializer(serializers.Serializer):
         return status_value
 
 
+class BookingChargeSheetQuerySerializer(serializers.Serializer):
+    prefix = serializers.CharField(required=False, allow_blank=False)
+    search = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    payment = serializers.CharField(required=False, allow_blank=False)
+    checkout_from = serializers.DateField(required=False)
+    checkout_to = serializers.DateField(required=False)
+    ordering = serializers.CharField(required=False, allow_blank=False)
+
+    VALID_PAYMENT_FILTERS = {"received", "pending"}
+    VALID_ORDERING_FIELDS = {
+        "serial_no",
+        "check_in",
+        "check_out",
+        "booking_reference_id",
+        "requestor_name",
+        "guest_name",
+        "purpose_event",
+        "delta",
+        "gamma",
+        "beta",
+        "room_charges_amount",
+        "attender_charges_amount",
+        "total_charges",
+        "payment_received_date",
+        "budget_head_name",
+        "created_at",
+    }
+
+    def validate_payment(self, value):
+        payment_filter = value.lower()
+        if payment_filter not in self.VALID_PAYMENT_FILTERS:
+            raise serializers.ValidationError("Invalid payment filter.")
+        return payment_filter
+
+    def validate_ordering(self, value):
+        ordering = value.strip()
+        field_name = ordering[1:] if ordering.startswith("-") else ordering
+        if field_name not in self.VALID_ORDERING_FIELDS:
+            raise serializers.ValidationError("Invalid ordering field.")
+        return ordering
+
+
+class BookingChargeSheetSerializer(serializers.ModelSerializer):
+    serial_no = serializers.IntegerField(source="id", read_only=True)
+    check_in = serializers.DateTimeField(source="booking.arrival_at", read_only=True)
+    check_out = serializers.DateTimeField(source="booking.departure_at", read_only=True)
+    booking_reference_id = serializers.SerializerMethodField()
+    delta = serializers.SerializerMethodField()
+    gamma = serializers.SerializerMethodField()
+    beta = serializers.SerializerMethodField()
+    total_charges = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = BookingChargeSheet
+        fields = [
+            "id",
+            "serial_no",
+            "booking",
+            "check_in",
+            "check_out",
+            "booking_reference_id",
+            "requestor_name",
+            "guest_name",
+            "purpose_event",
+            "delta",
+            "gamma",
+            "beta",
+            "room_charges_amount",
+            "attender_charges_amount",
+            "total_charges",
+            "payment_received_date",
+            "budget_head_name",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "serial_no",
+            "booking",
+            "check_in",
+            "check_out",
+            "booking_reference_id",
+            "delta",
+            "gamma",
+            "beta",
+            "total_charges",
+            "created_at",
+            "updated_at",
+        ]
+        extra_kwargs = {
+            "requestor_name": {"required": False, "allow_blank": True},
+            "guest_name": {"required": False, "allow_blank": True},
+            "purpose_event": {"required": False, "allow_blank": True},
+            "room_charges_amount": {"required": False, "min_value": 0},
+            "attender_charges_amount": {"required": False, "min_value": 0},
+            "payment_received_date": {"required": False, "allow_null": True},
+            "budget_head_name": {"required": False, "allow_blank": True},
+        }
+
+    def get_booking_reference_id(self, obj):
+        return obj.booking.booking_reference_number
+
+    def get_delta(self, obj):
+        return self.get_room_number_for_prefix(obj, "Delta")
+
+    def get_gamma(self, obj):
+        return self.get_room_number_for_prefix(obj, "Gamma")
+
+    def get_beta(self, obj):
+        return self.get_room_number_for_prefix(obj, "Beta")
+
+    def get_room_number_for_prefix(self, obj, prefix):
+        room = getattr(obj.booking, "room", None)
+        if not room or room.prefix != prefix:
+            return ""
+        return room.number
+
+
+class BookingShareSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+    validity = serializers.ChoiceField(
+        choices=[
+            ("24h", "24 hours"),
+            ("1w", "1 week"),
+            ("1m", "1 month"),
+        ],
+        write_only=True,
+        required=False,
+        default="1w",
+    )
+
+    VALIDITY_DELTAS = {
+        "24h": timedelta(hours=24),
+        "1w": timedelta(days=7),
+        "1m": timedelta(days=30),
+    }
+
+    class Meta:
+        model = BookingShare
+        fields = [
+            "id",
+            "token",
+            "share_type",
+            "title",
+            "filters",
+            "validity",
+            "expires_at",
+            "url",
+            "created_at",
+        ]
+        read_only_fields = ["id", "token", "expires_at", "url", "created_at"]
+        extra_kwargs = {
+            "title": {"required": False, "allow_blank": True},
+            "filters": {"required": False},
+            "share_type": {"required": False},
+        }
+
+    def validate_share_type(self, value):
+        valid_share_types = {
+            BookingShare.SHARE_TYPE_BOOKING_SHEET,
+            BookingShare.SHARE_TYPE_CHARGE_SHEET,
+        }
+        if value not in valid_share_types:
+            raise serializers.ValidationError("Invalid share type.")
+        return value
+
+    def validate_filters(self, value):
+        if value is not None and not isinstance(value, dict):
+            raise serializers.ValidationError("Filters must be an object.")
+        return value or {}
+
+    def normalize_filters(self, filters, query_serializer_class, allowed_keys):
+        normalized = {}
+
+        for key, raw_value in (filters or {}).items():
+            if key not in allowed_keys or raw_value in (None, "", "all"):
+                continue
+            normalized[key] = raw_value
+
+        query_serializer = query_serializer_class(data=normalized)
+        query_serializer.is_valid(raise_exception=True)
+        normalized_filters = {}
+        for key, filter_value in query_serializer.validated_data.items():
+            normalized_filters[key] = filter_value.isoformat() if hasattr(filter_value, "isoformat") else filter_value
+        return normalized_filters
+
+    def validate(self, attrs):
+        share_type = attrs.get("share_type") or BookingShare.SHARE_TYPE_BOOKING_SHEET
+        raw_filters = attrs.get("filters") or {}
+        if share_type == BookingShare.SHARE_TYPE_CHARGE_SHEET:
+            attrs["filters"] = self.normalize_filters(
+                raw_filters,
+                BookingChargeSheetQuerySerializer,
+                {"prefix", "search", "payment", "checkout_from", "checkout_to", "ordering"},
+            )
+        else:
+            attrs["filters"] = self.normalize_filters(
+                raw_filters,
+                BookingListQuerySerializer,
+                {"prefix", "arrival_from", "departure_to", "status"},
+            )
+        return attrs
+
+    def create(self, validated_data):
+        validity = validated_data.pop("validity", "1w")
+        share_type = validated_data.get("share_type") or BookingShare.SHARE_TYPE_BOOKING_SHEET
+        if not validated_data.get("title"):
+            validated_data["title"] = "Charges Sheet" if share_type == BookingShare.SHARE_TYPE_CHARGE_SHEET else "Booking Sheet"
+        validated_data["expires_at"] = timezone.now() + self.VALIDITY_DELTAS[validity]
+        return super().create(validated_data)
+
+    def get_url(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return ""
+
+        from django.urls import reverse
+
+        route_name = (
+            "webapp:shared-charges"
+            if obj.share_type == BookingShare.SHARE_TYPE_CHARGE_SHEET
+            else "webapp:shared-bookings"
+        )
+        path = reverse(route_name, kwargs={"token": obj.token})
+        return request.build_absolute_uri(path)
+
+
 class RoomAvailabilityCalendarQuerySerializer(serializers.Serializer):
     month = serializers.IntegerField(required=False, min_value=1, max_value=12)
     year = serializers.IntegerField(required=False, min_value=1)
@@ -492,6 +726,11 @@ class BookingDetailSerializer(BookingSerializer):
 class BookingRequestBaseSerializer(serializers.ModelSerializer):
     requester_name = serializers.SerializerMethodField()
     requester_email = serializers.SerializerMethodField()
+    preferred_room = serializers.PrimaryKeyRelatedField(
+        queryset=Room.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+    )
     preferred_room_name = serializers.SerializerMethodField()
     approved_booking_id = serializers.SerializerMethodField()
     assigned_room_name = serializers.SerializerMethodField()
@@ -528,7 +767,6 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "visitor_designation",
             "visitor_organisation",
             "visitor_gender",
-            "visitor_address",
             "visitor_mobile",
             "visitor_email",
             "visitor_category",
@@ -610,7 +848,6 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             "visitor_designation": {"required": False, "allow_blank": True},
             "visitor_organisation": {"required": False, "allow_blank": True},
             "visitor_gender": {"required": False, "allow_blank": True},
-            "visitor_address": {"required": False, "allow_blank": True},
             "visitor_mobile": {"required": False, "allow_blank": True},
             "visitor_email": {"required": False, "allow_blank": True},
             "visitor_category": {"required": False, "allow_blank": True},
@@ -696,7 +933,7 @@ class AdminBookingRequestSerializer(BookingRequestBaseSerializer):
 
 
 class BookingRequestApproveSerializer(serializers.Serializer):
-    room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.all())
+    room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.filter(is_active=True))
     remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
 
 

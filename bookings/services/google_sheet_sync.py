@@ -163,7 +163,6 @@ def booking_to_row(booking):
         booking.visitor_designation,
         booking.visitor_organisation,
         booking.visitor_gender,
-        booking.visitor_address,
         booking.visitor_mobile,
         booking.visitor_email,
         booking.purpose_of_visit,

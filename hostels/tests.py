@@ -57,6 +57,29 @@ class RoomListApiTests(TestCase):
         self.assertFalse(results[1]["has_attached_bath"])
         self.assertEqual(results[1]["selection_label"], "102 — bathroom not attached")
 
+    def test_inactive_rooms_are_hidden_from_room_list(self):
+        Room.objects.create(
+            prefix="Delta",
+            number="1103 A",
+            hostel_name="Gaurlata",
+            room_type=Room.ROOM_TYPE_CHAIRMAN_FLAT,
+            is_active=False,
+        )
+        Room.objects.create(
+            prefix="Delta",
+            number="101A",
+            hostel_name="Gaurlata",
+            has_attached_bath=True,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("room-list"), {"search": "Delta"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        room_names = [room["room_name"] for room in response.json()["data"]["results"]]
+        self.assertIn("Delta 101A", room_names)
+        self.assertNotIn("Delta Chairman Flat 1103 A", room_names)
+
     def test_chairman_flat_selection_label(self):
         room = Room.objects.create(
             prefix="Delta",

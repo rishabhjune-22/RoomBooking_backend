@@ -1,0 +1,77 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ share.title|default:"Booking Sheet" }}</title>
+    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260818-share-validity">
+</head>
+<body class="shared-page">
+    <header class="shared-header">
+        <div class="brand-row shared-brand-row">
+            <div class="brand-mark">RB</div>
+            <div>
+                <h1>{{ share.title|default:"Booking Sheet" }}</h1>
+                <p>Read-only shared booking sheet</p>
+            </div>
+        </div>
+        <div class="shared-meta">
+            <span>{{ start_date|date:"d M Y" }} to {{ end_date|date:"d M Y" }}</span>
+            {% if filters.prefix %}<span>{{ filters.prefix }}</span>{% endif %}
+            {% if filters.status %}<span>{{ filters.status|title }}</span>{% endif %}
+            {% if share.expires_at %}<span>Valid until {{ share.expires_at|date:"d M Y, h:i A" }}</span>{% endif %}
+        </div>
+    </header>
+
+    <main class="shared-dashboard wide-dashboard">
+        <section class="surface sheet-panel">
+            <div class="sheet-summary">
+                <div>
+                    <h3>Visitor Room</h3>
+                    <p>{{ visible_booking_count }} booking{{ visible_booking_count|pluralize }}</p>
+                </div>
+                <div class="sheet-summary-actions">
+                    <span>Generated {{ share.created_at|date:"d M Y, h:i A" }}</span>
+                </div>
+            </div>
+            <div class="sheet-scroll shared-sheet-scroll" role="region" aria-label="Shared booking sheet view">
+                <table class="excel-table shared-booking-table">
+                    <thead>
+                        <tr>
+                            <th class="date-col">Dates</th>
+                            {% for room in rooms %}
+                                <th>{{ room.selection_label|default:room }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in table_rows %}
+                            <tr>
+                                <th class="date-col">{{ row.date|date:"d M Y" }}</th>
+                                {% for cell in row.cells %}
+                                    <td>
+                                        {% if cell.entries %}
+                                            {% for entry in cell.entries %}
+                                                <div class="shared-booking-pill {% if entry.availability_status == 'partial' %}partial{% endif %}">
+                                                    <strong>{{ entry.text }}</strong>
+                                                    <span>{{ entry.status_label }}</span>
+                                                    {% if entry.available_from %}
+                                                        <span>Available after {{ entry.available_from }}</span>
+                                                    {% endif %}
+                                                </div>
+                                            {% endfor %}
+                                        {% else %}
+                                            <span class="shared-available">Available</span>
+                                        {% endif %}
+                                    </td>
+                                {% endfor %}
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

@@ -4,7 +4,7 @@ from decimal import Decimal
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -19,11 +19,19 @@ from hostels.models import Room
 
 from .constants import COOLING_PERIOD
 from .idempotency import begin_idempotent_request, complete_idempotent_request
-from .models import Booking, BookingEditHistory, BookingIdempotencyRecord, BookingRequest
+from .models import (
+    Booking,
+    BookingChargeSheet,
+    BookingEditHistory,
+    BookingIdempotencyRecord,
+    BookingRequest,
+)
 from .serializers import (
     AdminBookingRequestSerializer,
     AvailableRoomsByDateQuerySerializer,
     AvailableRoomsByDateRangeQuerySerializer,
+    BookingChargeSheetQuerySerializer,
+    BookingChargeSheetSerializer,
     BookingDetailSerializer,
     BookingRequestApproveSerializer,
     BookingRequestDeleteSerializer,
@@ -31,6 +39,7 @@ from .serializers import (
     BookingRequestSendBackSerializer,
     BookingListQuerySerializer,
     BookingSerializer,
+    BookingShareSerializer,
     RequesterBookingRequestCreateSerializer,
     RequesterBookingRequestListSerializer,
     RoomAvailabilityCalendarQuerySerializer,
@@ -50,7 +59,6 @@ AUDITED_BOOKING_FIELDS = [
     ("visitor_designation", "Visitor Designation"),
     ("visitor_organisation", "Visitor Organisation"),
     ("visitor_gender", "Visitor Gender"),
-    ("visitor_address", "Visitor Address"),
     ("visitor_mobile", "Visitor Mobile"),
     ("visitor_email", "Visitor Email"),
     ("visitor_category", "Visitor Category"),
@@ -89,6 +97,7 @@ def action_response_body(message, booking):
         "message": message,
         "data": {
             "booking_id": booking.id,
+            "booking_reference_number": booking.booking_reference_number,
             "room_id": booking.room.id,
             "room_name": str(booking.room),
             "status": booking.status,
@@ -107,6 +116,91 @@ def delete_response_body(booking_id):
             "booking_id": booking_id,
         },
     }
+
+
+def booking_charge_sheet_defaults(booking):
+    return {
+        "requestor_name": booking.requestor_name or "",
+        "guest_name": booking.visitor_name or "",
+        "purpose_event": booking.purpose_of_visit or "",
+        "room_charges_amount": booking.room_charges_amount or 0,
+        "attender_charges_amount": booking.attender_charges_amount or 0,
+        "budget_head_name": (
+            booking.budget_head_name
+            or booking.budget_head_department_name
+            or booking.budget_head_project_code
+            or booking.budget_head_value
+            or ""
+        ),
+    }
+
+
+def apply_charge_sheet_values_to_booking(sheet_row, validated_data, user):
+    booking = sheet_row.booking
+    old_values = snapshot_booking_audit_values(booking)
+    update_fields = []
+
+    field_mapping = {
+        "requestor_name": "requestor_name",
+        "guest_name": "visitor_name",
+        "purpose_event": "purpose_of_visit",
+        "budget_head_name": "budget_head_name",
+    }
+    for sheet_field, booking_field in field_mapping.items():
+        if sheet_field in validated_data:
+            setattr(booking, booking_field, validated_data[sheet_field] or "")
+            update_fields.append(booking_field)
+
+    charge_mappings = [
+        ("room_charges_amount", "room_charges_amount", "room_charges_status"),
+        ("attender_charges_amount", "attender_charges_amount", "attender_charges_status"),
+    ]
+    for sheet_field, amount_field, status_field in charge_mappings:
+        if sheet_field not in validated_data:
+            continue
+        amount = validated_data[sheet_field] or Decimal("0")
+        setattr(booking, amount_field, amount)
+        if amount > 0:
+            setattr(booking, status_field, Booking.CHARGE_STATUS_YES)
+        elif getattr(booking, status_field) == Booking.CHARGE_STATUS_YES:
+            setattr(booking, status_field, Booking.CHARGE_STATUS_NO)
+        update_fields.extend([amount_field, status_field])
+
+    if not update_fields:
+        return 0
+
+    unique_update_fields = list(dict.fromkeys(update_fields))
+    booking.save(update_fields=unique_update_fields)
+    return create_booking_edit_history(booking, old_values, user)
+
+
+def ensure_booking_charge_sheet_rows():
+    missing_bookings = (
+        Booking.objects
+        .filter(charge_sheet__isnull=True)
+        .only(
+            "id",
+            "requestor_name",
+            "visitor_name",
+            "purpose_of_visit",
+            "room_charges_amount",
+            "attender_charges_amount",
+            "budget_head_name",
+            "budget_head_department_name",
+            "budget_head_project_code",
+            "budget_head_value",
+        )
+    )
+    BookingChargeSheet.objects.bulk_create(
+        [
+            BookingChargeSheet(
+                booking=booking,
+                **booking_charge_sheet_defaults(booking),
+            )
+            for booking in missing_bookings
+        ],
+        ignore_conflicts=True,
+    )
 
 
 def get_user_display_name(user):
@@ -262,7 +356,7 @@ def mark_departure_day_availability(
 def get_rooms_for_prefix(prefix):
     return list(
         Room.objects
-        .filter(prefix__iexact=prefix)
+        .filter(prefix__iexact=prefix, is_active=True)
         .only(
             "id",
             "prefix",
@@ -270,6 +364,7 @@ def get_rooms_for_prefix(prefix):
             "room_type",
             "has_attached_bath",
             "display_order",
+            "is_active",
         )
         .order_by("display_order", "number")
     )
@@ -391,7 +486,6 @@ def booking_payload_from_request(booking_request, room):
         "visitor_designation": booking_request.visitor_designation,
         "visitor_organisation": booking_request.visitor_organisation,
         "visitor_gender": booking_request.visitor_gender,
-        "visitor_address": booking_request.visitor_address,
         "visitor_mobile": booking_request.visitor_mobile,
         "visitor_email": booking_request.visitor_email,
         "visitor_category": booking_request.visitor_category,
@@ -419,7 +513,6 @@ APPROVAL_BOOKING_OVERRIDE_FIELDS = [
     "visitor_designation",
     "visitor_organisation",
     "visitor_gender",
-    "visitor_address",
     "visitor_mobile",
     "visitor_email",
     "visitor_category",
@@ -553,6 +646,178 @@ class BookingListView(ListAPIView):
             queryset = queryset.filter(status__iexact=status_filter)
 
         return queryset
+
+
+class BookingChargeSheetListView(ListAPIView):
+    serializer_class = BookingChargeSheetSerializer
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_read"
+
+    def list(self, request, *args, **kwargs):
+        serializer = BookingChargeSheetQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return invalid_query_params_response(serializer)
+
+        self._validated_query_params = serializer.validated_data
+        ensure_booking_charge_sheet_rows()
+        return super().list(request, *args, **kwargs)
+
+    def get_query_params(self):
+        if not hasattr(self, "_validated_query_params"):
+            serializer = BookingChargeSheetQuerySerializer(data=self.request.query_params)
+            serializer.is_valid(raise_exception=True)
+            self._validated_query_params = serializer.validated_data
+
+        return self._validated_query_params
+
+    def get_queryset(self):
+        queryset = (
+            BookingChargeSheet.objects
+            .select_related("booking", "booking__room")
+            .all()
+        )
+
+        query_params = self.get_query_params()
+        prefix = query_params.get("prefix")
+        search = query_params.get("search", "")
+        payment = query_params.get("payment")
+        checkout_from = query_params.get("checkout_from")
+        checkout_to = query_params.get("checkout_to")
+        ordering = query_params.get("ordering", "-created_at")
+
+        if prefix:
+            queryset = queryset.filter(booking__room__prefix__iexact=prefix)
+
+        if payment == "received":
+            queryset = queryset.filter(payment_received_date__isnull=False)
+        elif payment == "pending":
+            queryset = queryset.filter(payment_received_date__isnull=True)
+
+        if checkout_from:
+            start_at, _ = get_local_date_bounds(checkout_from)
+            queryset = queryset.filter(booking__departure_at__gte=start_at)
+
+        if checkout_to:
+            _, end_at = get_local_date_bounds(checkout_to)
+            queryset = queryset.filter(booking__departure_at__lt=end_at)
+
+        if search:
+            search_filter = (
+                Q(requestor_name__icontains=search)
+                | Q(guest_name__icontains=search)
+                | Q(purpose_event__icontains=search)
+                | Q(budget_head_name__icontains=search)
+                | Q(booking__requestor_name__icontains=search)
+                | Q(booking__visitor_name__icontains=search)
+                | Q(booking__purpose_of_visit__icontains=search)
+                | Q(booking__room__prefix__icontains=search)
+                | Q(booking__room__number__icontains=search)
+            )
+            normalized_reference = search.strip().lstrip("0")
+            if normalized_reference.isdigit():
+                search_filter |= Q(booking_id=int(normalized_reference))
+            queryset = queryset.filter(search_filter)
+
+        ordering_map = {
+            "serial_no": "id",
+            "check_in": "booking__arrival_at",
+            "check_out": "booking__departure_at",
+            "booking_reference_id": "booking_id",
+            "requestor_name": "requestor_name",
+            "guest_name": "guest_name",
+            "purpose_event": "purpose_event",
+            "delta": "booking__room__number",
+            "gamma": "booking__room__number",
+            "beta": "booking__room__number",
+            "room_charges_amount": "room_charges_amount",
+            "attender_charges_amount": "attender_charges_amount",
+            "payment_received_date": "payment_received_date",
+            "budget_head_name": "budget_head_name",
+            "created_at": "created_at",
+        }
+        descending = ordering.startswith("-")
+        ordering_field = ordering[1:] if descending else ordering
+        if ordering_field == "total_charges":
+            queryset = queryset.annotate(
+                total_charges_value=ExpressionWrapper(
+                    F("room_charges_amount") + F("attender_charges_amount"),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                )
+            )
+            order_by = "total_charges_value"
+        else:
+            order_by = ordering_map.get(ordering_field, "created_at")
+        if descending:
+            order_by = f"-{order_by}"
+
+        return queryset.order_by(order_by, "id")
+
+
+class BookingChargeSheetDetailView(RetrieveAPIView, UpdateAPIView):
+    queryset = BookingChargeSheet.objects.select_related("booking", "booking__room").all()
+    serializer_class = BookingChargeSheetSerializer
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    def retrieve(self, request, *args, **kwargs):
+        sheet_row = self.get_object()
+        serializer = self.get_serializer(sheet_row)
+        return api_success("Charge sheet row fetched successfully.", serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        with transaction.atomic():
+            sheet_row = get_object_or_404(
+                BookingChargeSheet.objects.select_for_update().select_related(
+                    "booking",
+                    "booking__room",
+                    "booking__created_by",
+                ),
+                pk=kwargs.get("pk"),
+            )
+            serializer = self.get_serializer(sheet_row, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            changed_field_count = apply_charge_sheet_values_to_booking(
+                sheet_row,
+                serializer.validated_data,
+                request.user,
+            )
+            sheet_row.refresh_from_db()
+            response_data = self.get_serializer(sheet_row).data
+        logger.info(
+            "booking_charge_sheet_updated",
+            extra={
+                "event": "booking_charge_sheet_updated",
+                "charge_sheet_id": sheet_row.id,
+                "booking_id": sheet_row.booking_id,
+                "changed_field_count": changed_field_count,
+            },
+        )
+        return api_success("Charge sheet row updated successfully.", response_data)
+
+
+class BookingShareCreateView(CreateAPIView):
+    serializer_class = BookingShareSerializer
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        share = serializer.save(
+            created_by=request.user,
+            created_by_name=get_user_display_name(request.user),
+        )
+        response_serializer = self.get_serializer(share)
+        return api_success(
+            "Booking share link created successfully.",
+            response_serializer.data,
+            status_code=status.HTTP_201_CREATED,
+        )
 
 
 class BookingDetailView(RetrieveAPIView):
@@ -698,12 +963,15 @@ class RoomAvailabilityCalendarView(APIView):
 
         room_counts = list(
             Room.objects
+            .filter(is_active=True)
             .values("prefix")
             .annotate(total_rooms=Count("id"))
             .order_by("prefix")
         )
 
-        room_prefix_by_id = dict(Room.objects.values_list("id", "prefix"))
+        room_prefix_by_id = dict(
+            Room.objects.filter(is_active=True).values_list("id", "prefix")
+        )
         month_bookings = (
             filter_active_bookings_overlapping_range(
                 Booking.objects,
@@ -791,7 +1059,7 @@ class RoomAvailabilityDetailsView(APIView):
         if prefix:
             room_ids = list(
                 Room.objects
-                .filter(prefix__iexact=prefix)
+                .filter(prefix__iexact=prefix, is_active=True)
                 .values_list("id", flat=True)
             )
             if not room_ids:

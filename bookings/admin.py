@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import (
     Booking,
+    BookingChargeSheet,
     BookingEditHistory,
     BookingIdempotencyRecord,
     BookingRequest,
@@ -11,6 +12,7 @@ from .models import (
 class BookingAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "booking_reference_number",
         "room",
         "visitor_name",
         "arrival_at",
@@ -64,6 +66,39 @@ class BookingIdempotencyRecordAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
+
+
+@admin.register(BookingChargeSheet)
+class BookingChargeSheetAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "booking",
+        "requestor_name",
+        "guest_name",
+        "room_charges_amount",
+        "attender_charges_amount",
+        "payment_received_date",
+        "budget_head_name",
+        "updated_at",
+    )
+    list_filter = (
+        "booking__room__prefix",
+        "payment_received_date",
+        "updated_at",
+    )
+    search_fields = (
+        "booking__id",
+        "booking__visitor_name",
+        "booking__requestor_name",
+        "booking__room__prefix",
+        "booking__room__number",
+        "requestor_name",
+        "guest_name",
+        "purpose_event",
+        "budget_head_name",
+    )
+    readonly_fields = ("booking", "created_at", "updated_at")
+    ordering = ("booking__departure_at", "id")
 
 
 @admin.register(BookingEditHistory)

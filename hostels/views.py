@@ -20,4 +20,5 @@ class RoomListView(ListAPIView):
             "has_attached_bath",
             "room_type",
             "display_order",
-        ).order_by("prefix", "number")
+            "is_active",
+        ).filter(is_active=True).order_by("prefix", "display_order", "number")

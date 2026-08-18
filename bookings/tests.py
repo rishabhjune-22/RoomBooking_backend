@@ -1,4 +1,4 @@
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -6,6 +6,8 @@ from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -13,7 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.roles import APPROVAL_PENDING, ROLE_ADMIN, ROLE_REQUESTER, set_user_role
 from hostels.models import Room
 
-from .models import Booking, BookingEditHistory, BookingRequest
+from .models import Booking, BookingChargeSheet, BookingEditHistory, BookingRequest, BookingShare
 from .services.expiry_service import expire_due_bookings
 
 
@@ -188,6 +190,27 @@ class BookingApiBusinessRuleTests(TestCase):
             first.json()["data"]["booking_id"],
             second.json()["data"]["booking_id"],
         )
+        self.assertEqual(
+            first.json()["data"]["booking_reference_number"],
+            second.json()["data"]["booking_reference_number"],
+        )
+
+    def test_create_generates_six_digit_booking_reference_number(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        reference_number = response.json()["data"]["booking_reference_number"]
+        self.assertRegex(reference_number, r"^\d{6}$")
+        self.assertEqual(booking.booking_reference_number, reference_number)
 
     def test_delete_is_idempotent_when_key_repeats(self):
         booking = self.create_booking(
@@ -335,6 +358,8 @@ class BookingApiBusinessRuleTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()["data"]
+        self.assertRegex(data["booking_reference_number"], r"^\d{6}$")
+        self.assertEqual(data["booking_reference_number"], booking.booking_reference_number)
         self.assertEqual(data["created_by_name"], "Rishabh Kumar")
         self.assertIn("created_at", data)
         self.assertEqual(data["edit_history"], [])
@@ -361,6 +386,7 @@ class BookingApiBusinessRuleTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         result = response.json()["data"]["results"][0]
+        self.assertEqual(result["booking_reference_number"], booking.booking_reference_number)
         self.assertNotIn("edit_history", result)
 
     def test_unauthenticated_edit_is_rejected(self):
@@ -681,6 +707,205 @@ class BookingExpiryServiceTests(TestCase):
             Booking.STATUS_EXPIRED,
         )
         sync_mock.assert_called_once()
+
+
+class BookingShareApiTests(TestCase):
+    def setUp(self):
+        self.admin = create_user("admin-share@example.com", "Admin Share")
+        self.requester = create_requester("requester-share@example.com", "Requester Share")
+        self.room = Room.objects.create(prefix="Beta", number="201", hostel_name="Main")
+        self.booking = Booking.objects.create(
+            room=self.room,
+            arrival_at=local_dt(2026, 7, 1, 10, 0),
+            departure_at=local_dt(2026, 7, 1, 12, 0),
+            visitor_name="Shared Visitor",
+            visitor_organisation="Shared Organisation",
+            requestor_name="Shared Requestor",
+            status=Booking.STATUS_ACTIVE,
+        )
+        BookingChargeSheet.objects.update_or_create(
+            booking=self.booking,
+            defaults={
+                "requestor_name": "Shared Requestor",
+                "guest_name": "Shared Visitor",
+                "purpose_event": "Shared Event",
+                "room_charges_amount": 200,
+                "attender_charges_amount": 50,
+                "budget_head_name": "Shared Budget",
+            },
+        )
+
+    def assert_expires_between(self, expires_at_value, minimum_delta, maximum_delta):
+        parsed = parse_datetime(expires_at_value)
+        self.assertIsNotNone(parsed)
+        now = timezone.now()
+        self.assertGreater(parsed, now + minimum_delta)
+        self.assertLess(parsed, now + maximum_delta)
+
+    def test_admin_can_create_booking_sheet_share_link(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("booking-share-create"),
+            data={
+                "share_type": BookingShare.SHARE_TYPE_BOOKING_SHEET,
+                "filters": {
+                    "prefix": "Beta",
+                    "status": Booking.STATUS_ACTIVE,
+                    "arrival_from": "2026-07-01",
+                    "departure_to": "2026-07-31",
+                },
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()["data"]
+        self.assertIn("/web/share/bookings/", data["url"])
+        share = BookingShare.objects.get(token=data["token"])
+        self.assertEqual(share.created_by, self.admin)
+        self.assertIsNotNone(share.expires_at)
+        self.assertEqual(share.filters["prefix"], "Beta")
+        self.assertEqual(share.filters["status"], Booking.STATUS_ACTIVE)
+        self.assert_expires_between(data["expires_at"], timedelta(days=6), timedelta(days=8))
+
+    def test_admin_can_create_charge_sheet_share_link_with_one_month_validity(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("booking-share-create"),
+            data={
+                "share_type": BookingShare.SHARE_TYPE_CHARGE_SHEET,
+                "validity": "1m",
+                "filters": {
+                    "prefix": "Beta",
+                    "payment": "pending",
+                    "checkout_from": "2026-07-01",
+                    "checkout_to": "2026-07-31",
+                    "search": "Shared",
+                    "ordering": "-created_at",
+                },
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()["data"]
+        self.assertIn("/web/share/charges/", data["url"])
+        share = BookingShare.objects.get(token=data["token"])
+        self.assertEqual(share.share_type, BookingShare.SHARE_TYPE_CHARGE_SHEET)
+        self.assertEqual(share.title, "Charges Sheet")
+        self.assertEqual(share.filters["payment"], "pending")
+        self.assert_expires_between(data["expires_at"], timedelta(days=29), timedelta(days=31))
+
+    def test_admin_can_create_twenty_four_hour_share_link(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("booking-share-create"),
+            data={
+                "share_type": BookingShare.SHARE_TYPE_BOOKING_SHEET,
+                "validity": "24h",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assert_expires_between(response.json()["data"]["expires_at"], timedelta(hours=23), timedelta(hours=25))
+
+    def test_booking_share_create_requires_admin_role(self):
+        unauthenticated = self.client.post(
+            reverse("booking-share-create"),
+            data={"share_type": BookingShare.SHARE_TYPE_BOOKING_SHEET},
+            content_type="application/json",
+        )
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+        requester_response = self.client.post(
+            reverse("booking-share-create"),
+            data={"share_type": BookingShare.SHARE_TYPE_BOOKING_SHEET},
+            content_type="application/json",
+        )
+
+        self.assertEqual(unauthenticated.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(requester_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(BookingShare.objects.exists())
+
+    def test_public_booking_share_page_renders_without_authentication(self):
+        share = BookingShare.objects.create(
+            share_type=BookingShare.SHARE_TYPE_BOOKING_SHEET,
+            expires_at=timezone.now() + timedelta(days=7),
+            filters={
+                "prefix": "Beta",
+                "status": Booking.STATUS_ACTIVE,
+                "arrival_from": "2026-07-01",
+                "departure_to": "2026-07-31",
+            },
+            created_by=self.admin,
+            created_by_name="Admin Share",
+        )
+
+        response = self.client.get(
+            reverse("webapp:shared-bookings", kwargs={"token": share.token})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, "Shared Visitor")
+        self.assertContains(response, "Shared Organisation")
+        self.assertContains(response, "Beta")
+        self.assertContains(response, "201")
+
+    def test_public_charge_share_page_renders_without_authentication(self):
+        share = BookingShare.objects.create(
+            share_type=BookingShare.SHARE_TYPE_CHARGE_SHEET,
+            expires_at=timezone.now() + timedelta(days=7),
+            filters={
+                "prefix": "Beta",
+                "payment": "pending",
+                "checkout_from": "2026-07-01",
+                "checkout_to": "2026-07-31",
+                "search": "Shared",
+                "ordering": "-created_at",
+            },
+            created_by=self.admin,
+            created_by_name="Admin Share",
+        )
+
+        response = self.client.get(
+            reverse("webapp:shared-charges", kwargs={"token": share.token})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, "Charges Sheet")
+        self.assertContains(response, "Shared Visitor")
+        self.assertContains(response, "Shared Event")
+        self.assertContains(response, "250")
+
+    def test_public_share_rejects_expired_token(self):
+        share = BookingShare.objects.create(
+            share_type=BookingShare.SHARE_TYPE_BOOKING_SHEET,
+            expires_at=timezone.now() - timedelta(seconds=1),
+            filters={
+                "prefix": "Beta",
+                "arrival_from": "2026-07-01",
+                "departure_to": "2026-07-31",
+            },
+            created_by=self.admin,
+            created_by_name="Admin Share",
+        )
+
+        response = self.client.get(
+            reverse("webapp:shared-bookings", kwargs={"token": share.token})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_public_booking_share_rejects_unknown_token(self):
+        response = self.client.get(
+            reverse("webapp:shared-bookings", kwargs={"token": "not-a-valid-token"})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 class BookingRequestWorkflowTests(TestCase):
@@ -1465,6 +1690,160 @@ class BackendOperationalTests(TestCase):
         self.assertEqual(response["X-Request-ID"], "test-request-id")
         self.assertTrue(response.json()["success"])
         self.assertEqual(response.json()["data"]["database"], "ok")
+
+
+class BookingChargeSheetApiTests(TestCase):
+    def setUp(self):
+        self.signal_sync = patch("bookings.signals.request_calendar_sync", return_value=True)
+        self.signal_sync.start()
+        self.addCleanup(self.signal_sync.stop)
+
+        self.admin = create_user("admin-charge-sheet@example.com", "Admin User")
+        self.room = Room.objects.get(prefix="Delta", number="101A")
+        self.other_room = Room.objects.create(prefix="Gamma", number="CS201", hostel_name="Mainpat")
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+    def test_charge_sheet_list_creates_missing_rows_from_bookings(self):
+        booking = self.create_booking(
+            self.room,
+            visitor_name="Guest One",
+            requestor_name="Requestor One",
+            purpose_of_visit="Annual event",
+            room_charges_amount=1500,
+            attender_charges_amount=500,
+            budget_head_name="Budget A",
+        )
+        BookingChargeSheet.objects.filter(booking=booking).delete()
+
+        response = self.client.get(reverse("booking-charge-sheet-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.json()["data"]["results"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["booking_reference_id"], booking.booking_reference_number)
+        self.assertEqual(row["check_in"], "2026-07-01T10:00:00Z")
+        self.assertEqual(row["requestor_name"], "Requestor One")
+        self.assertEqual(row["guest_name"], "Guest One")
+        self.assertEqual(row["purpose_event"], "Annual event")
+        self.assertEqual(row["delta"], "101A")
+        self.assertEqual(row["gamma"], "")
+        self.assertEqual(row["beta"], "")
+        self.assertEqual(row["total_charges"], "2000.00")
+
+    def test_charge_sheet_update_updates_linked_booking_and_audit_history(self):
+        booking = self.create_booking(self.room, visitor_name="Original Guest")
+        sheet_row = booking.charge_sheet
+
+        response = self.client.patch(
+            reverse("booking-charge-sheet-detail", kwargs={"pk": sheet_row.pk}),
+            data={
+                "guest_name": "Edited Guest",
+                "purpose_event": "Edited event",
+                "room_charges_amount": "2500.00",
+                "attender_charges_amount": "750.00",
+                "payment_received_date": "2026-07-10",
+                "budget_head_name": "Edited Budget",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        sheet_row.refresh_from_db()
+        booking.refresh_from_db()
+        self.assertEqual(sheet_row.guest_name, "Edited Guest")
+        self.assertEqual(sheet_row.total_charges, 3250)
+        self.assertEqual(booking.visitor_name, "Edited Guest")
+        self.assertEqual(booking.purpose_of_visit, "Edited event")
+        self.assertEqual(booking.room_charges_amount, 2500)
+        self.assertEqual(booking.attender_charges_amount, 750)
+        self.assertEqual(booking.room_charges_status, Booking.CHARGE_STATUS_YES)
+        self.assertEqual(booking.attender_charges_status, Booking.CHARGE_STATUS_YES)
+        self.assertEqual(booking.budget_head_name, "Edited Budget")
+        self.assertTrue(
+            BookingEditHistory.objects.filter(
+                booking=booking,
+                field_name="visitor_name",
+                old_value="Original Guest",
+                new_value="Edited Guest",
+            ).exists()
+        )
+
+    def test_deleting_booking_removes_charge_sheet_row(self):
+        booking = self.create_booking(self.room, visitor_name="Delete Me")
+        sheet_row_id = booking.charge_sheet.id
+
+        response = self.client.delete(reverse("booking-delete", kwargs={"pk": booking.pk}))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Booking.objects.filter(pk=booking.pk).exists())
+        self.assertFalse(BookingChargeSheet.objects.filter(pk=sheet_row_id).exists())
+
+    def test_charge_sheet_filters_search_and_ordering(self):
+        self.create_booking(
+            self.room,
+            visitor_name="Alpha Guest",
+            requestor_name="Alpha Requestor",
+            purpose_of_visit="Seminar",
+            room_charges_amount=100,
+        )
+        gamma_booking = self.create_booking(
+            self.other_room,
+            visitor_name="Beta Guest",
+            requestor_name="Finance Office",
+            purpose_of_visit="Workshop",
+            room_charges_amount=900,
+            attender_charges_amount=100,
+        )
+        gamma_booking.charge_sheet.payment_received_date = datetime(2026, 7, 10).date()
+        gamma_booking.charge_sheet.save(update_fields=["payment_received_date"])
+
+        response = self.client.get(
+            reverse("booking-charge-sheet-list"),
+            {"prefix": "Gamma", "payment": "received", "search": "Finance", "ordering": "-total_charges"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.json()["data"]["results"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["booking_reference_id"], gamma_booking.booking_reference_number)
+        self.assertEqual(rows[0]["gamma"], "CS201")
+        self.assertEqual(rows[0]["total_charges"], "1000.00")
+
+        response = self.client.get(reverse("booking-charge-sheet-list"), {"ordering": "-check_in"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("check_in", response.json()["data"]["results"][0])
+
+    def test_charge_sheet_defaults_to_recent_created_first(self):
+        first_booking = self.create_booking(self.room, visitor_name="First Created")
+        second_booking = self.create_booking(self.other_room, visitor_name="Second Created")
+
+        BookingChargeSheet.objects.filter(booking=second_booking).update(
+            created_at=timezone.now() + timedelta(minutes=5)
+        )
+
+        response = self.client.get(reverse("booking-charge-sheet-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.json()["data"]["results"]
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(rows[0]["booking_reference_id"], second_booking.booking_reference_number)
+        self.assertEqual(rows[1]["booking_reference_id"], first_booking.booking_reference_number)
+
+    def create_booking(self, room, **overrides):
+        data = {
+            "room": room,
+            "arrival_at": utc_dt(2026, 7, 1, 10, 0),
+            "departure_at": utc_dt(2026, 7, 1, 12, 0),
+            "visitor_name": "Guest",
+            "purpose_of_visit": "Event",
+            "requestor_name": "Requestor",
+            "room_charges_amount": 0,
+            "attender_charges_amount": 0,
+        }
+        data.update(overrides)
+        return Booking.objects.create(**data)
 
 
 def utc_dt(year, month, day, hour, minute):

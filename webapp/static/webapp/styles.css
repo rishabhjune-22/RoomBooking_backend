@@ -376,6 +376,11 @@ button:disabled {
 .filter-actions {
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
+}
+
+.charge-filter-grid {
+    grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(150px, 1fr)) auto;
 }
 
 .calendar-layout {
@@ -415,6 +420,25 @@ button:disabled {
     color: var(--muted);
     font-size: 13px;
     font-weight: 700;
+}
+
+.sheet-summary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.share-link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: end;
+}
+
+.share-link-row input {
+    font-size: 13px;
 }
 
 .sheet-scroll {
@@ -560,6 +584,222 @@ button:disabled {
 
 .sheet-create-btn.partial:hover {
     background: var(--orange-soft);
+}
+
+.shared-page {
+    background: var(--page);
+}
+
+.shared-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px;
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 4px 18px rgba(15, 111, 191, 0.22);
+}
+
+.shared-brand-row {
+    margin-bottom: 0;
+}
+
+.shared-header h1 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.shared-header p {
+    margin: 2px 0 0;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 13px;
+}
+
+.shared-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.shared-meta span {
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.1);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.shared-dashboard {
+    max-width: none;
+    width: 100%;
+    padding: 22px 18px 40px;
+}
+
+.shared-sheet-scroll {
+    max-height: calc(100vh - 190px);
+}
+
+.shared-booking-pill {
+    display: grid;
+    gap: 2px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    background: var(--green-soft);
+    color: var(--green);
+    padding: 6px 7px;
+    line-height: 1.25;
+}
+
+.shared-booking-pill.partial {
+    background: var(--orange-soft);
+    color: var(--orange);
+}
+
+.shared-booking-pill span {
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.shared-available {
+    display: inline-flex;
+    border-radius: 6px;
+    background: var(--gray-soft);
+    color: var(--muted);
+    padding: 5px 7px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.charge-sheet-scroll {
+    max-height: 70vh;
+}
+
+.charge-sheet-table th,
+.charge-sheet-table td {
+    min-width: 132px;
+    max-width: 220px;
+}
+
+.charge-sheet-table tbody tr {
+    cursor: pointer;
+}
+
+.charge-sheet-table tbody tr:hover td {
+    background: #f7fbff;
+}
+
+.charge-sheet-table tbody tr.selected-row td,
+.charge-sheet-table tbody tr.selected-row:hover td {
+    background: #b9dcff !important;
+    color: var(--ink);
+    box-shadow: inset 0 2px 0 rgba(15, 111, 191, 0.32), inset 0 -2px 0 rgba(15, 111, 191, 0.32);
+}
+
+.charge-sheet-table tbody tr.selected-row td:first-child {
+    box-shadow: inset 5px 0 0 var(--blue), inset 0 2px 0 rgba(15, 111, 191, 0.32), inset 0 -2px 0 rgba(15, 111, 191, 0.32);
+}
+
+.charge-sheet-table tbody tr.selected-row .sheet-inline-input {
+    border-color: rgba(15, 111, 191, 0.45);
+}
+
+.charge-sheet-table th:nth-child(1),
+.charge-sheet-table td:nth-child(1) {
+    min-width: 88px;
+    max-width: 88px;
+}
+
+.charge-sheet-table th:nth-child(7),
+.charge-sheet-table td:nth-child(7) {
+    min-width: 220px;
+    max-width: 280px;
+}
+
+.charge-sheet-table th:nth-child(8),
+.charge-sheet-table td:nth-child(8),
+.charge-sheet-table th:nth-child(9),
+.charge-sheet-table td:nth-child(9),
+.charge-sheet-table th:nth-child(10),
+.charge-sheet-table td:nth-child(10) {
+    min-width: 92px;
+    max-width: 92px;
+}
+
+.charge-sheet-table th.sortable-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    min-height: 48px;
+    background: linear-gradient(180deg, #f8fbff 0%, #edf5ff 100%);
+    color: var(--blue-dark);
+    cursor: pointer;
+    user-select: none;
+    vertical-align: middle;
+}
+
+.charge-sheet-table th.sortable-header:hover,
+.charge-sheet-table th.sortable-header:focus {
+    background: #e2efff;
+    outline: none;
+}
+
+.charge-sheet-table th.sortable-header:focus {
+    box-shadow: inset 0 0 0 2px rgba(28, 82, 142, 0.22);
+}
+
+.charge-sheet-table .header-label {
+    display: block;
+    padding-right: 22px;
+    line-height: 1.2;
+}
+
+.charge-sheet-table .sort-caret {
+    position: absolute;
+    top: 50%;
+    right: 9px;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid #8aa6c5;
+    border-bottom: 2px solid #8aa6c5;
+    opacity: 0.65;
+    transform: translateY(-65%) rotate(45deg);
+}
+
+.charge-sheet-table th.sorted.asc .sort-caret {
+    border-color: var(--blue);
+    opacity: 1;
+    transform: translateY(-30%) rotate(225deg);
+}
+
+.charge-sheet-table th.sorted.desc .sort-caret {
+    border-color: var(--blue);
+    opacity: 1;
+}
+
+.sheet-inline-input {
+    width: 100%;
+    min-height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 4px 6px;
+    font: inherit;
+}
+
+.sheet-inline-input.compact {
+    min-height: 54px;
+    resize: vertical;
+}
+
+.sheet-actions-col {
+    min-width: 78px !important;
+    max-width: 92px !important;
+    white-space: nowrap;
 }
 
 .calendar-controls {
@@ -946,6 +1186,10 @@ button:disabled {
     .sheet-summary {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .sheet-summary-actions {
+        justify-content: flex-start;
     }
 
     .excel-table th,

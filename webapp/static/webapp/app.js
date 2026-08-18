@@ -6,6 +6,8 @@ const STORAGE_KEYS = {
     user: "roomBookingWebUser",
 };
 
+const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
+
 const STATUS_LABELS = {
     pending: "Pending",
     approved: "Approved",
@@ -43,6 +45,15 @@ const state = {
     bookingLoading: false,
     bookingLoadedCount: 0,
     bookingInfiniteObserver: null,
+    chargeSheetPrefixFilter: "all",
+    chargeSheetPaymentFilter: "all",
+    chargeSheetCheckoutFrom: "",
+    chargeSheetCheckoutTo: "",
+    chargeSheetSearch: "",
+    chargeSheetOrdering: "-created_at",
+    chargeSheetRows: [],
+    chargeSheetEditingId: "",
+    chargeSheetSelectedId: "",
     bookingRequestFilter: "pending",
     requesterAccountFilter: "pending",
     myRequestFilter: "all",
@@ -449,7 +460,8 @@ async function submitAuthForm(event) {
             return;
         }
         setTokens(data);
-        state.view = isAdminLike() ? "calendar" : "calendar";
+        state.view = defaultViewForCurrentRole();
+        syncRouteHash(true);
         renderDashboard();
     } catch (error) {
         renderAuth(error.message, true);
@@ -458,6 +470,68 @@ async function submitAuthForm(event) {
 
 function isAdminLike() {
     return state.user?.role === "admin" || state.user?.role === "superadmin";
+}
+
+function defaultViewForCurrentRole() {
+    return "calendar";
+}
+
+function allowedViewIds() {
+    return menuItems().map(([id]) => id);
+}
+
+function readRouteFromHash() {
+    const rawHash = window.location.hash.replace(/^#/, "");
+    if (!rawHash) {
+        return {};
+    }
+    if (!rawHash.includes("=")) {
+        return { view: decodeURIComponent(rawHash) };
+    }
+    const params = new URLSearchParams(rawHash);
+    return {
+        view: params.get("view") || "",
+        bookingView: params.get("bookingView") || "",
+    };
+}
+
+function applyRouteFromHash() {
+    const route = readRouteFromHash();
+    const allowedViews = allowedViewIds();
+    state.view = allowedViews.includes(route.view)
+        ? route.view
+        : defaultViewForCurrentRole();
+
+    if (state.view === "bookings" && BOOKING_VIEW_MODES.has(route.bookingView)) {
+        state.bookingViewMode = route.bookingView;
+    }
+}
+
+function routeHash() {
+    const params = new URLSearchParams({ view: state.view });
+    if (state.view === "bookings") {
+        params.set("bookingView", state.bookingViewMode);
+    }
+    return `#${params.toString()}`;
+}
+
+function syncRouteHash(replace = false) {
+    const nextHash = routeHash();
+    if (window.location.hash === nextHash) {
+        return;
+    }
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+    if (replace) {
+        window.history.replaceState(null, "", nextUrl);
+    } else {
+        window.history.pushState(null, "", nextUrl);
+    }
+}
+
+function navigateToView(view, replace = false) {
+    state.view = view;
+    syncRouteHash(replace);
+    renderDashboard();
 }
 
 function menuItems() {
@@ -499,8 +573,7 @@ function renderDashboard() {
     `;
     appRoot.querySelectorAll("[data-view]").forEach((button) => {
         button.addEventListener("click", () => {
-            state.view = button.dataset.view;
-            renderDashboard();
+            navigateToView(button.dataset.view);
         });
     });
     appRoot.querySelector("[data-logout]").addEventListener("click", logout);
@@ -844,12 +917,329 @@ function bookingSheetEndpoint() {
     return `/api/bookings/?${params.toString()}`;
 }
 
+function chargeSheetEndpoint() {
+    const params = new URLSearchParams({ page_size: "100" });
+    if (state.chargeSheetPrefixFilter !== "all") params.set("prefix", state.chargeSheetPrefixFilter);
+    if (state.chargeSheetPaymentFilter !== "all") params.set("payment", state.chargeSheetPaymentFilter);
+    if (state.chargeSheetCheckoutFrom) params.set("checkout_from", state.chargeSheetCheckoutFrom);
+    if (state.chargeSheetCheckoutTo) params.set("checkout_to", state.chargeSheetCheckoutTo);
+    if (state.chargeSheetSearch) params.set("search", state.chargeSheetSearch);
+    if (state.chargeSheetOrdering) params.set("ordering", state.chargeSheetOrdering);
+    return `/api/bookings/charge-sheet/?${params.toString()}`;
+}
+
+function bookingDisplayId(booking) {
+    const reference = String(booking.booking_reference_number || "").trim();
+    if (reference) return reference;
+    const id = String(booking.id || "").trim();
+    return id ? id.padStart(6, "0") : "-";
+}
+
+function sheetExportButtons(sheetName) {
+    return `
+        <button class="outline-btn compact-btn" type="button" data-sheet-export="${sheetName}-excel">Download Excel</button>
+        <button class="outline-btn compact-btn" type="button" data-sheet-export="${sheetName}-pdf">Download PDF</button>
+        <button class="outline-btn compact-btn" type="button" data-sheet-share="${sheetName}">Share</button>
+    `;
+}
+
+function filenameTimestamp() {
+    return new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "");
+}
+
+function safeFilename(title, extension) {
+    const base = String(title || "sheet")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "sheet";
+    return `${base}-${filenameTimestamp()}.${extension}`;
+}
+
+function exportTableClone(tableSelector) {
+    const table = document.querySelector(tableSelector);
+    if (!table) {
+        toast("No sheet data available to download.", "error");
+        return null;
+    }
+    const clone = table.cloneNode(true);
+
+    clone.querySelectorAll("input, textarea, select").forEach((control) => {
+        control.replaceWith(document.createTextNode(control.value || ""));
+    });
+    clone.querySelectorAll(".sheet-booking-pill").forEach((button) => {
+        const span = document.createElement("span");
+        span.textContent = button.textContent.trim();
+        button.replaceWith(span);
+    });
+    clone.querySelectorAll(".sheet-inline-actions, .sheet-create-btn").forEach((node) => node.remove());
+
+    const actionIndexes = [];
+    clone.querySelectorAll("thead th").forEach((header, index) => {
+        const text = header.textContent.trim().toLowerCase();
+        if (header.classList.contains("sheet-actions-col") || text === "edit" || text === "actions") {
+            actionIndexes.push(index);
+        }
+    });
+    actionIndexes.reverse().forEach((index) => {
+        clone.querySelectorAll("tr").forEach((row) => row.children[index]?.remove());
+    });
+
+    clone.querySelectorAll("[data-charge-sort], [tabindex], [aria-sort]").forEach((node) => {
+        node.removeAttribute("data-charge-sort");
+        node.removeAttribute("tabindex");
+        node.removeAttribute("aria-sort");
+    });
+    clone.querySelectorAll("[class]").forEach((node) => {
+        node.removeAttribute("class");
+    });
+    return clone;
+}
+
+function downloadBlob(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadSheetExcel(tableSelector, title) {
+    const table = exportTableClone(tableSelector);
+    if (!table) {
+        return;
+    }
+    const html = `
+        <!doctype html>
+        <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    table { border-collapse: collapse; }
+                    th, td { border: 1px solid #b7c6d8; padding: 6px 8px; vertical-align: top; }
+                    th { background: #dceeff; font-weight: 700; }
+                </style>
+            </head>
+            <body>
+                <h2>${escapeHtml(title)}</h2>
+                ${table.outerHTML}
+            </body>
+        </html>
+    `;
+    downloadBlob(safeFilename(title, "xls"), `\ufeff${html}`, "application/vnd.ms-excel;charset=utf-8");
+    toast("Excel download started.");
+}
+
+function downloadSheetPdf(tableSelector, title) {
+    const table = exportTableClone(tableSelector);
+    if (!table) {
+        return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+        toast("Allow pop-ups to download PDF.", "error");
+        return;
+    }
+    printWindow.document.write(`
+        <!doctype html>
+        <html>
+            <head>
+                <meta charset="utf-8">
+                <title>${escapeHtml(title)}</title>
+                <style>
+                    @page { size: A4 landscape; margin: 10mm; }
+                    * { box-sizing: border-box; }
+                    body { margin: 0; font-family: Arial, sans-serif; color: #172033; }
+                    h2 { margin: 0 0 12px; font-size: 18px; }
+                    table { width: 100%; border-collapse: collapse; font-size: 9px; }
+                    th, td { border: 1px solid #b7c6d8; padding: 4px 5px; vertical-align: top; word-break: break-word; }
+                    th { background: #dceeff; color: #0f4f86; font-weight: 700; }
+                </style>
+            </head>
+            <body>
+                <h2>${escapeHtml(title)}</h2>
+                ${table.outerHTML}
+            </body>
+        </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => {
+        printWindow.print();
+    }, 250);
+}
+
+function handleSheetExport(exportType) {
+    if (exportType === "booking-excel") {
+        downloadSheetExcel("#bookings-sheet table", "Booking Sheet");
+    } else if (exportType === "booking-pdf") {
+        downloadSheetPdf("#bookings-sheet table", "Booking Sheet");
+    } else if (exportType === "charge-excel") {
+        downloadSheetExcel("#charge-sheet table", "Charges Sheet");
+    } else if (exportType === "charge-pdf") {
+        downloadSheetPdf("#charge-sheet table", "Charges Sheet");
+    }
+}
+
+function bookingSharePayload(validity = "1w") {
+    const range = bookingSheetDateRange();
+    const filters = {
+        arrival_from: range.start,
+        departure_to: range.end,
+    };
+    if (state.bookingStatusFilter !== "all") {
+        filters.status = state.bookingStatusFilter;
+    }
+    if (state.bookingPrefixFilter !== "all") {
+        filters.prefix = state.bookingPrefixFilter;
+    }
+    return {
+        share_type: "booking_sheet",
+        title: "Booking Sheet",
+        validity,
+        filters,
+    };
+}
+
+function chargeSheetSharePayload(validity = "1w") {
+    const filters = {};
+    if (state.chargeSheetPrefixFilter !== "all") {
+        filters.prefix = state.chargeSheetPrefixFilter;
+    }
+    if (state.chargeSheetPaymentFilter !== "all") {
+        filters.payment = state.chargeSheetPaymentFilter;
+    }
+    if (state.chargeSheetCheckoutFrom) {
+        filters.checkout_from = state.chargeSheetCheckoutFrom;
+    }
+    if (state.chargeSheetCheckoutTo) {
+        filters.checkout_to = state.chargeSheetCheckoutTo;
+    }
+    if (state.chargeSheetSearch) {
+        filters.search = state.chargeSheetSearch;
+    }
+    if (state.chargeSheetOrdering) {
+        filters.ordering = state.chargeSheetOrdering;
+    }
+    return {
+        share_type: "charge_sheet",
+        title: "Charges Sheet",
+        validity,
+        filters,
+    };
+}
+
+function sheetSharePayload(sheetName, validity = "1w") {
+    return sheetName === "charge"
+        ? chargeSheetSharePayload(validity)
+        : bookingSharePayload(validity);
+}
+
+async function copyTextToClipboard(value) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return;
+    }
+    const input = document.createElement("input");
+    input.value = value;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+}
+
+function openShareLinkModal(data, sheetName) {
+    const url = data.url;
+    const title = sheetName === "charge" ? "Share Charges Sheet" : "Share Booking Sheet";
+    const expiresText = data.expires_at ? `Valid until ${escapeHtml(formatDateTime(data.expires_at))}` : "";
+    openActionModal({
+        title,
+        body: `
+            <div class="details-list">
+                <p class="item-meta">Anyone with this link can view this read-only ${sheetName === "charge" ? "charges" : "booking"} sheet until it expires.</p>
+                ${expiresText ? `<div class="status-message success">${expiresText}</div>` : ""}
+                <div class="share-link-row">
+                    <div class="field-row">
+                        <label for="share-link-url">Share URL</label>
+                        <input id="share-link-url" value="${htmlValue(url)}" readonly>
+                    </div>
+                    <button class="outline-btn" type="button" id="open-share-link">Open</button>
+                </div>
+            </div>
+        `,
+        confirmText: "Copy Link",
+        confirmClass: "primary-btn",
+        onBind: () => {
+            const input = document.getElementById("share-link-url");
+            input?.focus();
+            input?.select();
+            document.getElementById("open-share-link")?.addEventListener("click", () => {
+                window.open(url, "_blank", "noopener");
+            });
+        },
+        onConfirm: async () => {
+            await copyTextToClipboard(url);
+            toast("Share link copied.");
+        },
+    });
+}
+
+function openShareOptionsModal(sheetName) {
+    const title = sheetName === "charge" ? "Share Charges Sheet" : "Share Booking Sheet";
+    openActionModal({
+        title,
+        body: `
+            <div class="details-list">
+                <p class="item-meta">Choose how long this read-only shared URL should remain valid.</p>
+                <div class="field-row">
+                    <label for="share-validity">Valid for</label>
+                    <select id="share-validity">
+                        <option value="24h">24 hours</option>
+                        <option value="1w" selected>1 week</option>
+                        <option value="1m">1 month</option>
+                    </select>
+                </div>
+            </div>
+        `,
+        confirmText: "Generate Link",
+        confirmClass: "primary-btn",
+        onConfirm: async () => {
+            const validity = document.getElementById("share-validity")?.value || "1w";
+            const data = await createSheetShareLink(sheetName, validity);
+            window.setTimeout(() => openShareLinkModal(data, sheetName), 0);
+        },
+    });
+}
+
+async function createSheetShareLink(sheetName, validity = "1w") {
+    const data = await apiFetch("/api/bookings/share-links/", {
+        method: "POST",
+        body: sheetSharePayload(sheetName, validity),
+    });
+    if (!data?.url) {
+        throw new Error("Share link could not be generated.");
+    }
+    return data;
+}
+
+async function createBookingShareLink(sheetName = "booking") {
+    try {
+        openShareOptionsModal(sheetName);
+    } catch (error) {
+        toast(error.message, "error");
+    }
+}
+
 function bookingCardHtml(booking) {
     return `
         <article class="item-card" data-booking-id="${booking.id}">
             <div class="item-main">
                 <div>
                     <h3 class="item-title">${escapeHtml(booking.visitor_name || "Visitor")}</h3>
+                    <p class="item-meta">Booking ID: ${escapeHtml(bookingDisplayId(booking))}</p>
                     <p class="item-meta">${escapeHtml(booking.room_name)} - ${formatDateRange(booking)}</p>
                     <p class="item-meta">Requestor: ${escapeHtml(booking.requestor_name || "-")} - Created by: ${escapeHtml(booking.created_by_name || "-")}</p>
                 </div>
@@ -909,7 +1299,8 @@ function setupBookingInfiniteScroll() {
 
 function renderBookingsView() {
     const statusTabs = [["all", "All"], ["active", "Active"], ["expired", "Expired"]];
-    viewRoot().classList.toggle("wide-dashboard", state.bookingViewMode === "sheet");
+    const isChargeSheet = state.bookingViewMode === "charge_sheet";
+    viewRoot().classList.toggle("wide-dashboard", state.bookingViewMode === "sheet" || isChargeSheet);
     viewRoot().innerHTML = `
         <div class="section-header">
             <div>
@@ -924,54 +1315,135 @@ function renderBookingsView() {
         <div class="segmented view-tabs" role="tablist" aria-label="Bookings view">
             <button class="segment-btn ${state.bookingViewMode === "cards" ? "active" : ""}" data-booking-view="cards">Cards</button>
             <button class="segment-btn ${state.bookingViewMode === "sheet" ? "active" : ""}" data-booking-view="sheet">Sheet View</button>
+            <button class="segment-btn ${isChargeSheet ? "active" : ""}" data-booking-view="charge_sheet">Charges Sheet</button>
         </div>
-        <section class="surface filter-panel">
-            <div>
-                <p class="filter-label">Status</p>
-                ${filterTabs(state.bookingStatusFilter, statusTabs)}
-            </div>
-            <div class="filter-grid">
-                <div class="field-row">
-                    <label for="booking-prefix-filter">Building</label>
-                    <select id="booking-prefix-filter">
-                        <option value="all" ${state.bookingPrefixFilter === "all" ? "selected" : ""}>All buildings</option>
-                        ${BUILDINGS.map((building) => `<option value="${building}" ${state.bookingPrefixFilter === building ? "selected" : ""}>${building}</option>`).join("")}
-                    </select>
+        ${isChargeSheet ? `
+            <section class="surface filter-panel">
+                <div class="filter-grid charge-filter-grid">
+                    <div class="field-row">
+                        <label for="charge-sheet-search">Search</label>
+                        <input id="charge-sheet-search" type="search" placeholder="Reference, requestor, guest, purpose, budget..." value="${htmlValue(state.chargeSheetSearch)}">
+                    </div>
+                    <div class="field-row">
+                        <label for="charge-sheet-prefix">Building</label>
+                        <select id="charge-sheet-prefix">
+                            <option value="all" ${state.chargeSheetPrefixFilter === "all" ? "selected" : ""}>All buildings</option>
+                            ${BUILDINGS.map((building) => `<option value="${building}" ${state.chargeSheetPrefixFilter === building ? "selected" : ""}>${building}</option>`).join("")}
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <label for="charge-sheet-payment">Payment</label>
+                        <select id="charge-sheet-payment">
+                            <option value="all" ${state.chargeSheetPaymentFilter === "all" ? "selected" : ""}>All</option>
+                            <option value="received" ${state.chargeSheetPaymentFilter === "received" ? "selected" : ""}>Received</option>
+                            <option value="pending" ${state.chargeSheetPaymentFilter === "pending" ? "selected" : ""}>Pending</option>
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <label for="charge-sheet-checkout-from">Check out from</label>
+                        <input id="charge-sheet-checkout-from" type="date" value="${htmlValue(state.chargeSheetCheckoutFrom)}">
+                    </div>
+                    <div class="field-row">
+                        <label for="charge-sheet-checkout-to">Check out to</label>
+                        <input id="charge-sheet-checkout-to" type="date" value="${htmlValue(state.chargeSheetCheckoutTo)}">
+                    </div>
+                    <div class="field-row">
+                        <label for="charge-sheet-sort">Sort</label>
+                        <select id="charge-sheet-sort">
+                            ${chargeSheetSortOptions().map(([value, label]) => `<option value="${value}" ${state.chargeSheetOrdering === value ? "selected" : ""}>${label}</option>`).join("")}
+                        </select>
+                    </div>
+                    <div class="filter-actions">
+                        <button class="primary-btn" id="apply-charge-sheet-filters" type="button">Apply</button>
+                        <button class="outline-btn" id="clear-charge-sheet-filters" type="button">Clear</button>
+                    </div>
                 </div>
-                <div class="field-row">
-                    <label for="booking-arrival-from">Arrival from</label>
-                    <input id="booking-arrival-from" type="date" value="${escapeHtml(state.bookingArrivalFrom)}">
+            </section>
+            <section class="surface sheet-panel">
+                <div id="charge-sheet" class="sheet-shell"><div class="loading-state">Loading charges sheet...</div></div>
+            </section>
+        ` : `
+            <section class="surface filter-panel">
+                <div>
+                    <p class="filter-label">Status</p>
+                    ${filterTabs(state.bookingStatusFilter, statusTabs)}
                 </div>
-                <div class="field-row">
-                    <label for="booking-departure-to">Departure to</label>
-                    <input id="booking-departure-to" type="date" value="${escapeHtml(state.bookingDepartureTo)}">
+                <div class="filter-grid">
+                    <div class="field-row">
+                        <label for="booking-prefix-filter">Building</label>
+                        <select id="booking-prefix-filter">
+                            <option value="all" ${state.bookingPrefixFilter === "all" ? "selected" : ""}>All buildings</option>
+                            ${BUILDINGS.map((building) => `<option value="${building}" ${state.bookingPrefixFilter === building ? "selected" : ""}>${building}</option>`).join("")}
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <label for="booking-arrival-from">Arrival from</label>
+                        <input id="booking-arrival-from" type="date" value="${escapeHtml(state.bookingArrivalFrom)}">
+                    </div>
+                    <div class="field-row">
+                        <label for="booking-departure-to">Departure to</label>
+                        <input id="booking-departure-to" type="date" value="${escapeHtml(state.bookingDepartureTo)}">
+                    </div>
+                    <div class="filter-actions">
+                        <button class="outline-btn" id="clear-booking-filters" type="button">Clear Filters</button>
+                    </div>
                 </div>
-                <div class="filter-actions">
-                    <button class="outline-btn" id="clear-booking-filters" type="button">Clear Filters</button>
-                </div>
-            </div>
-        </section>
-        ${state.bookingViewMode === "sheet" ? `
+            </section>
+            ${state.bookingViewMode === "sheet" ? `
             <section class="surface sheet-panel">
                 <div id="bookings-sheet" class="sheet-shell"><div class="loading-state">Loading sheet view...</div></div>
             </section>
-        ` : `
+            ` : `
             <section class="surface side-panel">
                 <div id="bookings-list" class="card-list"><div class="loading-state">Loading bookings...</div></div>
                 <div id="bookings-sentinel" class="scroll-sentinel"></div>
             </section>
+            `}
         `}
     `;
     appRoot.querySelectorAll("[data-booking-view]").forEach((button) => {
         button.addEventListener("click", () => {
             state.bookingViewMode = button.dataset.bookingView;
+            syncRouteHash();
+            state.chargeSheetEditingId = "";
             renderBookingsView();
         });
     });
-    bindFilterTabs(viewRoot(), (filter) => {
-        state.bookingStatusFilter = filter;
-        renderBookingsView();
-    });
+    document.getElementById("create-booking").addEventListener("click", () => openAdminBookingForm());
+    document.getElementById("refresh-bookings").addEventListener("click", refreshBookingsView);
+    if (isChargeSheet) {
+        bindChargeSheetFilters();
+        loadChargeSheetView();
+    } else if (state.bookingViewMode === "sheet") {
+        bindFilterTabs(viewRoot(), (filter) => {
+            state.bookingStatusFilter = filter;
+            renderBookingsView();
+        });
+        bindBookingFilters();
+        loadBookingSheetView();
+    } else {
+        bindFilterTabs(viewRoot(), (filter) => {
+            state.bookingStatusFilter = filter;
+            renderBookingsView();
+        });
+        bindBookingFilters();
+        document.getElementById("bookings-list").addEventListener("click", (event) => {
+            const actionButton = event.target.closest("[data-booking-action]");
+            if (actionButton) {
+                handleBookingInlineAction(actionButton.dataset.bookingAction, actionButton.dataset.id);
+                return;
+            }
+            const card = event.target.closest("[data-booking-id]");
+            if (card) {
+                openBookingDetails(card.dataset.bookingId);
+            }
+        });
+        setupBookingInfiniteScroll();
+        loadBookings({ reset: true });
+    }
+}
+
+function bindBookingFilters() {
     document.getElementById("booking-prefix-filter").addEventListener("change", (event) => {
         state.bookingPrefixFilter = event.target.value;
         refreshBookingsView();
@@ -991,33 +1463,317 @@ function renderBookingsView() {
         state.bookingDepartureTo = "";
         renderBookingsView();
     });
-    document.getElementById("create-booking").addEventListener("click", () => openAdminBookingForm());
-    document.getElementById("refresh-bookings").addEventListener("click", refreshBookingsView);
-    if (state.bookingViewMode === "sheet") {
-        loadBookingSheetView();
-    } else {
-        document.getElementById("bookings-list").addEventListener("click", (event) => {
-            const actionButton = event.target.closest("[data-booking-action]");
-            if (actionButton) {
-                handleBookingInlineAction(actionButton.dataset.bookingAction, actionButton.dataset.id);
-                return;
-            }
-            const card = event.target.closest("[data-booking-id]");
-            if (card) {
-                openBookingDetails(card.dataset.bookingId);
-            }
-        });
-        setupBookingInfiniteScroll();
-        loadBookings({ reset: true });
-    }
 }
 
 async function refreshBookingsView() {
+    if (state.bookingViewMode === "charge_sheet") {
+        await loadChargeSheetView();
+        return;
+    }
     if (state.bookingViewMode === "sheet") {
         await loadBookingSheetView();
         return;
     }
     await loadBookings({ reset: true });
+}
+
+function chargeSheetSortOptions() {
+    return [
+        ["-created_at", "Date created - newest first"],
+        ["created_at", "Date created - oldest first"],
+        ["check_in", "Check in - oldest first"],
+        ["-check_in", "Check in - newest first"],
+        ["check_out", "Check out - oldest first"],
+        ["-check_out", "Check out - newest first"],
+        ["serial_no", "Serial no."],
+        ["booking_reference_id", "Booking reference"],
+        ["requestor_name", "Requestor name"],
+        ["guest_name", "Guest name"],
+        ["purpose_event", "Purpose/Event"],
+        ["room_charges_amount", "Room charges"],
+        ["attender_charges_amount", "Attender charges"],
+        ["total_charges", "Total charges"],
+        ["payment_received_date", "Payment received date"],
+        ["budget_head_name", "Budget head name"],
+    ];
+}
+
+function bindChargeSheetFilters() {
+    const applyFilters = () => {
+        state.chargeSheetSearch = document.getElementById("charge-sheet-search")?.value?.trim() || "";
+        state.chargeSheetPrefixFilter = document.getElementById("charge-sheet-prefix")?.value || "all";
+        state.chargeSheetPaymentFilter = document.getElementById("charge-sheet-payment")?.value || "all";
+        state.chargeSheetCheckoutFrom = document.getElementById("charge-sheet-checkout-from")?.value || "";
+        state.chargeSheetCheckoutTo = document.getElementById("charge-sheet-checkout-to")?.value || "";
+        state.chargeSheetOrdering = document.getElementById("charge-sheet-sort")?.value || "-created_at";
+        state.chargeSheetEditingId = "";
+        loadChargeSheetView();
+    };
+    document.getElementById("apply-charge-sheet-filters")?.addEventListener("click", applyFilters);
+    document.getElementById("charge-sheet-sort")?.addEventListener("change", applyFilters);
+    document.getElementById("charge-sheet-search")?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            applyFilters();
+        }
+    });
+    document.getElementById("clear-charge-sheet-filters")?.addEventListener("click", () => {
+        state.chargeSheetPrefixFilter = "all";
+        state.chargeSheetPaymentFilter = "all";
+        state.chargeSheetCheckoutFrom = "";
+        state.chargeSheetCheckoutTo = "";
+        state.chargeSheetSearch = "";
+        state.chargeSheetOrdering = "-created_at";
+        state.chargeSheetEditingId = "";
+        renderBookingsView();
+    });
+}
+
+function chargeSheetHeader(field, label) {
+    const activeField = state.chargeSheetOrdering.startsWith("-")
+        ? state.chargeSheetOrdering.slice(1)
+        : state.chargeSheetOrdering;
+    const isActive = activeField === field;
+    const direction = state.chargeSheetOrdering.startsWith("-") ? "desc" : "asc";
+    const classes = ["sortable-header"];
+    if (isActive) {
+        classes.push("sorted", direction);
+    }
+    return `
+        <th class="${classes.join(" ")}" data-charge-sort="${field}" tabindex="0" aria-sort="${isActive ? (direction === "desc" ? "descending" : "ascending") : "none"}">
+            <span class="header-label">${escapeHtml(label)}</span>
+            <span class="sort-caret" aria-hidden="true"></span>
+        </th>
+    `;
+}
+
+function setChargeSheetOrdering(field) {
+    const activeField = state.chargeSheetOrdering.startsWith("-")
+        ? state.chargeSheetOrdering.slice(1)
+        : state.chargeSheetOrdering;
+    if (activeField === field) {
+        state.chargeSheetOrdering = state.chargeSheetOrdering.startsWith("-") ? field : `-${field}`;
+    } else {
+        state.chargeSheetOrdering = field;
+    }
+    const sortSelect = document.getElementById("charge-sheet-sort");
+    if (sortSelect) {
+        sortSelect.value = state.chargeSheetOrdering;
+    }
+    state.chargeSheetEditingId = "";
+    loadChargeSheetView();
+}
+
+function chargeSheetInput(field, value, type = "text") {
+    const numberAttrs = type === "number" ? ` min="0" step="0.01"` : "";
+    return `<input class="sheet-inline-input" data-charge-field="${field}" type="${type}"${numberAttrs} value="${htmlValue(value)}">`;
+}
+
+function chargeSheetTextarea(field, value) {
+    return `<textarea class="sheet-inline-input compact" data-charge-field="${field}">${htmlValue(value)}</textarea>`;
+}
+
+function chargeSheetEditableCell(row, field, type = "text") {
+    if (String(state.chargeSheetEditingId) !== String(row.id)) {
+        return escapeHtml(valueOrDash(row[field]));
+    }
+    if (field === "purpose_event") {
+        return chargeSheetTextarea(field, row[field]);
+    }
+    return chargeSheetInput(field, row[field] || "", type);
+}
+
+function chargeSheetRowHtml(row) {
+    const editing = String(state.chargeSheetEditingId) === String(row.id);
+    const selected = String(state.chargeSheetSelectedId) === String(row.id);
+    return `
+        <tr class="${selected ? "selected-row" : ""}" data-charge-row-id="${row.id}" aria-selected="${selected ? "true" : "false"}">
+            <td>${escapeHtml(row.serial_no || row.id)}</td>
+            <td>${escapeHtml(formatDateTime(row.check_in))}</td>
+            <td>${escapeHtml(formatDateTime(row.check_out))}</td>
+            <td>${escapeHtml(row.booking_reference_id || "-")}</td>
+            <td>${chargeSheetEditableCell(row, "requestor_name")}</td>
+            <td>${chargeSheetEditableCell(row, "guest_name")}</td>
+            <td>${chargeSheetEditableCell(row, "purpose_event")}</td>
+            <td>${escapeHtml(row.delta || "")}</td>
+            <td>${escapeHtml(row.gamma || "")}</td>
+            <td>${escapeHtml(row.beta || "")}</td>
+            <td>${chargeSheetEditableCell(row, "room_charges_amount", "number")}</td>
+            <td>${chargeSheetEditableCell(row, "attender_charges_amount", "number")}</td>
+            <td>${escapeHtml(row.total_charges || "0.00")}</td>
+            <td>${editing ? chargeSheetInput("payment_received_date", row.payment_received_date || "", "date") : escapeHtml(row.payment_received_date || "-")}</td>
+            <td>${chargeSheetEditableCell(row, "budget_head_name")}</td>
+            <td class="sheet-actions-col">
+                ${editing ? `
+                    <button class="sheet-action-btn" type="button" data-charge-action="save" data-id="${row.id}">Save</button>
+                    <button class="sheet-action-btn" type="button" data-charge-action="cancel" data-id="${row.id}">Cancel</button>
+                ` : `
+                    <button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>
+                    <button class="sheet-action-btn danger" type="button" data-charge-action="delete" data-id="${row.id}" data-booking-id="${row.booking}">Delete</button>
+                `}
+            </td>
+        </tr>
+    `;
+}
+
+function setChargeSheetSelectedRow(rowId, shell) {
+    state.chargeSheetSelectedId = String(rowId || "");
+    shell.querySelectorAll("[data-charge-row-id]").forEach((row) => {
+        const selected = row.dataset.chargeRowId === state.chargeSheetSelectedId;
+        row.classList.toggle("selected-row", selected);
+        row.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+}
+
+function clearChargeSheetSelectedRow() {
+    if (!state.chargeSheetSelectedId) {
+        return;
+    }
+    state.chargeSheetSelectedId = "";
+    document.querySelectorAll(".charge-sheet-table .selected-row").forEach((row) => {
+        row.classList.remove("selected-row");
+    });
+}
+
+function renderChargeSheetRows(shell) {
+    const rows = state.chargeSheetRows || [];
+    if (!rows.length) {
+        shell.innerHTML = `<div class="empty-state">No charge sheet rows match the selected filters.</div>`;
+        return;
+    }
+    shell.innerHTML = `
+        <div class="sheet-summary">
+            <div>
+                <h3>Charges Sheet</h3>
+                <p>Booking charge and payment register</p>
+            </div>
+            <div class="sheet-summary-actions">
+                <span>${rows.length} row${rows.length === 1 ? "" : "s"}</span>
+                ${sheetExportButtons("charge")}
+            </div>
+        </div>
+        <div class="sheet-scroll charge-sheet-scroll" role="region" aria-label="Booking charges sheet">
+            <table class="excel-table charge-sheet-table">
+                <thead>
+                    <tr>
+                        ${chargeSheetHeader("serial_no", "Serial NO")}
+                        ${chargeSheetHeader("check_in", "Check in")}
+                        ${chargeSheetHeader("check_out", "Check out")}
+                        ${chargeSheetHeader("booking_reference_id", "Booking Reference ID")}
+                        ${chargeSheetHeader("requestor_name", "Requestor Name")}
+                        ${chargeSheetHeader("guest_name", "Name of Guest")}
+                        ${chargeSheetHeader("purpose_event", "Purpose(Event)")}
+                        ${chargeSheetHeader("delta", "Delta")}
+                        ${chargeSheetHeader("gamma", "Gamma")}
+                        ${chargeSheetHeader("beta", "Beta")}
+                        ${chargeSheetHeader("room_charges_amount", "Room Charges Amount")}
+                        ${chargeSheetHeader("attender_charges_amount", "Attender Charges Amount")}
+                        ${chargeSheetHeader("total_charges", "Total Charges")}
+                        ${chargeSheetHeader("payment_received_date", "Payment Received Date")}
+                        ${chargeSheetHeader("budget_head_name", "Budget Head Name")}
+                        <th class="sheet-actions-col">Edit</th>
+                    </tr>
+                </thead>
+                <tbody>${rows.map(chargeSheetRowHtml).join("")}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function loadChargeSheetView() {
+    const shell = document.getElementById("charge-sheet");
+    if (!shell) {
+        return;
+    }
+    shell.innerHTML = `<div class="loading-state">Loading charges sheet...</div>`;
+    try {
+        state.chargeSheetRows = await fetchAllPaginated(chargeSheetEndpoint());
+        renderChargeSheetRows(shell);
+        bindChargeSheetTable(shell);
+    } catch (error) {
+        shell.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function bindChargeSheetTable(shell) {
+    shell.onclick = async (event) => {
+        const exportButton = event.target.closest("[data-sheet-export]");
+        if (exportButton) {
+            handleSheetExport(exportButton.dataset.sheetExport);
+            return;
+        }
+        const shareButton = event.target.closest("[data-sheet-share]");
+        if (shareButton) {
+            createBookingShareLink(shareButton.dataset.sheetShare);
+            return;
+        }
+        const sortButton = event.target.closest("[data-charge-sort]");
+        if (sortButton) {
+            setChargeSheetOrdering(sortButton.dataset.chargeSort);
+            return;
+        }
+        const actionButton = event.target.closest("[data-charge-action]");
+        if (!actionButton) {
+            return;
+        }
+        const rowId = actionButton.dataset.id;
+        const action = actionButton.dataset.chargeAction;
+        if (action === "edit") {
+            state.chargeSheetEditingId = rowId;
+            renderChargeSheetRows(shell);
+            bindChargeSheetTable(shell);
+        } else if (action === "cancel") {
+            state.chargeSheetEditingId = "";
+            renderChargeSheetRows(shell);
+            bindChargeSheetTable(shell);
+        } else if (action === "save") {
+            await saveChargeSheetRow(rowId, shell);
+        } else if (action === "delete") {
+            const bookingId = actionButton.dataset.bookingId;
+            if (bookingId) {
+                openDeleteBookingModal(bookingId);
+            }
+        }
+    };
+    shell.onkeydown = (event) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+            return;
+        }
+        const sortHeader = event.target.closest("[data-charge-sort]");
+        if (!sortHeader) {
+            return;
+        }
+        event.preventDefault();
+        setChargeSheetOrdering(sortHeader.dataset.chargeSort);
+    };
+}
+
+async function saveChargeSheetRow(rowId, shell) {
+    const safeRowId = String(rowId).replaceAll('"', '\\"');
+    const row = shell.querySelector(`[data-charge-row-id="${safeRowId}"]`);
+    if (!row) {
+        return;
+    }
+    const fieldValue = (field) => row.querySelector(`[data-charge-field="${field}"]`)?.value?.trim() || "";
+    const payload = {
+        requestor_name: fieldValue("requestor_name"),
+        guest_name: fieldValue("guest_name"),
+        purpose_event: fieldValue("purpose_event"),
+        room_charges_amount: Number(fieldValue("room_charges_amount") || 0),
+        attender_charges_amount: Number(fieldValue("attender_charges_amount") || 0),
+        payment_received_date: fieldValue("payment_received_date") || null,
+        budget_head_name: fieldValue("budget_head_name"),
+    };
+    try {
+        const updated = await apiFetch(`/api/bookings/charge-sheet/${rowId}/`, { method: "PATCH", body: payload });
+        state.chargeSheetRows = state.chargeSheetRows.map((item) => String(item.id) === String(rowId) ? updated : item);
+        state.chargeSheetEditingId = "";
+        toast("Charge sheet row updated.");
+        renderChargeSheetRows(shell);
+        bindChargeSheetTable(shell);
+    } catch (error) {
+        toast(error.message, "error");
+    }
 }
 
 async function refreshVisibleBookingSurface() {
@@ -1234,7 +1990,10 @@ async function loadBookingSheetView() {
                     <h3>Visitor Room</h3>
                     <p>${formatSheetDate(range.start)} to ${formatSheetDate(range.end)}</p>
                 </div>
-                <span>${visibleBookingCount} booking${visibleBookingCount === 1 ? "" : "s"}</span>
+                <div class="sheet-summary-actions">
+                    <span>${visibleBookingCount} booking${visibleBookingCount === 1 ? "" : "s"}</span>
+                    ${sheetExportButtons("booking")}
+                </div>
             </div>
             <div class="sheet-scroll" role="region" aria-label="Booking sheet view">
                 <table class="excel-table">
@@ -1258,6 +2017,16 @@ async function loadBookingSheetView() {
             </div>
         `;
         shell.onclick = (event) => {
+            const shareButton = event.target.closest("[data-sheet-share]");
+            if (shareButton) {
+                createBookingShareLink(shareButton.dataset.sheetShare);
+                return;
+            }
+            const exportButton = event.target.closest("[data-sheet-export]");
+            if (exportButton) {
+                handleSheetExport(exportButton.dataset.sheetExport);
+                return;
+            }
             const actionButton = event.target.closest("[data-booking-action]");
             if (actionButton) {
                 handleBookingInlineAction(actionButton.dataset.bookingAction, actionButton.dataset.id, actionButton.dataset);
@@ -1338,7 +2107,7 @@ async function openBookingDetails(bookingId) {
         const history = booking.edit_history || [];
         openDetailsModal("Booking Details", [
             { section: "Booking" },
-            ["ID", booking.id],
+            ["ID", bookingDisplayId(booking)],
             ["Status", titleCase(booking.status)],
             ["Room", booking.room_name],
             ["Arrival", formatDateTime(booking.arrival_at)],
@@ -1350,7 +2119,6 @@ async function openBookingDetails(bookingId) {
             ["Designation", booking.visitor_designation],
             ["Organisation", booking.visitor_organisation],
             ["Gender", booking.visitor_gender],
-            ["Address", booking.visitor_address],
             ["Mobile", booking.visitor_mobile],
             ["Email", booking.visitor_email],
             ["Category", titleCase(booking.visitor_category)],
@@ -1443,7 +2211,6 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                     <option value="other_guest" ${source.visitor_category === "other_guest" ? "selected" : ""}>Other Guest</option>
                 </select></div>
             </div>
-            <div class="field-row"><label for="admin-visitor-address">Visitor address</label><textarea id="admin-visitor-address">${htmlValue(source.visitor_address)}</textarea></div>
             <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
 
             <div class="form-section-title">Requestor Details</div>
@@ -1581,7 +2348,6 @@ function readAdminBookingPayload() {
         visitor_designation: val("admin-visitor-designation"),
         visitor_organisation: val("admin-visitor-organisation"),
         visitor_gender: val("admin-visitor-gender"),
-        visitor_address: val("admin-visitor-address"),
         visitor_mobile: val("admin-visitor-mobile"),
         visitor_email: val("admin-visitor-email"),
         visitor_category: val("admin-visitor-category"),
@@ -1877,7 +2643,6 @@ function openBookingRequestDetails(request) {
         ["Designation", request.visitor_designation],
         ["Organisation", request.visitor_organisation],
         ["Gender", request.visitor_gender],
-        ["Address", request.visitor_address],
         ["Mobile", request.visitor_mobile],
         ["Email", request.visitor_email],
         ["Category", titleCase(request.visitor_category)],
@@ -2197,8 +2962,7 @@ async function submitRequesterRequest(existing = null) {
     await apiFetch(endpoint, { method, body: payload });
     toast(existing ? "Request resubmitted successfully." : "Your booking request has been submitted for admin approval.");
     closeModal();
-    state.view = "myRequests";
-    renderDashboard();
+    navigateToView("myRequests");
 }
 
 function openRemarksModal(title, confirmText, confirmClass, onConfirm, placeholder = "Optional remarks") {
@@ -2291,11 +3055,45 @@ async function boot() {
     try {
         state.user = await apiFetch("/api/auth/me/");
         localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(state.user));
+        applyRouteFromHash();
+        syncRouteHash(true);
         renderDashboard();
     } catch (error) {
         clearSession();
         renderAuth("Please login again.", true);
     }
 }
+
+function handleRouteChange() {
+    if (!state.access || !state.user) {
+        return;
+    }
+    const previousView = state.view;
+    const previousBookingViewMode = state.bookingViewMode;
+    applyRouteFromHash();
+    if (state.view !== previousView || state.bookingViewMode !== previousBookingViewMode) {
+        renderDashboard();
+    }
+}
+
+function handleChargeSheetPointerDown(event) {
+    const target = event.target;
+    if (!target || typeof target.closest !== "function") {
+        return;
+    }
+    const chargeSheet = document.getElementById("charge-sheet");
+    const row = target.closest(".charge-sheet-table tbody [data-charge-row-id]");
+    if (row && chargeSheet?.contains(row)) {
+        setChargeSheetSelectedRow(row.dataset.chargeRowId, chargeSheet);
+        return;
+    }
+    if (state.chargeSheetSelectedId && !target.closest(".charge-sheet-scroll")) {
+        clearChargeSheetSelectedRow();
+    }
+}
+
+window.addEventListener("hashchange", handleRouteChange);
+window.addEventListener("popstate", handleRouteChange);
+document.addEventListener("pointerdown", handleChargeSheetPointerDown, true);
 
 boot();
