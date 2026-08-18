@@ -229,7 +229,30 @@ function roomLabel(room) {
     if (!room) {
         return "";
     }
-    return room.selection_label || room.room_name || `${room.prefix || ""} ${room.number || room.room_number || ""}`.trim() || `Room ${room.id}`;
+    const prefix = String(room.prefix || "").trim();
+    const label = String(
+        room.selection_label
+        || room.room_name
+        || room.number
+        || room.room_number
+        || ""
+    ).trim();
+    if (prefix && label && !label.toLowerCase().startsWith(prefix.toLowerCase())) {
+        return `${prefix} ${label}`;
+    }
+    return label || `Room ${room.id}`;
+}
+
+function buildingRoomValue(value, prefix) {
+    const label = String(value || "").trim();
+    const building = String(prefix || "").trim();
+    if (!label) {
+        return "";
+    }
+    if (!building || label.toLowerCase().startsWith(building.toLowerCase())) {
+        return label;
+    }
+    return `${building} ${label}`;
 }
 
 function shiftsText(item) {
@@ -1595,9 +1618,9 @@ function chargeSheetRowHtml(row) {
             <td>${chargeSheetEditableCell(row, "requestor_name")}</td>
             <td>${chargeSheetEditableCell(row, "guest_name")}</td>
             <td>${chargeSheetEditableCell(row, "purpose_event")}</td>
-            <td>${escapeHtml(row.delta || "")}</td>
-            <td>${escapeHtml(row.gamma || "")}</td>
-            <td>${escapeHtml(row.beta || "")}</td>
+            <td>${escapeHtml(buildingRoomValue(row.delta, "Delta"))}</td>
+            <td>${escapeHtml(buildingRoomValue(row.gamma, "Gamma"))}</td>
+            <td>${escapeHtml(buildingRoomValue(row.beta, "Beta"))}</td>
             <td>${chargeSheetEditableCell(row, "room_charges_amount", "number")}</td>
             <td>${chargeSheetEditableCell(row, "attender_charges_amount", "number")}</td>
             <td>${escapeHtml(row.total_charges || "0.00")}</td>

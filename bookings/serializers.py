@@ -557,7 +557,7 @@ class BookingChargeSheetSerializer(serializers.ModelSerializer):
         room = getattr(obj.booking, "room", None)
         if not room or room.prefix != prefix:
             return ""
-        return room.number
+        return str(room)
 
 
 class BookingShareSerializer(serializers.ModelSerializer):

@@ -65,9 +65,9 @@
                                 <td>{{ row.requestor_name|default:"-" }}</td>
                                 <td>{{ row.guest_name|default:"-" }}</td>
                                 <td>{{ row.purpose_event|default:"-" }}</td>
-                                <td>{% if row.booking.room.prefix == "Delta" %}{{ row.booking.room.number }}{% endif %}</td>
-                                <td>{% if row.booking.room.prefix == "Gamma" %}{{ row.booking.room.number }}{% endif %}</td>
-                                <td>{% if row.booking.room.prefix == "Beta" %}{{ row.booking.room.number }}{% endif %}</td>
+                                <td>{% if row.booking.room.prefix == "Delta" %}{{ row.booking.room }}{% endif %}</td>
+                                <td>{% if row.booking.room.prefix == "Gamma" %}{{ row.booking.room }}{% endif %}</td>
+                                <td>{% if row.booking.room.prefix == "Beta" %}{{ row.booking.room }}{% endif %}</td>
                                 <td>{{ row.room_charges_amount }}</td>
                                 <td>{{ row.attender_charges_amount }}</td>
                                 <td>{{ row.total_charges }}</td>

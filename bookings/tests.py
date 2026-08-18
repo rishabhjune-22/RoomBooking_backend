@@ -1726,7 +1726,7 @@ class BookingChargeSheetApiTests(TestCase):
         self.assertEqual(row["requestor_name"], "Requestor One")
         self.assertEqual(row["guest_name"], "Guest One")
         self.assertEqual(row["purpose_event"], "Annual event")
-        self.assertEqual(row["delta"], "101A")
+        self.assertEqual(row["delta"], "Delta 101A")
         self.assertEqual(row["gamma"], "")
         self.assertEqual(row["beta"], "")
         self.assertEqual(row["total_charges"], "2000.00")
@@ -1807,7 +1807,7 @@ class BookingChargeSheetApiTests(TestCase):
         rows = response.json()["data"]["results"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["booking_reference_id"], gamma_booking.booking_reference_number)
-        self.assertEqual(rows[0]["gamma"], "CS201")
+        self.assertEqual(rows[0]["gamma"], "Gamma CS201")
         self.assertEqual(rows[0]["total_charges"], "1000.00")
 
         response = self.client.get(reverse("booking-charge-sheet-list"), {"ordering": "-check_in"})
