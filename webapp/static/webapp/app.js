@@ -1089,29 +1089,123 @@ function downloadBlob(filename, content, mimeType) {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function excelXmlEscape(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&apos;");
+}
+
+function normalizeExportText(value) {
+    return String(value ?? "")
+        .replace(/\u00a0/g, " ")
+        .replace(/[ \t\r\f\v]+/g, " ")
+        .replace(/ *\n+ */g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
+function exportCellText(cell) {
+    const childText = Array.from(cell.childNodes)
+        .map((node) => normalizeExportText(node.textContent || ""))
+        .filter(Boolean);
+    if (childText.length) {
+        return childText.join("\n");
+    }
+    return normalizeExportText(cell.textContent || "");
+}
+
+function exportTableRows(table) {
+    return Array.from(table.querySelectorAll("tr"))
+        .map((row) => Array.from(row.children).map(exportCellText))
+        .filter((row) => row.some(Boolean));
+}
+
+function exportColumnWidth(rows, index) {
+    const longest = rows.reduce((max, row) => Math.max(max, String(row[index] || "").length), 0);
+    return Math.min(Math.max(longest * 7, 70), 260);
+}
+
+function spreadsheetCell(value, styleId = "Cell") {
+    const text = normalizeExportText(value);
+    return `<Cell ss:StyleID="${styleId}"><Data ss:Type="String">${excelXmlEscape(text)}</Data></Cell>`;
+}
+
+function spreadsheetRow(cells, styleId = "Cell") {
+    return `<Row>${cells.map((cell) => spreadsheetCell(cell, styleId)).join("")}</Row>`;
+}
+
+function buildExcelWorkbookXml(title, table) {
+    const rows = exportTableRows(table);
+    const columnCount = Math.max(...rows.map((row) => row.length), 1);
+    const normalizedRows = rows.map((row) => {
+        const cells = [...row];
+        while (cells.length < columnCount) {
+            cells.push("");
+        }
+        return cells;
+    });
+    const header = normalizedRows.shift() || [];
+    const columns = Array.from({ length: columnCount }, (_, index) => (
+        `<Column ss:Width="${exportColumnWidth([header, ...normalizedRows], index)}"/>`
+    )).join("");
+    const titleRow = `<Row ss:Height="22"><Cell ss:MergeAcross="${Math.max(columnCount - 1, 0)}" ss:StyleID="Title"><Data ss:Type="String">${excelXmlEscape(title)}</Data></Cell></Row>`;
+    const headerRow = header.length ? spreadsheetRow(header, "Header") : "";
+    const bodyRows = normalizedRows.map((row) => spreadsheetRow(row)).join("");
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+    xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:x="urn:schemas-microsoft-com:office:excel"
+    xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+    xmlns:html="http://www.w3.org/TR/REC-html40">
+    <Styles>
+        <Style ss:ID="Title">
+            <Font ss:Bold="1" ss:Size="14" ss:Color="#172033"/>
+            <Alignment ss:Vertical="Center"/>
+        </Style>
+        <Style ss:ID="Header">
+            <Font ss:Bold="1" ss:Color="#0F4F86"/>
+            <Interior ss:Color="#DCEEFF" ss:Pattern="Solid"/>
+            <Alignment ss:Vertical="Center" ss:WrapText="1"/>
+            <Borders>
+                <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#B7C6D8"/>
+                <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#B7C6D8"/>
+                <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#B7C6D8"/>
+                <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#B7C6D8"/>
+            </Borders>
+        </Style>
+        <Style ss:ID="Cell">
+            <Alignment ss:Vertical="Top" ss:WrapText="1"/>
+            <Borders>
+                <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8E1EB"/>
+                <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8E1EB"/>
+                <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8E1EB"/>
+                <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D8E1EB"/>
+            </Borders>
+        </Style>
+    </Styles>
+    <Worksheet ss:Name="${excelXmlEscape(title.slice(0, 31) || "Sheet")}">
+        <Table>
+            ${columns}
+            ${titleRow}
+            <Row/>
+            ${headerRow}
+            ${bodyRows}
+        </Table>
+    </Worksheet>
+</Workbook>`;
+}
+
 function downloadSheetExcel(tableSelector, title) {
     const table = exportTableClone(tableSelector);
     if (!table) {
         return;
     }
-    const html = `
-        <!doctype html>
-        <html>
-            <head>
-                <meta charset="utf-8">
-                <style>
-                    table { border-collapse: collapse; }
-                    th, td { border: 1px solid #b7c6d8; padding: 6px 8px; vertical-align: top; }
-                    th { background: #dceeff; font-weight: 700; }
-                </style>
-            </head>
-            <body>
-                <h2>${escapeHtml(title)}</h2>
-                ${table.outerHTML}
-            </body>
-        </html>
-    `;
-    downloadBlob(safeFilename(title, "xls"), `\ufeff${html}`, "application/vnd.ms-excel;charset=utf-8");
+    downloadBlob(safeFilename(title, "xls"), buildExcelWorkbookXml(title, table), "application/vnd.ms-excel;charset=utf-8");
     toast("Excel download started.");
 }
 
