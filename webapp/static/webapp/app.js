@@ -2941,12 +2941,7 @@ async function loadRequesterAccounts() {
                     </div>
                     <span class="status-chip ${account.approval_status}">${titleCase(account.approval_status)}</span>
                 </div>
-                ${account.approval_status === "pending" || account.approval_status === "rejected" ? `
-                    <div class="card-actions">
-                        <button class="success-btn" data-account-action="approve" data-id="${account.id}">${account.approval_status === "rejected" ? "Approve Again" : "Approve"}</button>
-                        ${account.approval_status === "pending" ? `<button class="danger-btn" data-account-action="reject" data-id="${account.id}">Reject</button>` : ""}
-                    </div>
-                ` : ""}
+                ${accountActionButtonsHtml(account)}
             </article>
         `).join("");
         list.querySelectorAll("[data-account-id]").forEach((card) => {
@@ -2964,8 +2959,24 @@ async function loadRequesterAccounts() {
     }
 }
 
+function accountActionButtonsHtml(account, compact = false) {
+    const actions = [];
+    if (account.approval_status === "pending") {
+        actions.push(`<button class="success-btn" data-account-action="approve" data-id="${account.id}">Approve</button>`);
+        actions.push(`<button class="danger-btn" data-account-action="reject" data-id="${account.id}">Reject</button>`);
+    } else if (account.approval_status === "approved") {
+        actions.push(`<button class="danger-btn" data-account-action="reject" data-id="${account.id}">Reject</button>`);
+    } else if (account.approval_status === "rejected") {
+        actions.push(`<button class="success-btn" data-account-action="approve" data-id="${account.id}">Approve Again</button>`);
+    }
+    if (!actions.length) {
+        return "";
+    }
+    return `<div class="card-actions ${compact ? "inline-card-actions" : ""}">${actions.join("")}</div>`;
+}
+
 function openAccountDetails(account) {
-    openDetailsModal("Requester Account", [
+    const detailsHtml = `<div class="details-list">${[
         ["Name", account.name],
         ["Email", account.email],
         ["Role", titleCase(account.role)],
@@ -2976,7 +2987,28 @@ function openAccountDetails(account) {
         ["Approved by", account.approved_by_name],
         ["Approved at", formatDateTime(account.approved_at)],
         ["Remarks", account.remarks],
-    ]);
+    ].map(([label, value]) => `
+        <div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>
+    `).join("")}</div>`;
+    openActionModal({
+        title: "Requester Account",
+        body: detailsHtml,
+        confirmText: "Close",
+        confirmClass: "outline-btn",
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            ${accountActionButtonsHtml(account, true)}
+        `,
+        onBind: () => {
+            document.querySelectorAll(".modal-footer [data-account-action]").forEach((button) => {
+                button.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    closeModal();
+                    handleAccountAction(button.dataset.accountAction, account);
+                });
+            });
+        },
+    });
 }
 
 function handleAccountAction(action, account) {
