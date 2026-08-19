@@ -118,6 +118,17 @@ def delete_response_body(booking_id):
     }
 
 
+def is_booking_expired_for_edit(booking):
+    return booking.status == Booking.STATUS_EXPIRED or booking.departure_at <= timezone.now()
+
+
+def expired_booking_edit_response():
+    return api_error(
+        "Expired bookings can only be deleted.",
+        errors={"booking": ["Expired bookings can only be deleted."]},
+    )
+
+
 def booking_charge_sheet_defaults(booking):
     return {
         "requestor_name": booking.requestor_name or "",
@@ -237,6 +248,19 @@ def soft_delete_booking_request(booking_request, user, remarks=""):
         "delete_reason",
     ])
     return True
+
+
+def soft_delete_source_request_for_booking(booking, user):
+    try:
+        booking_request = booking.source_request
+    except BookingRequest.DoesNotExist:
+        return False
+
+    return soft_delete_booking_request(
+        booking_request,
+        user,
+        "Linked booking was deleted by admin.",
+    )
 
 
 def snapshot_booking_audit_values(booking):
@@ -777,6 +801,9 @@ class BookingChargeSheetDetailView(RetrieveAPIView, UpdateAPIView):
                 ),
                 pk=kwargs.get("pk"),
             )
+            if is_booking_expired_for_edit(sheet_row.booking):
+                return expired_booking_edit_response()
+
             serializer = self.get_serializer(sheet_row, data=request.data, partial=partial)
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -857,6 +884,9 @@ class BookingUpdateView(UpdateAPIView):
             pk=kwargs.get("pk"),
         )
 
+        if is_booking_expired_for_edit(instance):
+            return expired_booking_edit_response()
+
         lock_rooms_for_booking_write(
             instance.room_id,
             request.data.get("room"),
@@ -917,6 +947,7 @@ class BookingDeleteView(APIView):
                 "visitor_name": booking.visitor_name,
             },
         )
+        soft_delete_source_request_for_booking(booking, request.user)
         booking.delete()
         response_body = delete_response_body(booking_id)
         complete_idempotent_request(

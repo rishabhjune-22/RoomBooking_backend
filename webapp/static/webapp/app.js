@@ -197,6 +197,14 @@ function formatDateRange(item) {
     return `${formatDateTime(item.arrival_at)} to ${formatDateTime(item.departure_at)}`;
 }
 
+function isPastDateTime(value) {
+    if (!value) {
+        return false;
+    }
+    const date = new Date(value);
+    return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
+}
+
 function selectedRangeText() {
     if (!state.rangeStart) {
         return "No dates selected";
@@ -966,6 +974,36 @@ function sheetExportButtons(sheetName) {
     `;
 }
 
+function sheetLegend(items) {
+    return `
+        <div class="sheet-legend" aria-label="Sheet legend">
+            ${items.map((item) => `
+                <span class="sheet-legend-item">
+                    <span class="sheet-legend-swatch ${escapeHtml(item.className)}" aria-hidden="true"></span>
+                    ${escapeHtml(item.label)}
+                </span>
+            `).join("")}
+        </div>
+    `;
+}
+
+function bookingSheetLegendHtml() {
+    return sheetLegend([
+        { className: "available", label: "Available for create" },
+        { className: "booked", label: "Booked" },
+        { className: "partial", label: "Available after cooling" },
+        { className: "expired", label: "Expired - delete only" },
+    ]);
+}
+
+function chargeSheetLegendHtml() {
+    return sheetLegend([
+        { className: "normal-row", label: "Editable booking" },
+        { className: "expired", label: "Expired - delete only" },
+        { className: "selected", label: "Selected row" },
+    ]);
+}
+
 function filenameTimestamp() {
     return new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "");
 }
@@ -1597,7 +1635,7 @@ function chargeSheetTextarea(field, value) {
 }
 
 function chargeSheetEditableCell(row, field, type = "text") {
-    if (String(state.chargeSheetEditingId) !== String(row.id)) {
+    if (isChargeSheetRowExpired(row) || String(state.chargeSheetEditingId) !== String(row.id)) {
         return escapeHtml(valueOrDash(row[field]));
     }
     if (field === "purpose_event") {
@@ -1606,11 +1644,16 @@ function chargeSheetEditableCell(row, field, type = "text") {
     return chargeSheetInput(field, row[field] || "", type);
 }
 
+function isChargeSheetRowExpired(row) {
+    return isPastDateTime(row?.check_out);
+}
+
 function chargeSheetRowHtml(row) {
-    const editing = String(state.chargeSheetEditingId) === String(row.id);
+    const expired = isChargeSheetRowExpired(row);
+    const editing = !expired && String(state.chargeSheetEditingId) === String(row.id);
     const selected = String(state.chargeSheetSelectedId) === String(row.id);
     return `
-        <tr class="${selected ? "selected-row" : ""}" data-charge-row-id="${row.id}" aria-selected="${selected ? "true" : "false"}">
+        <tr class="${[selected ? "selected-row" : "", expired ? "expired-row" : ""].filter(Boolean).join(" ")}" data-charge-row-id="${row.id}" aria-selected="${selected ? "true" : "false"}">
             <td>${escapeHtml(row.serial_no || row.id)}</td>
             <td>${escapeHtml(formatDateTime(row.check_in))}</td>
             <td>${escapeHtml(formatDateTime(row.check_out))}</td>
@@ -1631,7 +1674,7 @@ function chargeSheetRowHtml(row) {
                     <button class="sheet-action-btn" type="button" data-charge-action="save" data-id="${row.id}">Save</button>
                     <button class="sheet-action-btn" type="button" data-charge-action="cancel" data-id="${row.id}">Cancel</button>
                 ` : `
-                    <button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>
+                    ${expired ? "" : `<button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>`}
                     <button class="sheet-action-btn danger" type="button" data-charge-action="delete" data-id="${row.id}" data-booking-id="${row.booking}">Delete</button>
                 `}
             </td>
@@ -1675,6 +1718,7 @@ function renderChargeSheetRows(shell) {
                 ${sheetExportButtons("charge")}
             </div>
         </div>
+        ${chargeSheetLegendHtml()}
         <div class="sheet-scroll charge-sheet-scroll" role="region" aria-label="Booking charges sheet">
             <table class="excel-table charge-sheet-table">
                 <thead>
@@ -1694,7 +1738,7 @@ function renderChargeSheetRows(shell) {
                         ${chargeSheetHeader("total_charges", "Total Charges")}
                         ${chargeSheetHeader("payment_received_date", "Payment Received Date")}
                         ${chargeSheetHeader("budget_head_name", "Budget Head Name")}
-                        <th class="sheet-actions-col">Edit</th>
+                        <th class="sheet-actions-col">Actions</th>
                     </tr>
                 </thead>
                 <tbody>${rows.map(chargeSheetRowHtml).join("")}</tbody>
@@ -1742,6 +1786,11 @@ function bindChargeSheetTable(shell) {
         const rowId = actionButton.dataset.id;
         const action = actionButton.dataset.chargeAction;
         if (action === "edit") {
+            const row = state.chargeSheetRows.find((item) => String(item.id) === String(rowId));
+            if (isChargeSheetRowExpired(row)) {
+                toast("Expired bookings can only be deleted.", "error");
+                return;
+            }
             state.chargeSheetEditingId = rowId;
             renderChargeSheetRows(shell);
             bindChargeSheetTable(shell);
@@ -1772,6 +1821,14 @@ function bindChargeSheetTable(shell) {
 }
 
 async function saveChargeSheetRow(rowId, shell) {
+    const rowData = state.chargeSheetRows.find((item) => String(item.id) === String(rowId));
+    if (isChargeSheetRowExpired(rowData)) {
+        state.chargeSheetEditingId = "";
+        toast("Expired bookings can only be deleted.", "error");
+        renderChargeSheetRows(shell);
+        bindChargeSheetTable(shell);
+        return;
+    }
     const safeRowId = String(rowId).replaceAll('"', '\\"');
     const row = shell.querySelector(`[data-charge-row-id="${safeRowId}"]`);
     if (!row) {
@@ -1924,6 +1981,7 @@ function buildBookingSheetCells(bookings, dates) {
                     status: booking.status,
                     availabilityStatus: availability.availabilityStatus,
                     availableFrom: availability.availableFrom,
+                    isExpired: isPastDateTime(booking.departure_at),
                 });
                 cells.set(key, entries);
             }
@@ -1972,9 +2030,9 @@ function sheetCellHtml(entries = [], dateValue = "", room = null) {
 
     return Array.from(entryById.entries()).map(([id, entry]) => `
         <div class="sheet-booking-entry">
-            <button class="sheet-booking-pill ${entry.availabilityStatus === "partial" ? "partial" : ""}" type="button" data-sheet-booking-id="${id}">${escapeHtml(entry.text)}</button>
+            <button class="sheet-booking-pill ${entry.availabilityStatus === "partial" ? "partial" : ""} ${entry.isExpired ? "expired" : ""}" type="button" data-sheet-booking-id="${id}">${escapeHtml(entry.text)}</button>
             <div class="sheet-inline-actions">
-                <button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>
+                ${entry.isExpired ? "" : `<button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>`}
                 <button class="sheet-action-btn danger" type="button" data-booking-action="delete" data-id="${id}">Delete</button>
             </div>
         </div>
@@ -2018,6 +2076,7 @@ async function loadBookingSheetView() {
                     ${sheetExportButtons("booking")}
                 </div>
             </div>
+            ${bookingSheetLegendHtml()}
             <div class="sheet-scroll" role="region" aria-label="Booking sheet view">
                 <table class="excel-table">
                     <thead>
@@ -2078,6 +2137,10 @@ function handleBookingInlineAction(action, bookingId, dataset = {}) {
         return;
     }
     if (action === "edit") {
+        if (dataset.expired === "true") {
+            toast("Expired bookings can only be deleted.", "error");
+            return;
+        }
         openAdminBookingEditForm(bookingId);
     } else if (action === "delete") {
         openDeleteBookingModal(bookingId);
