@@ -193,6 +193,18 @@ function formatDateTime(value) {
     }).format(new Date(value));
 }
 
+function formatDateOnly(value) {
+    if (!value) {
+        return "-";
+    }
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    }).format(new Date(`${value}T00:00:00+05:30`));
+}
+
 function formatDateRange(item) {
     return `${formatDateTime(item.arrival_at)} to ${formatDateTime(item.departure_at)}`;
 }
@@ -213,6 +225,16 @@ function selectedRangeText() {
         return state.rangeStart;
     }
     return `${state.rangeStart} to ${state.rangeEnd}`;
+}
+
+function selectedRangeDisplayText() {
+    if (!state.rangeStart) {
+        return "No dates selected";
+    }
+    if (!state.rangeEnd || state.rangeEnd === state.rangeStart) {
+        return formatDateOnly(state.rangeStart);
+    }
+    return `${formatDateOnly(state.rangeStart)} to ${formatDateOnly(state.rangeEnd)}`;
 }
 
 function buildIsoDateTime(dateValue, timeValue) {
@@ -835,12 +857,11 @@ function renderCalendarSide(content = "") {
                 </div>
                 <div class="detail-row"><span class="detail-label">Total rooms</span><span class="detail-value">${group.total_rooms}</span></div>
                 <div class="detail-row"><span class="detail-label">Month</span><span class="detail-value">${monthName(state.calendarYear, state.calendarMonth)}</span></div>
-                <div class="detail-row"><span class="detail-label">Selected dates</span><span class="detail-value">${escapeHtml(selectedRangeText())}</span></div>
+                <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
             </div>
         `;
         return;
     }
-    const selectedText = selectedRangeText();
     side.innerHTML = `
         <div class="details-list">
             <div>
@@ -848,7 +869,7 @@ function renderCalendarSide(content = "") {
                 <p class="item-meta">Select one date for same-day request or select another date for a range.</p>
             </div>
             <div class="detail-row"><span class="detail-label">Building</span><span class="detail-value">${escapeHtml(state.prefix)}</span></div>
-            <div class="detail-row"><span class="detail-label">Selected dates</span><span class="detail-value">${escapeHtml(selectedText)}</span></div>
+            <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
             <div class="detail-row"><span class="detail-label">Privacy</span><span class="detail-value">Only availability is shown. Booking names and details are hidden.</span></div>
         </div>
     `;
@@ -866,16 +887,16 @@ async function loadAdminDateDetails(dateValue) {
         renderCalendarSide(`
             <div class="details-list">
                 <div>
-                    <h3 style="margin:0 0 6px">${escapeHtml(state.prefix)} - ${escapeHtml(dateValue)}</h3>
+                    <h3 style="margin:0 0 6px">${escapeHtml(state.prefix)} Availability</h3>
                     <p class="item-meta">${rows.length} booking${rows.length === 1 ? "" : "s"} touching this date.</p>
-                    <p class="item-meta">Selected booking range: ${escapeHtml(selectedRangeText())}</p>
                 </div>
+                <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
                 ${rows.length ? rows.map((booking) => `
                     <article class="item-card">
                         <div class="item-main">
                             <div>
                                 <h4 class="item-title">${escapeHtml(booking.room_name)}</h4>
-                                <p class="item-meta">${escapeHtml(booking.guest_name || "Guest")} - ${formatDateTime(booking.arrival_at)} to ${formatDateTime(booking.departure_at)}</p>
+                                <p class="item-meta">${escapeHtml(booking.guest_name || "Guest")}</p>
                             </div>
                             <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
                         </div>
