@@ -2032,7 +2032,6 @@ function sheetCellHtml(entries = [], dateValue = "", room = null) {
         <div class="sheet-booking-entry">
             <button class="sheet-booking-pill ${entry.availabilityStatus === "partial" ? "partial" : ""} ${entry.isExpired ? "expired" : ""}" type="button" data-sheet-booking-id="${id}">${escapeHtml(entry.text)}</button>
             <div class="sheet-inline-actions">
-                ${entry.isExpired ? "" : `<button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>`}
                 <button class="sheet-action-btn danger" type="button" data-booking-action="delete" data-id="${id}">Delete</button>
             </div>
         </div>
