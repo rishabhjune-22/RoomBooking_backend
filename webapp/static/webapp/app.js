@@ -1307,7 +1307,6 @@ function bookingCardHtml(booking) {
                 <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
             </div>
             <div class="card-actions inline-card-actions">
-                <button class="outline-btn compact-btn" type="button" data-booking-action="edit" data-id="${booking.id}">Edit</button>
                 <button class="danger-btn compact-btn" type="button" data-booking-action="delete" data-id="${booking.id}">Delete</button>
             </div>
         </article>
