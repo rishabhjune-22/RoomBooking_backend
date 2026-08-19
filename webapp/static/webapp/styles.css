@@ -1156,6 +1156,24 @@ button:disabled {
     font-weight: 800;
 }
 
+.budget-head-group {
+    display: grid;
+    gap: 8px;
+}
+
+.budget-head-input {
+    margin-bottom: 4px;
+}
+
+.budget-head-input[hidden] {
+    display: none;
+}
+
+.budget-clear-btn {
+    justify-self: start;
+    margin-top: 2px;
+}
+
 .toast {
     position: fixed;
     left: 50%;

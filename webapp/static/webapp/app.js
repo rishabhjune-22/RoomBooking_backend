@@ -2188,10 +2188,21 @@ function openDeleteBookingModal(bookingId) {
     });
 }
 
+function normalizedBudgetHeadFields(source = {}) {
+    const type = source.budget_head_type || "";
+    const value = source.budget_head_value || "";
+    return {
+        individual: source.budget_head_name || (type === "individual" || (!type && value) ? value : ""),
+        instituteHead: source.budget_head_department_name || (type === "institute_head" ? value : ""),
+        projectHead: source.budget_head_project_code || (type === "project_head" ? value : ""),
+    };
+}
+
 async function openBookingDetails(bookingId) {
     try {
         const booking = await apiFetch(`/api/bookings/${bookingId}/`);
         const history = booking.edit_history || [];
+        const budgetHead = normalizedBudgetHeadFields(booking);
         openDetailsModal("Booking Details", [
             { section: "Booking" },
             ["ID", bookingDisplayId(booking)],
@@ -2210,11 +2221,19 @@ async function openBookingDetails(bookingId) {
             ["Email", booking.visitor_email],
             ["Category", titleCase(booking.visitor_category)],
             ["Purpose", booking.purpose_of_visit],
+            { section: "Budget Head" },
+            ["Individual", budgetHead.individual],
+            ["Institute Head", budgetHead.instituteHead],
+            ["Project code", budgetHead.projectHead],
             { section: "Requestor Details" },
             ["Requestor name", booking.requestor_name],
             ["Designation", booking.requestor_designation],
             ["Department", booking.requestor_department],
             ["Mobile", booking.requestor_mobile],
+            { section: "Logistics(Food/Cab) will be looked after by" },
+            ["Name", booking.logistics_name],
+            ["Designation", booking.logistics_designation],
+            ["Mobile", booking.logistics_mobile],
             { section: "Attender Requirement" },
             ["Attender required", yesNo(booking.attender_required)],
             ["Attender count", booking.attender_count_per_day],
@@ -2224,16 +2243,6 @@ async function openBookingDetails(bookingId) {
             ["Room charges amount", booking.room_charges_amount],
             ["Attender charges", titleCase(booking.attender_charges_status)],
             ["Attender charges amount", booking.attender_charges_amount],
-            { section: "Budget Head" },
-            ["Budget head type", titleCase(booking.budget_head_type)],
-            ["Budget head value", booking.budget_head_value],
-            ["Name / Organisation", booking.budget_head_name],
-            ["Department name", booking.budget_head_department_name],
-            ["Project code", booking.budget_head_project_code],
-            { section: "Logistics" },
-            ["Name", booking.logistics_name],
-            ["Designation", booking.logistics_designation],
-            ["Mobile", booking.logistics_mobile],
             { section: "Edit History" },
             ...(history.length ? history.flatMap((entry) => [
                 ["Field", entry.field_label || entry.field_name],
@@ -2254,6 +2263,7 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     const arrival = source.arrival_at ? indiaParts(source.arrival_at) : { date: selectedStart, time: "10:00" };
     const departure = source.departure_at ? indiaParts(source.departure_at) : { date: selectedEnd, time: "18:00" };
     const prefix = source.preferred_prefix || source.prefix || state.prefix || BUILDINGS[0];
+    const budgetHead = normalizedBudgetHeadFields(source);
     const requestMeta = source.id && context === "request" ? `
         <div class="form-section-title">Request Review</div>
         <div class="two-col">
@@ -2300,6 +2310,17 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             </div>
             <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
 
+            <div class="form-section-title">Budget Head</div>
+            <div class="budget-head-group">
+                <label class="check-row"><input id="admin-budget-individual" data-budget-head-field="admin-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
+                <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="admin-budget-name">Name</label><input id="admin-budget-name" placeholder="Name" value="${htmlValue(budgetHead.individual)}"></div>
+                <label class="check-row"><input id="admin-budget-institute-head" data-budget-head-field="admin-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
+                <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="admin-budget-department">Department Name</label><input id="admin-budget-department" placeholder="Department Name" value="${htmlValue(budgetHead.instituteHead)}"></div>
+                <label class="check-row"><input id="admin-budget-project-head" data-budget-head-field="admin-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
+                <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="admin-budget-project-code">Project code</label><input id="admin-budget-project-code" placeholder="Project code" value="${htmlValue(budgetHead.projectHead)}"></div>
+                <button class="outline-btn compact-btn budget-clear-btn" id="admin-clear-budget-head" type="button">Clear Budget Head</button>
+            </div>
+
             <div class="form-section-title">Requestor Details</div>
             <div class="two-col">
                 <div class="field-row"><label for="admin-requestor-name">Requestor name</label><input id="admin-requestor-name" value="${htmlValue(source.requestor_name || source.requester_name)}"></div>
@@ -2307,6 +2328,13 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 <div class="field-row"><label for="admin-requestor-department">Requestor department</label><input id="admin-requestor-department" value="${htmlValue(source.requestor_department)}"></div>
                 <div class="field-row"><label for="admin-requestor-mobile">Requestor mobile</label><input id="admin-requestor-mobile" inputmode="tel" value="${htmlValue(source.requestor_mobile)}"></div>
                 ${source.requestor_email || source.requester_email ? `<div class="field-row"><label>Requestor email</label><input value="${htmlValue(source.requestor_email || source.requester_email)}" readonly></div>` : ""}
+            </div>
+
+            <div class="form-section-title">Logistics(Food/Cab) will be looked after by</div>
+            <div class="two-col">
+                <div class="field-row"><label for="admin-logistics-name">Logistics Name</label><input id="admin-logistics-name" value="${htmlValue(source.logistics_name)}"></div>
+                <div class="field-row"><label for="admin-logistics-designation">Designation</label><input id="admin-logistics-designation" value="${htmlValue(source.logistics_designation)}"></div>
+                <div class="field-row"><label for="admin-logistics-mobile">Mobile Number</label><input id="admin-logistics-mobile" inputmode="tel" value="${htmlValue(source.logistics_mobile)}"></div>
             </div>
 
             <div class="form-section-title">Attender Requirement</div>
@@ -2333,27 +2361,6 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 </select></div>
                 <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
             </div>
-
-            <div class="form-section-title">Budget Head</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-budget-type">Budget head type</label><select id="admin-budget-type">
-                    <option value="" ${!source.budget_head_type ? "selected" : ""}>Not specified</option>
-                    <option value="individual" ${source.budget_head_type === "individual" ? "selected" : ""}>Individual</option>
-                    <option value="institute_head" ${source.budget_head_type === "institute_head" ? "selected" : ""}>Institute Head</option>
-                    <option value="project_head" ${source.budget_head_type === "project_head" ? "selected" : ""}>Project Head</option>
-                </select></div>
-                <div class="field-row"><label for="admin-budget-value">Budget head value</label><input id="admin-budget-value" value="${htmlValue(source.budget_head_value)}"></div>
-                <div class="field-row"><label for="admin-budget-name">Name / Organisation</label><input id="admin-budget-name" value="${htmlValue(source.budget_head_name)}"></div>
-                <div class="field-row"><label for="admin-budget-department">Department name</label><input id="admin-budget-department" value="${htmlValue(source.budget_head_department_name)}"></div>
-                <div class="field-row"><label for="admin-budget-project-code">Project code</label><input id="admin-budget-project-code" value="${htmlValue(source.budget_head_project_code)}"></div>
-            </div>
-
-            <div class="form-section-title">Logistics</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-logistics-name">Logistics name</label><input id="admin-logistics-name" value="${htmlValue(source.logistics_name)}"></div>
-                <div class="field-row"><label for="admin-logistics-designation">Logistics designation</label><input id="admin-logistics-designation" value="${htmlValue(source.logistics_designation)}"></div>
-                <div class="field-row"><label for="admin-logistics-mobile">Logistics mobile</label><input id="admin-logistics-mobile" inputmode="tel" value="${htmlValue(source.logistics_mobile)}"></div>
-            </div>
         </form>
     `;
 }
@@ -2364,6 +2371,7 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     const attender = document.getElementById("admin-attender");
     const attenderCount = document.getElementById("admin-attender-count");
     const shiftInputs = ["admin-general", "admin-morning", "admin-day"].map((id) => document.getElementById(id));
+    const budgetOptions = Array.from(document.querySelectorAll("[data-budget-head-field]"));
     if (!prefixSelect || !roomSelect) {
         return;
     }
@@ -2399,6 +2407,29 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     };
     attender?.addEventListener("change", syncAttender);
     syncAttender();
+
+    const syncBudgetHeadOption = (checkbox, shouldFocus = false) => {
+        const field = document.getElementById(checkbox.dataset.budgetHeadField);
+        const wrapper = field?.closest(".budget-head-input");
+        if (!field || !wrapper) return;
+        wrapper.hidden = !checkbox.checked;
+        if (checkbox.checked && shouldFocus) {
+            field.focus();
+        }
+        if (!checkbox.checked) {
+            field.value = "";
+        }
+    };
+    budgetOptions.forEach((checkbox) => {
+        syncBudgetHeadOption(checkbox);
+        checkbox.addEventListener("change", () => syncBudgetHeadOption(checkbox, true));
+    });
+    document.getElementById("admin-clear-budget-head")?.addEventListener("click", () => {
+        budgetOptions.forEach((checkbox) => {
+            checkbox.checked = false;
+            syncBudgetHeadOption(checkbox);
+        });
+    });
 }
 
 function readAdminBookingPayload() {
@@ -2422,11 +2453,9 @@ function readAdminBookingPayload() {
     const attenderRequired = checked("admin-attender");
     const roomChargeStatus = val("admin-room-charge-status") || "no";
     const attenderChargeStatus = val("admin-attender-charge-status") || "no";
-    const budgetType = val("admin-budget-type");
-    const budgetValue = val("admin-budget-value")
-        || (budgetType === "project_head" ? val("admin-budget-project-code") : "")
-        || (budgetType === "institute_head" ? val("admin-budget-department") : "")
-        || val("admin-budget-name");
+    const budgetName = checked("admin-budget-individual") ? val("admin-budget-name") : "";
+    const budgetDepartment = checked("admin-budget-institute-head") ? val("admin-budget-department") : "";
+    const budgetProjectCode = checked("admin-budget-project-head") ? val("admin-budget-project-code") : "";
     return {
         room,
         arrival_at: arrivalAt,
@@ -2452,11 +2481,11 @@ function readAdminBookingPayload() {
         room_charges_amount: roomChargeStatus === "yes" ? Number(val("admin-room-charge-amount") || 0) : 0,
         attender_charges_status: attenderChargeStatus,
         attender_charges_amount: attenderChargeStatus === "yes" ? Number(val("admin-attender-charge-amount") || 0) : 0,
-        budget_head_type: budgetType,
-        budget_head_value: budgetValue,
-        budget_head_name: val("admin-budget-name"),
-        budget_head_department_name: val("admin-budget-department"),
-        budget_head_project_code: val("admin-budget-project-code"),
+        budget_head_type: "",
+        budget_head_value: "",
+        budget_head_name: budgetName,
+        budget_head_department_name: budgetDepartment,
+        budget_head_project_code: budgetProjectCode,
         logistics_name: val("admin-logistics-name"),
         logistics_designation: val("admin-logistics-designation"),
         logistics_mobile: val("admin-logistics-mobile"),
