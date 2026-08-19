@@ -1295,6 +1295,7 @@ async function createBookingShareLink(sheetName = "booking") {
 }
 
 function bookingCardHtml(booking) {
+    const expired = booking.status === "expired" || isPastDateTime(booking.departure_at);
     return `
         <article class="item-card" data-booking-id="${booking.id}">
             <div class="item-main">
@@ -1307,6 +1308,7 @@ function bookingCardHtml(booking) {
                 <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
             </div>
             <div class="card-actions inline-card-actions">
+                ${expired ? "" : `<button class="outline-btn compact-btn" type="button" data-booking-action="edit" data-id="${booking.id}">Edit</button>`}
                 <button class="danger-btn compact-btn" type="button" data-booking-action="delete" data-id="${booking.id}">Delete</button>
             </div>
         </article>
@@ -2031,6 +2033,7 @@ function sheetCellHtml(entries = [], dateValue = "", room = null) {
         <div class="sheet-booking-entry">
             <button class="sheet-booking-pill ${entry.availabilityStatus === "partial" ? "partial" : ""} ${entry.isExpired ? "expired" : ""}" type="button" data-sheet-booking-id="${id}">${escapeHtml(entry.text)}</button>
             <div class="sheet-inline-actions">
+                ${entry.isExpired ? "" : `<button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>`}
                 <button class="sheet-action-btn danger" type="button" data-booking-action="delete" data-id="${id}">Delete</button>
             </div>
         </div>
