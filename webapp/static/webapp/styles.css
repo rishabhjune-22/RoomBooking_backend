@@ -1484,6 +1484,26 @@ button:disabled {
     color: var(--muted);
 }
 
+.notification-detail-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.notification-detail-item {
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid rgba(15, 111, 191, 0.14);
+    border-radius: 8px;
+    background: rgba(15, 111, 191, 0.05);
+}
+
+.notification-detail-item strong {
+    font-size: 12px;
+    color: var(--ink);
+}
+
 .notification-row-count {
     display: inline-grid;
     place-items: center;

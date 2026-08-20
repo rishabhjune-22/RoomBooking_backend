@@ -839,6 +839,19 @@ class AccountApprovalApiTests(TestCase):
             preferred_prefix="Delta",
             visitor_name="Correction Visitor",
         )
+        deleted_request = BookingRequest.objects.create(
+            requester=requester,
+            status=BookingRequest.STATUS_PENDING,
+            is_deleted=True,
+            deleted_at=now + timedelta(days=2),
+            deleted_by=admin,
+            deleted_by_name="Admin One",
+            delete_reason="Duplicate request. Please submit a corrected request.",
+            arrival_at=now + timedelta(days=2),
+            departure_at=now + timedelta(days=2, hours=8),
+            preferred_prefix="Delta",
+            visitor_name="Deleted Visitor",
+        )
 
         self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(admin)
         admin_response = self.client.get(reverse("workflow-notification-counts"))
@@ -874,9 +887,16 @@ class AccountApprovalApiTests(TestCase):
         self.assertEqual(requester_counts["booking_requests"], 0)
         self.assertEqual(requester_counts["requester_accounts"], 0)
         self.assertEqual(requester_counts["admin_accounts"], 0)
-        self.assertEqual(requester_counts["my_requests"], 1)
-        self.assertEqual(requester_counts["total"], 1)
-        self.assertEqual(len(requester_counts["items"]["my_requests"]), 1)
+        self.assertEqual(requester_counts["my_requests"], 2)
+        self.assertEqual(requester_counts["total"], 2)
+        self.assertEqual(len(requester_counts["items"]["my_requests"]), 2)
+        deleted_items = [
+            item for item in requester_counts["items"]["my_requests"]
+            if isinstance(item, dict) and item["id"] == deleted_request.id
+        ]
+        self.assertEqual(len(deleted_items), 1)
+        self.assertIn("deleted", deleted_items[0]["title"].lower())
+        self.assertIn("Duplicate request", deleted_items[0]["message"])
 
     def test_requester_signup_creates_pending_account(self):
         response = self.client.post(

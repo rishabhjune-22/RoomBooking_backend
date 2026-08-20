@@ -163,6 +163,27 @@ class WorkflowNotificationCountView(APIView):
         def item_keys(queryset, prefix):
             return [f"{prefix}:{pk}" for pk in queryset.values_list("pk", flat=True)]
 
+        def deleted_request_items(queryset):
+            items = []
+            for booking_request in queryset:
+                deleted_marker = (
+                    int(booking_request.deleted_at.timestamp())
+                    if booking_request.deleted_at
+                    else "deleted"
+                )
+                remarks = booking_request.delete_reason or "No remarks provided."
+                items.append({
+                    "key": f"my_request_deleted:{booking_request.pk}:{deleted_marker}",
+                    "id": booking_request.pk,
+                    "title": "Booking request deleted",
+                    "message": (
+                        f"Your booking request for "
+                        f"{booking_request.visitor_name or 'the selected dates'} was deleted. "
+                        f"Remarks: {remarks}"
+                    ),
+                })
+            return items
+
         if profile.role in {ROLE_ADMIN, ROLE_SUPERADMIN}:
             booking_request_qs = BookingRequest.objects.filter(
                 status=BookingRequest.STATUS_PENDING,
@@ -195,7 +216,17 @@ class WorkflowNotificationCountView(APIView):
                 ],
                 is_deleted=False,
             )
-            items["my_requests"] = item_keys(my_request_qs, "my_request")
+            deleted_by_admin_qs = (
+                BookingRequest.objects
+                .filter(requester=request.user, is_deleted=True)
+                .exclude(deleted_by=request.user)
+                .exclude(deleted_by__isnull=True)
+                .order_by("-deleted_at", "-pk")
+            )
+            items["my_requests"] = (
+                item_keys(my_request_qs, "my_request")
+                + deleted_request_items(deleted_by_admin_qs)
+            )
             counts["my_requests"] = len(items["my_requests"])
 
         counts["total"] = sum(counts.values())

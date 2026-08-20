@@ -780,11 +780,19 @@ function normalizeWorkflowNotificationItems(category, payload) {
             if (typeof item === "string") {
                 return item;
             }
-            return item?.key || `${category}:${item?.id}`;
+            const key = item?.key || `${category}:${item?.id}`;
+            return {
+                ...item,
+                key,
+            };
         }).filter(Boolean);
     }
     const count = Number(payload?.[category] || 0);
     return Array.from({ length: count }, (_, index) => `${category}:legacy:${index + 1}`);
+}
+
+function workflowNotificationItemKey(item) {
+    return typeof item === "string" ? item : item?.key;
 }
 
 function applyWorkflowNotificationPayload(payload) {
@@ -797,9 +805,10 @@ function applyWorkflowNotificationPayload(payload) {
 
     categories.forEach((category) => {
         items[category] = normalizeWorkflowNotificationItems(category, payload);
-        rawCounts[category] = items[category].length;
-        items[category].forEach((key) => currentKeys.add(key));
-        unreadCounts[category] = items[category].filter((key) => !readKeys.has(key)).length;
+        const keys = items[category].map(workflowNotificationItemKey).filter(Boolean);
+        rawCounts[category] = keys.length;
+        keys.forEach((key) => currentKeys.add(key));
+        unreadCounts[category] = keys.filter((key) => !readKeys.has(key)).length;
     });
 
     const prunedReadKeys = new Set(Array.from(readKeys).filter((key) => currentKeys.has(key)));
@@ -820,7 +829,11 @@ function markWorkflowNotificationCategoriesRead(categories) {
     const readKeys = getReadWorkflowNotificationKeys();
     let changed = false;
     normalizedCategories.forEach((category) => {
-        (state.workflowNotificationItems?.[category] || []).forEach((key) => {
+        (state.workflowNotificationItems?.[category] || []).forEach((item) => {
+            const key = workflowNotificationItemKey(item);
+            if (!key) {
+                return;
+            }
             if (!readKeys.has(key)) {
                 readKeys.add(key);
                 changed = true;
@@ -975,9 +988,28 @@ function workflowNotificationRows() {
             count: counts.my_requests || 0,
             rawCount: rawCounts.my_requests || 0,
             description: "Reviewed requests waiting for you to read.",
+            details: (state.workflowNotificationItems?.my_requests || [])
+                .filter((item) => typeof item === "object" && (item.title || item.message))
+                .slice(0, 3),
         });
     }
     return rows;
+}
+
+function workflowNotificationDetailHtml(details = []) {
+    if (!details.length) {
+        return "";
+    }
+    return `
+        <span class="notification-detail-list">
+            ${details.map((item) => `
+                <span class="notification-detail-item">
+                    ${item.title ? `<strong>${escapeHtml(item.title)}</strong>` : ""}
+                    ${item.message ? `<small>${escapeHtml(item.message)}</small>` : ""}
+                </span>
+            `).join("")}
+        </span>
+    `;
 }
 
 function openWorkflowNotificationSummary() {
@@ -996,6 +1028,7 @@ function openWorkflowNotificationSummary() {
                         <span>
                             <strong>${escapeHtml(row.title)}</strong>
                             <small>${escapeHtml(row.description)}</small>
+                            ${workflowNotificationDetailHtml(row.details)}
                         </span>
                         ${row.count > 0
                             ? `<span class="notification-row-count">${row.count > 99 ? "99+" : row.count}</span>`
@@ -2812,7 +2845,10 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             <div class="field-row"><label>Reviewed at</label><input value="${htmlValue(formatDateTime(source.reviewed_at))}" readonly></div>
             <div class="field-row"><label>Assigned booking</label><input value="${htmlValue(source.assigned_room_name || source.approved_booking_id || "")}" readonly></div>
         </div>
-        <div class="field-row"><label for="admin-review-remarks">Remarks</label><textarea id="admin-review-remarks" placeholder="Approval, rejection, send-back, or delete remarks">${htmlValue(source.admin_remarks || source.remarks || "")}</textarea></div>
+    ` : "";
+    const requestRemarks = source.id && context === "request" ? `
+        <div class="form-section-title">Review Remarks</div>
+        <div class="field-row"><label for="admin-review-remarks">Remarks</label><textarea id="admin-review-remarks" placeholder="Approval, rejection, or send-back remarks">${htmlValue(source.admin_remarks || source.remarks || "")}</textarea></div>
     ` : "";
 
     return `
@@ -2900,6 +2936,7 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 </select></div>
                 <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
             </div>
+            ${requestRemarks}
         </form>
     `;
 }
@@ -3227,6 +3264,11 @@ async function openAdminBookingRequestDetails(request) {
                     button.addEventListener("click", () => {
                         if (button.dataset.reviewAction === "delete") {
                             const remarks = document.getElementById("admin-review-remarks")?.value?.trim() || "";
+                            if (!remarks) {
+                                toast("Remarks are required.", "error");
+                                document.getElementById("admin-review-remarks")?.focus();
+                                return;
+                            }
                             openDeleteAdminBookingRequestModal(detail, remarks);
                             return;
                         }
@@ -3267,20 +3309,16 @@ async function runBookingRequestReviewAction(button, request) {
     }
 }
 
-function openDeleteAdminBookingRequestModal(request, initialRemarks = "") {
+function openDeleteAdminBookingRequestModal(request, remarks) {
     openActionModal({
         title: "Delete Booking Request",
         body: `
             <p class="item-meta">Are you sure you want to delete this booking request?</p>
-            <div class="field-row">
-                <label for="delete-request-remarks">Remarks</label>
-                <textarea id="delete-request-remarks" placeholder="Optional deletion remarks">${htmlValue(initialRemarks)}</textarea>
-            </div>
+            <p class="item-meta"><strong>Remarks:</strong> ${escapeHtml(remarks)}</p>
         `,
         confirmText: "Delete Request",
         confirmClass: "danger-btn",
         onConfirm: async () => {
-            const remarks = document.getElementById("delete-request-remarks")?.value?.trim() || "";
             await apiFetch(`/api/admin/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
             toast("Booking request deleted successfully.");
             await loadBookingRequests();

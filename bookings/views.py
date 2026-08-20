@@ -1450,11 +1450,12 @@ class RequesterBookingRequestDeleteView(APIView):
         serializer = BookingRequestDeleteSerializer(data=request.data)
         if not serializer.is_valid():
             return serializer_error_response(serializer, "Booking request could not be deleted.")
+        remarks = serializer.validated_data.get("remarks", "")
 
         soft_delete_booking_request(
             booking_request,
             request.user,
-            serializer.validated_data.get("remarks", ""),
+            remarks,
         )
 
         return api_success(
@@ -1644,11 +1645,18 @@ class AdminBookingRequestDeleteView(APIView):
         serializer = BookingRequestDeleteSerializer(data=request.data)
         if not serializer.is_valid():
             return serializer_error_response(serializer, "Booking request could not be deleted.")
+        remarks = serializer.validated_data.get("remarks", "")
+        if not remarks:
+            return api_error(
+                "Remarks are required.",
+                errors={"remarks": ["Remarks are required."]},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
         soft_delete_booking_request(
             booking_request,
             request.user,
-            serializer.validated_data.get("remarks", ""),
+            remarks,
         )
 
         return api_success(

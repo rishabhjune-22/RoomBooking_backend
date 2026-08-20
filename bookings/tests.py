@@ -1338,7 +1338,9 @@ class BookingRequestWorkflowTests(TestCase):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
 
         delete_response = self.client.delete(
-            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "Duplicate request"},
+            content_type="application/json",
         )
         normal_list = self.client.get(reverse("admin-booking-request-list"))
         deleted_list = self.client.get(
@@ -1368,13 +1370,33 @@ class BookingRequestWorkflowTests(TestCase):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
 
         response = self.client.delete(
-            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk})
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "Approved request no longer needed"},
+            content_type="application/json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         booking_request.refresh_from_db()
         self.assertTrue(booking_request.is_deleted)
         self.assertTrue(Booking.objects.filter(pk=booking.pk).exists())
+
+    def test_admin_delete_requires_remarks(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": booking_request.pk}),
+            data={"remarks": ""},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("remarks", response.json()["errors"])
+        booking_request.refresh_from_db()
+        self.assertFalse(booking_request.is_deleted)
 
     def test_admin_delete_endpoint_rejects_requester_and_unauthenticated(self):
         booking_request = BookingRequest.objects.create(
