@@ -335,6 +335,17 @@ class BookingRequest(models.Model):
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")
 
+    budget_head_type = models.CharField(
+        max_length=30,
+        choices=Booking.BUDGET_HEAD_CHOICES,
+        blank=True,
+        default="",
+    )
+    budget_head_value = models.CharField(max_length=100, blank=True, default="")
+    budget_head_name = models.CharField(max_length=100, blank=True, default="")
+    budget_head_department_name = models.CharField(max_length=100, blank=True, default="")
+    budget_head_project_code = models.CharField(max_length=100, blank=True, default="")
+
     attender_required = models.BooleanField(default=False)
     attender_count_per_day = models.PositiveIntegerField(default=0)
     attender_general_shift = models.BooleanField(default=False)

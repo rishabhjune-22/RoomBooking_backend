@@ -4,6 +4,7 @@ const STORAGE_KEYS = {
     access: "roomBookingWebAccess",
     refresh: "roomBookingWebRefresh",
     user: "roomBookingWebUser",
+    workflowNotificationReadPrefix: "roomBookingWorkflowNotificationRead",
 };
 
 const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
@@ -56,8 +57,30 @@ const state = {
     chargeSheetSelectedId: "",
     bookingRequestFilter: "pending",
     requesterAccountFilter: "pending",
+    superadminAccountRoleFilter: "all",
+    superadminAccountStatusFilter: "pending",
     myRequestFilter: "all",
     rooms: [],
+    workflowNotificationCounts: {
+        total: 0,
+        booking_requests: 0,
+        requester_accounts: 0,
+        admin_accounts: 0,
+        my_requests: 0,
+    },
+    workflowNotificationRawCounts: {
+        total: 0,
+        booking_requests: 0,
+        requester_accounts: 0,
+        admin_accounts: 0,
+        my_requests: 0,
+    },
+    workflowNotificationItems: {
+        booking_requests: [],
+        requester_accounts: [],
+        admin_accounts: [],
+        my_requests: [],
+    },
 };
 
 function escapeHtml(value) {
@@ -273,6 +296,51 @@ function roomLabel(room) {
     return label || `Room ${room.id}`;
 }
 
+function requesterSelectedSchedule() {
+    const arrivalDate = state.rangeStart || state.selectedDate || todayIso();
+    const departureDate = state.rangeEnd || state.rangeStart || state.selectedDate || arrivalDate;
+    return { arrivalDate, departureDate };
+}
+
+function requesterRoomSelection(room = null, prefix = state.prefix) {
+    if (!room) {
+        return {
+            roomId: "",
+            roomName: `${prefix} - No specific room selected`,
+            prefix,
+            availabilityStatus: "",
+            availableFrom: "",
+        };
+    }
+    const roomPrefix = room.prefix || prefix;
+    const roomId = room.roomId || room.room_id || room.id || "";
+    return {
+        roomId,
+        roomName: roomLabel({
+            id: roomId,
+            prefix: roomPrefix,
+            selection_label: room.selectionLabel || room.selection_label || room.roomName,
+            room_name: room.roomName || room.room_name,
+            number: room.room_number || room.number,
+        }),
+        prefix: roomPrefix,
+        availabilityStatus: room.availabilityStatus || room.availability_status || "",
+        availableFrom: room.availableFrom || room.available_from || room.available_from_time || "",
+    };
+}
+
+function availableRoomStatusText(room) {
+    if (room?.availability_status === "partial") {
+        if (room.available_from) {
+            return `Available from: ${formatDateTime(room.available_from)}`;
+        }
+        const dateText = room.available_from_date ? formatDateOnly(room.available_from_date) : "";
+        const timeText = room.available_from_time || "";
+        return `Available from: ${[dateText, timeText].filter(Boolean).join(", ") || "-"}`;
+    }
+    return "Available";
+}
+
 function buildingRoomValue(value, prefix) {
     const label = String(value || "").trim();
     const building = String(prefix || "").trim();
@@ -404,10 +472,9 @@ function renderAuth(message = "", isError = false) {
         <main class="login-shell">
             <section class="login-card">
                 <div class="brand-row">
-                    <div class="brand-mark">RB</div>
+                    <div class="brand-mark">${brandLogoHtml()}</div>
                     <div>
                         <h1 class="brand-title">Room Booking</h1>
-                        <p class="brand-subtitle">Calendar, booking requests, and room management</p>
                     </div>
                 </div>
                 <div class="segmented" role="tablist" aria-label="Role">
@@ -525,6 +592,10 @@ function isAdminLike() {
     return state.user?.role === "admin" || state.user?.role === "superadmin";
 }
 
+function isSuperadmin() {
+    return state.user?.role === "superadmin";
+}
+
 function defaultViewForCurrentRole() {
     return "calendar";
 }
@@ -589,12 +660,16 @@ function navigateToView(view, replace = false) {
 
 function menuItems() {
     if (isAdminLike()) {
-        return [
+        const items = [
             ["calendar", "Home / Calendar"],
             ["bookings", "Bookings"],
             ["bookingRequests", "Booking Requests"],
             ["requesters", "Manage Requesters"],
         ];
+        if (isSuperadmin()) {
+            items.push(["accounts", "User Profiles"]);
+        }
+        return items;
     }
     return [
         ["calendar", "Home / Calendar"],
@@ -602,22 +677,172 @@ function menuItems() {
     ];
 }
 
+function workflowNotificationCountForView(viewId) {
+    const counts = state.workflowNotificationCounts || {};
+    if (viewId === "bookingRequests") {
+        return counts.booking_requests || 0;
+    }
+    if (viewId === "requesters") {
+        return counts.requester_accounts || 0;
+    }
+    if (viewId === "accounts") {
+        return (counts.admin_accounts || 0) + (counts.requester_accounts || 0);
+    }
+    if (viewId === "myRequests") {
+        return counts.my_requests || 0;
+    }
+    return 0;
+}
+
+function workflowNotificationCategoriesForView(viewId) {
+    if (viewId === "bookingRequests") {
+        return ["booking_requests"];
+    }
+    if (viewId === "requesters") {
+        return ["requester_accounts"];
+    }
+    if (viewId === "accounts") {
+        return ["admin_accounts", "requester_accounts"];
+    }
+    if (viewId === "myRequests") {
+        return ["my_requests"];
+    }
+    return [];
+}
+
+function workflowNotificationReadStorageKey() {
+    const userKey = state.user?.id || state.user?.email || "anonymous";
+    const roleKey = state.user?.role || "unknown";
+    return `${STORAGE_KEYS.workflowNotificationReadPrefix}:${roleKey}:${userKey}`;
+}
+
+function getReadWorkflowNotificationKeys() {
+    try {
+        const raw = localStorage.getItem(workflowNotificationReadStorageKey());
+        const values = JSON.parse(raw || "[]");
+        return new Set(Array.isArray(values) ? values : []);
+    } catch (error) {
+        return new Set();
+    }
+}
+
+function saveReadWorkflowNotificationKeys(keys) {
+    localStorage.setItem(workflowNotificationReadStorageKey(), JSON.stringify(Array.from(keys)));
+}
+
+function normalizeWorkflowNotificationItems(category, payload) {
+    const rawItems = payload?.items?.[category];
+    if (Array.isArray(rawItems) && rawItems.length) {
+        return rawItems.map((item) => {
+            if (typeof item === "string") {
+                return item;
+            }
+            return item?.key || `${category}:${item?.id}`;
+        }).filter(Boolean);
+    }
+    const count = Number(payload?.[category] || 0);
+    return Array.from({ length: count }, (_, index) => `${category}:legacy:${index + 1}`);
+}
+
+function applyWorkflowNotificationPayload(payload) {
+    const categories = ["booking_requests", "requester_accounts", "admin_accounts", "my_requests"];
+    const readKeys = getReadWorkflowNotificationKeys();
+    const currentKeys = new Set();
+    const items = {};
+    const rawCounts = {};
+    const unreadCounts = {};
+
+    categories.forEach((category) => {
+        items[category] = normalizeWorkflowNotificationItems(category, payload);
+        rawCounts[category] = items[category].length;
+        items[category].forEach((key) => currentKeys.add(key));
+        unreadCounts[category] = items[category].filter((key) => !readKeys.has(key)).length;
+    });
+
+    const prunedReadKeys = new Set(Array.from(readKeys).filter((key) => currentKeys.has(key)));
+    saveReadWorkflowNotificationKeys(prunedReadKeys);
+
+    rawCounts.total = categories.reduce((total, category) => total + rawCounts[category], 0);
+    unreadCounts.total = categories.reduce((total, category) => total + unreadCounts[category], 0);
+    state.workflowNotificationItems = items;
+    state.workflowNotificationRawCounts = rawCounts;
+    state.workflowNotificationCounts = unreadCounts;
+}
+
+function markWorkflowNotificationCategoriesRead(categories) {
+    const normalizedCategories = categories.filter(Boolean);
+    if (!normalizedCategories.length) {
+        return;
+    }
+    const readKeys = getReadWorkflowNotificationKeys();
+    let changed = false;
+    normalizedCategories.forEach((category) => {
+        (state.workflowNotificationItems?.[category] || []).forEach((key) => {
+            if (!readKeys.has(key)) {
+                readKeys.add(key);
+                changed = true;
+            }
+        });
+    });
+    if (!changed) {
+        return;
+    }
+    saveReadWorkflowNotificationKeys(readKeys);
+    applyWorkflowNotificationPayload({
+        items: state.workflowNotificationItems,
+    });
+    updateWorkflowNotificationBell();
+    updateVisibleMenuBadges();
+}
+
+function markWorkflowNotificationViewRead(viewId) {
+    markWorkflowNotificationCategoriesRead(workflowNotificationCategoriesForView(viewId));
+}
+
+function countBadgeHtml(count) {
+    if (!count) {
+        return "";
+    }
+    return `<span class="menu-count-badge">${count > 99 ? "99+" : count}</span>`;
+}
+
+function bellIconSvg() {
+    return `
+        <svg class="bell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M18 16v-5a6 6 0 0 0-12 0v5l-2 2h16l-2-2Z"></path>
+            <path d="M9.5 20a2.5 2.5 0 0 0 5 0"></path>
+        </svg>
+    `;
+}
+
+function brandLogoHtml() {
+    return `<img class="brand-logo" src="/static/webapp/mainlogo.jpeg" alt="Room Booking logo">`;
+}
+
 function renderDashboard() {
     const roleLabel = state.user?.role === "superadmin" ? "Superadmin" : titleCase(state.user?.role);
+    const visibleMenuItems = menuItems().filter(([id]) => id !== state.view);
     appRoot.innerHTML = `
         <header class="topbar">
             <div class="topbar-inner">
                 <div class="topbar-title">
-                    <div class="brand-mark">RB</div>
+                    <div class="brand-mark">${brandLogoHtml()}</div>
                     <div>
                         <h1>Room Booking</h1>
                         <p>${escapeHtml(state.user?.name || state.user?.email || "User")} - ${escapeHtml(roleLabel)}</p>
                     </div>
                 </div>
                 <nav class="toolbar-menu" aria-label="Main navigation">
-                    ${menuItems().map(([id, label]) => `
-                        <button class="menu-btn ${state.view === id ? "active" : ""}" data-view="${id}">${label}</button>
+                    ${visibleMenuItems.map(([id, label]) => `
+                        <button class="menu-btn" data-view="${id}">
+                            <span>${label}</span>
+                            ${countBadgeHtml(workflowNotificationCountForView(id))}
+                        </button>
                     `).join("")}
+                    <button class="notification-bell" type="button" data-notification-bell aria-label="Workflow notifications">
+                        ${bellIconSvg()}
+                        <span id="workflow-notification-badge" class="notification-badge" hidden>0</span>
+                    </button>
                     <button class="menu-btn" data-logout>Logout</button>
                 </nav>
             </div>
@@ -629,8 +854,125 @@ function renderDashboard() {
             navigateToView(button.dataset.view);
         });
     });
+    appRoot.querySelector("[data-notification-bell]").addEventListener("click", openWorkflowNotificationSummary);
     appRoot.querySelector("[data-logout]").addEventListener("click", logout);
+    updateWorkflowNotificationBell();
+    loadWorkflowNotificationCounts();
     renderCurrentView();
+}
+
+async function loadWorkflowNotificationCounts() {
+    if (!state.access || !state.user) {
+        return;
+    }
+    try {
+        const counts = await apiFetch("/api/workflow-notification-counts/");
+        applyWorkflowNotificationPayload(counts);
+        markWorkflowNotificationViewRead(state.view);
+        updateWorkflowNotificationBell();
+        updateVisibleMenuBadges();
+    } catch (error) {
+        updateWorkflowNotificationBell();
+    }
+}
+
+function updateWorkflowNotificationBell() {
+    const total = state.workflowNotificationCounts?.total || 0;
+    const badge = document.getElementById("workflow-notification-badge");
+    if (!badge) {
+        return;
+    }
+    badge.textContent = total > 99 ? "99+" : String(total);
+    badge.hidden = total <= 0;
+}
+
+function updateVisibleMenuBadges() {
+    appRoot.querySelectorAll("[data-view]").forEach((button) => {
+        const count = workflowNotificationCountForView(button.dataset.view);
+        button.querySelector(".menu-count-badge")?.remove();
+        if (count) {
+            button.insertAdjacentHTML("beforeend", countBadgeHtml(count));
+        }
+    });
+}
+
+function workflowNotificationRows() {
+    const counts = state.workflowNotificationCounts || {};
+    const rawCounts = state.workflowNotificationRawCounts || {};
+    const rows = [];
+    if (isAdminLike()) {
+        rows.push({
+            view: "bookingRequests",
+            title: "Booking Requests",
+            count: counts.booking_requests || 0,
+            rawCount: rawCounts.booking_requests || 0,
+            description: "Pending booking requests waiting for review.",
+        });
+        rows.push({
+            view: "requesters",
+            title: "Manage Requesters",
+            count: counts.requester_accounts || 0,
+            rawCount: rawCounts.requester_accounts || 0,
+            description: "Pending requester accounts waiting for approval.",
+        });
+    }
+    if (isSuperadmin()) {
+        rows.push({
+            view: "accounts",
+            title: "Admin Accounts",
+            count: counts.admin_accounts || 0,
+            rawCount: rawCounts.admin_accounts || 0,
+            description: "Pending admin accounts waiting for superadmin approval.",
+        });
+    }
+    if (state.user?.role === "requester") {
+        rows.push({
+            view: "myRequests",
+            title: "My Requests",
+            count: counts.my_requests || 0,
+            rawCount: rawCounts.my_requests || 0,
+            description: "Reviewed requests waiting for you to read.",
+        });
+    }
+    return rows;
+}
+
+function openWorkflowNotificationSummary() {
+    const rows = workflowNotificationRows();
+    const total = state.workflowNotificationCounts?.total || 0;
+    openActionModal({
+        title: "Workflow Notifications",
+        body: `
+            <div class="notification-summary">
+                <div class="notification-total">
+                    <span>Total new items</span>
+                    <strong>${total}</strong>
+                </div>
+                ${rows.length ? rows.map((row) => `
+                    <button class="notification-summary-row" type="button" data-notification-view="${row.view}">
+                        <span>
+                            <strong>${escapeHtml(row.title)}</strong>
+                            <small>${escapeHtml(row.description)}</small>
+                        </span>
+                        ${row.count > 0
+                            ? `<span class="notification-row-count">${row.count > 99 ? "99+" : row.count}</span>`
+                            : `<span class="notification-read-chip">${row.rawCount > 0 ? "Read" : "None"}</span>`
+                        }
+                    </button>
+                `).join("") : `<div class="empty-state">No workflow notifications.</div>`}
+            </div>
+        `,
+        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
+        onBind: () => {
+            document.querySelectorAll("[data-notification-view]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    markWorkflowNotificationViewRead(button.dataset.notificationView);
+                    closeModal();
+                    navigateToView(button.dataset.notificationView);
+                });
+            });
+        },
+    });
 }
 
 function logout() {
@@ -654,11 +996,14 @@ function renderCurrentView() {
         renderBookingRequestsView();
     } else if (state.view === "requesters") {
         renderRequesterAccountsView();
+    } else if (state.view === "accounts") {
+        renderSuperadminAccountsView();
     } else if (state.view === "myRequests") {
         renderMyRequestsView();
     } else {
         renderCalendarView();
     }
+    markWorkflowNotificationViewRead(state.view);
 }
 
 function renderCalendarView() {
@@ -683,7 +1028,8 @@ function renderCalendarView() {
                 <div class="calendar-grid" id="calendar-grid"></div>
                 <div class="legend">
                     <span class="legend-item"><span class="dot open"></span> Available</span>
-                    <span class="legend-item"><span class="dot partial"></span> Partial</span>
+                    <span class="legend-item"><span class="dot half"></span> Half Available</span>
+                    <span class="legend-item"><span class="dot low"></span> Less Than Half</span>
                     <span class="legend-item"><span class="dot full"></span> Full</span>
                 </div>
             </section>
@@ -697,7 +1043,7 @@ function renderCalendarView() {
     if (isAdminLike()) {
         document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminBookingForm());
     } else {
-        document.getElementById("request-booking-btn").addEventListener("click", () => openRequestForm());
+        document.getElementById("request-booking-btn").addEventListener("click", () => openRequesterAvailableRoomsChooser());
     }
     drawBuildingTabs();
     loadCalendar();
@@ -759,13 +1105,18 @@ function availabilityClass(day) {
     if (!day) {
         return "empty";
     }
-    if (day.available_rooms <= 0) {
+    const totalRooms = Math.max(0, Number(day.total_rooms || 0));
+    const availableRooms = Math.max(0, Number(day.available_rooms || 0));
+    if (totalRooms <= 0) {
+        return "open";
+    }
+    if (availableRooms <= 0) {
         return "full";
     }
-    if (day.has_before_6pm_booking || day.has_partial_booking || day.available_rooms < day.total_rooms) {
-        return "partial";
+    if (availableRooms >= totalRooms) {
+        return "open";
     }
-    return "open";
+    return ((availableRooms * 100) / totalRooms) < 50 ? "low" : "half";
 }
 
 function isInSelectedRange(dateValue) {
@@ -773,6 +1124,10 @@ function isInSelectedRange(dateValue) {
         return dateValue === state.rangeStart;
     }
     return dateValue >= state.rangeStart && dateValue <= state.rangeEnd;
+}
+
+function isPastCalendarDate(dateValue) {
+    return Boolean(dateValue) && dateValue < todayIso();
 }
 
 function drawCalendar() {
@@ -795,9 +1150,11 @@ function drawCalendar() {
     for (let day = 1; day <= daysInMonth; day += 1) {
         const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
         const item = daysByDate[dateValue];
-        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        const isPast = isPastCalendarDate(dateValue);
+        const selectedClass = !isPast && isInSelectedRange(dateValue) ? "in-range" : "";
+        const disabledAttrs = isPast ? `disabled aria-disabled="true" title="Past dates are not selectable"` : "";
         cells.push(`
-            <button class="day-cell ${availabilityClass(item)} ${selectedClass}" type="button" data-date="${dateValue}">
+            <button class="day-cell ${availabilityClass(item)} ${selectedClass} ${isPast ? "past-date" : ""}" type="button" data-date="${dateValue}" ${disabledAttrs}>
                 <span class="day-number">${day}</span>
                 <span class="availability-note">${item ? `${item.available_rooms}/${item.total_rooms} rooms` : "No rooms"}</span>
             </button>
@@ -810,6 +1167,10 @@ function drawCalendar() {
 }
 
 function handleDateClick(dateValue) {
+    if (isPastCalendarDate(dateValue)) {
+        return;
+    }
+
     if (isAdminLike()) {
         state.selectedDate = dateValue;
         if (!state.rangeStart || (state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd)) {
@@ -1410,7 +1771,6 @@ async function createBookingShareLink(sheetName = "booking") {
 }
 
 function bookingCardHtml(booking) {
-    const expired = booking.status === "expired" || isPastDateTime(booking.departure_at);
     return `
         <article class="item-card" data-booking-id="${booking.id}">
             <div class="item-main">
@@ -1421,10 +1781,6 @@ function bookingCardHtml(booking) {
                     <p class="item-meta">Requestor: ${escapeHtml(booking.requestor_name || "-")} - Created by: ${escapeHtml(booking.created_by_name || "-")}</p>
                 </div>
                 <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
-            </div>
-            <div class="card-actions inline-card-actions">
-                ${expired ? "" : `<button class="outline-btn compact-btn" type="button" data-booking-action="edit" data-id="${booking.id}">Edit</button>`}
-                <button class="danger-btn compact-btn" type="button" data-booking-action="delete" data-id="${booking.id}">Delete</button>
             </div>
         </article>
     `;
@@ -1605,11 +1961,6 @@ function renderBookingsView() {
         });
         bindBookingFilters();
         document.getElementById("bookings-list").addEventListener("click", (event) => {
-            const actionButton = event.target.closest("[data-booking-action]");
-            if (actionButton) {
-                handleBookingInlineAction(actionButton.dataset.bookingAction, actionButton.dataset.id);
-                return;
-            }
             const card = event.target.closest("[data-booking-id]");
             if (card) {
                 openBookingDetails(card.dataset.bookingId);
@@ -2318,7 +2669,8 @@ async function openBookingDetails(bookingId) {
         const booking = await apiFetch(`/api/bookings/${bookingId}/`);
         const history = booking.edit_history || [];
         const budgetHead = normalizedBudgetHeadFields(booking);
-        openDetailsModal("Booking Details", [
+        const expired = booking.status === "expired" || isPastDateTime(booking.departure_at);
+        const rows = [
             { section: "Booking" },
             ["ID", bookingDisplayId(booking)],
             ["Status", titleCase(booking.status)],
@@ -2366,7 +2718,27 @@ async function openBookingDetails(bookingId) {
                 ["Old value", entry.old_value],
                 ["New value", entry.new_value],
             ]) : [["History", "No edit history."]]),
-        ]);
+        ];
+        openActionModal({
+            title: "Booking Details",
+            body: detailsRowsHtml(rows),
+            wide: true,
+            footerHtml: `
+                <button class="outline-btn" type="button" data-close-modal>Close</button>
+                ${expired ? "" : `<button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>`}
+                <button class="danger-btn" type="button" id="booking-detail-delete">Delete Booking</button>
+            `,
+            onBind: () => {
+                document.getElementById("booking-detail-edit")?.addEventListener("click", () => {
+                    closeModal();
+                    openAdminBookingEditForm(booking.id);
+                });
+                document.getElementById("booking-detail-delete")?.addEventListener("click", () => {
+                    closeModal();
+                    openDeleteBookingModal(booking.id);
+                });
+            },
+        });
     } catch (error) {
         toast(error.message, "error");
     }
@@ -2397,33 +2769,36 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     return `
         <form id="admin-booking-form" class="field-grid booking-form" novalidate>
             ${requestMeta}
-            <div class="form-section-title">Schedule & Room</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-prefix">Building</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
-                <div class="field-row"><label for="admin-room">Room</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
-                <div class="field-row"><label for="admin-arrival-date">Arrival date</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
-                <div class="field-row"><label for="admin-arrival-time">Arrival time</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                <div class="field-row"><label for="admin-departure-date">Departure date</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
-                <div class="field-row"><label for="admin-departure-time">Departure time</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
-                <div class="field-row"><label for="admin-room-note">Room preference note</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
-            </div>
-
             <div class="form-section-title">Visitor Details</div>
             <div class="two-col">
+                <div class="field-row"><label for="admin-prefix">Building</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+                <div class="field-row"><label for="admin-room">Room No</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
+                <div class="field-row"><label for="admin-arrival-date">Check-In date</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
+                <div class="field-row"><label for="admin-arrival-time">Check-In time</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
+                <div class="field-row"><label for="admin-departure-date">Check-Out date</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
+                <div class="field-row"><label for="admin-departure-time">Check-Out time</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+                <div class="field-row"><label for="admin-room-note">Room preference note</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
                 <div class="field-row"><label for="admin-visitor-name">Visitor name</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
                 <div class="field-row"><label for="admin-visitor-designation">Visitor designation</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
                 <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
-                <div class="field-row"><label for="admin-visitor-gender">Visitor gender</label><input id="admin-visitor-gender" value="${htmlValue(source.visitor_gender)}"></div>
+                <div class="field-row"><label for="admin-visitor-gender">Gender</label><select id="admin-visitor-gender">
+                    <option value="" ${!source.visitor_gender ? "selected" : ""}>Select Gender</option>
+                    <option value="Male" ${source.visitor_gender === "Male" ? "selected" : ""}>Male</option>
+                    <option value="Female" ${source.visitor_gender === "Female" ? "selected" : ""}>Female</option>
+                    <option value="Other" ${source.visitor_gender === "Other" ? "selected" : ""}>Other</option>
+                </select></div>
                 <div class="field-row"><label for="admin-visitor-mobile">Visitor mobile</label><input id="admin-visitor-mobile" inputmode="tel" value="${htmlValue(source.visitor_mobile)}"></div>
                 <div class="field-row"><label for="admin-visitor-email">Visitor email</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
-                <div class="field-row"><label for="admin-visitor-category">Visitor category</label><select id="admin-visitor-category">
-                    <option value="">Select category</option>
-                    <option value="institute_guest" ${source.visitor_category === "institute_guest" ? "selected" : ""}>Institute Guest</option>
-                    <option value="conference_workshop_guest" ${source.visitor_category === "conference_workshop_guest" ? "selected" : ""}>Conference/Workshop Guest</option>
-                    <option value="other_guest" ${source.visitor_category === "other_guest" ? "selected" : ""}>Other Guest</option>
-                </select></div>
             </div>
             <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
+
+            <div class="form-section-title">Visitor Category</div>
+            <div class="radio-list">
+                <label class="check-row"><input name="admin-visitor-category" type="radio" value="institute_guest" ${source.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
+                <label class="check-row"><input name="admin-visitor-category" type="radio" value="conference_workshop_guest" ${source.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
+                <label class="check-row"><input name="admin-visitor-category" type="radio" value="other_guest" ${source.visitor_category === "other_guest" ? "checked" : ""}> Other Guest</label>
+                <button class="outline-btn compact-btn" id="admin-clear-visitor-category" type="button">Clear Selection</button>
+            </div>
 
             <div class="form-section-title">Budget Head</div>
             <div class="budget-head-group">
@@ -2545,6 +2920,66 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
             syncBudgetHeadOption(checkbox);
         });
     });
+    document.getElementById("admin-clear-visitor-category")?.addEventListener("click", () => {
+        document.querySelectorAll('input[name="admin-visitor-category"]').forEach((input) => {
+            input.checked = false;
+        });
+    });
+}
+
+function bindRequesterAttenderRequirement() {
+    const attender = document.getElementById("req-attender");
+    const attenderCount = document.getElementById("req-attender-count");
+    const shiftInputs = ["req-general", "req-morning", "req-day"].map((id) => document.getElementById(id));
+    const syncAttender = () => {
+        const enabled = Boolean(attender?.checked);
+        if (attenderCount) {
+            attenderCount.disabled = !enabled;
+            if (!enabled) {
+                attenderCount.value = "0";
+            }
+        }
+        shiftInputs.forEach((input) => {
+            if (!input) return;
+            input.disabled = !enabled;
+            if (!enabled) {
+                input.checked = false;
+            }
+        });
+    };
+    attender?.addEventListener("change", syncAttender);
+    syncAttender();
+}
+
+function bindRequesterBudgetHeadFields() {
+    const budgetOptions = Array.from(document.querySelectorAll("[data-requester-budget-head-field]"));
+    const syncBudgetHeadOption = (checkbox, shouldFocus = false) => {
+        const field = document.getElementById(checkbox.dataset.requesterBudgetHeadField);
+        const wrapper = field?.closest(".budget-head-input");
+        if (!field || !wrapper) return;
+        wrapper.hidden = !checkbox.checked;
+        if (checkbox.checked && shouldFocus) {
+            field.focus();
+        }
+        if (!checkbox.checked) {
+            field.value = "";
+        }
+    };
+    budgetOptions.forEach((checkbox) => {
+        syncBudgetHeadOption(checkbox);
+        checkbox.addEventListener("change", () => syncBudgetHeadOption(checkbox, true));
+    });
+    document.getElementById("req-clear-budget-head")?.addEventListener("click", () => {
+        budgetOptions.forEach((checkbox) => {
+            checkbox.checked = false;
+            syncBudgetHeadOption(checkbox);
+        });
+    });
+    document.getElementById("req-clear-visitor-category")?.addEventListener("click", () => {
+        document.querySelectorAll('input[name="req-visitor-category"]').forEach((input) => {
+            input.checked = false;
+        });
+    });
 }
 
 function readAdminBookingPayload() {
@@ -2581,7 +3016,7 @@ function readAdminBookingPayload() {
         visitor_gender: val("admin-visitor-gender"),
         visitor_mobile: val("admin-visitor-mobile"),
         visitor_email: val("admin-visitor-email"),
-        visitor_category: val("admin-visitor-category"),
+        visitor_category: document.querySelector('input[name="admin-visitor-category"]:checked')?.value || "",
         purpose_of_visit: val("admin-purpose"),
         requestor_name: val("admin-requestor-name"),
         requestor_designation: val("admin-requestor-designation"),
@@ -2679,13 +3114,14 @@ async function loadBookingRequests() {
         const rows = await apiFetch(`/api/admin/booking-requests/${statusParam}`);
         if (!rows.length) {
             list.innerHTML = `<div class="empty-state">No ${state.bookingRequestFilter === "all" ? "" : titleCase(state.bookingRequestFilter).toLowerCase()} booking requests.</div>`;
+            loadWorkflowNotificationCounts();
             return;
         }
         list.innerHTML = rows.map((request) => bookingRequestCard(request)).join("");
         list.querySelectorAll("[data-request-id]").forEach((card) => {
             card.addEventListener("click", () => openAdminBookingRequestDetails(rows.find((item) => String(item.id) === card.dataset.requestId)));
         });
-        bindRequestActionButtons(list, rows);
+        loadWorkflowNotificationCounts();
     } catch (error) {
         list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
     }
@@ -2702,26 +3138,8 @@ function bookingRequestCard(request) {
                 </div>
                 <span class="status-chip ${request.status}">${titleCase(request.status)}</span>
             </div>
-            <div class="card-actions">
-                ${request.status === "pending" ? `
-                    <button class="success-btn" data-request-action="approve" data-id="${request.id}">Approve</button>
-                    <button class="danger-btn" data-request-action="reject" data-id="${request.id}">Reject</button>
-                    <button class="warn-btn" data-request-action="sendBack" data-id="${request.id}">Send Back</button>
-                ` : ""}
-                <button class="outline-btn" data-request-action="delete" data-id="${request.id}">Delete Request</button>
-            </div>
         </article>
     `;
-}
-
-function bindRequestActionButtons(container, rows) {
-    container.querySelectorAll("[data-request-action]").forEach((button) => {
-        button.addEventListener("click", (event) => {
-            event.stopPropagation();
-            const request = rows.find((item) => String(item.id) === button.dataset.id);
-            handleBookingRequestAction(button.dataset.requestAction, request);
-        });
-    });
 }
 
 async function fetchRooms() {
@@ -2730,59 +3148,6 @@ async function fetchRooms() {
     }
     state.rooms = await fetchAllPaginated("/api/rooms/?page_size=100");
     return state.rooms;
-}
-
-async function handleBookingRequestAction(action, request) {
-    if (action === "approve") {
-        try {
-            const rooms = await fetchRooms();
-            const roomOptions = rooms
-                .filter((room) => !request.preferred_prefix || room.prefix === request.preferred_prefix)
-                .map((room) => `<option value="${room.id}" ${String(room.id) === String(request.preferred_room) ? "selected" : ""}>${escapeHtml(roomLabel(room))}</option>`)
-                .join("");
-            openActionModal({
-                title: "Approve Booking Request",
-                body: `
-                    <div class="field-grid">
-                        <div class="field-row"><label for="approve-room">Final room</label><select id="approve-room" required>${roomOptions}</select></div>
-                        <div class="field-row"><label for="approve-remarks">Remarks</label><textarea id="approve-remarks" placeholder="Optional remarks"></textarea></div>
-                    </div>
-                `,
-                confirmText: "Approve",
-                confirmClass: "success-btn",
-                onConfirm: async () => {
-                    const room = document.getElementById("approve-room").value;
-                    const remarks = document.getElementById("approve-remarks").value;
-                    await apiFetch(`/api/admin/booking-requests/${request.id}/approve/`, { method: "POST", body: { room, remarks } });
-                    toast("Booking request approved.");
-                    loadBookingRequests();
-                },
-            });
-        } catch (error) {
-            toast(error.message, "error");
-        }
-    } else if (action === "reject") {
-        openRemarksModal("Reject Booking Request", "Reject", "danger-btn", async (remarks) => {
-            await apiFetch(`/api/admin/booking-requests/${request.id}/reject/`, { method: "POST", body: { remarks } });
-            toast("Booking request rejected.");
-            loadBookingRequests();
-        });
-    } else if (action === "sendBack") {
-        openRemarksModal("Send Back for Correction", "Send Back", "warn-btn", async (remarks) => {
-            if (!remarks.trim()) {
-                throw new Error("Remarks are required.");
-            }
-            await apiFetch(`/api/admin/booking-requests/${request.id}/send-back/`, { method: "POST", body: { remarks } });
-            toast("Request sent back for correction.");
-            loadBookingRequests();
-        }, "Explain what needs to be corrected");
-    } else if (action === "delete") {
-        openRemarksModal("Delete Booking Request", "Delete Request", "danger-btn", async (remarks) => {
-            await apiFetch(`/api/admin/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
-            toast("Booking request deleted successfully.");
-            loadBookingRequests();
-        }, "Optional deletion remarks");
-    }
 }
 
 async function openAdminBookingRequestDetails(request) {
@@ -2796,13 +3161,12 @@ async function openAdminBookingRequestDetails(request) {
         ]);
         const isPending = detail.status === "pending";
         openActionModal({
-            title: "Booking Request Review",
+            title: "Create Booking From Request",
             body: adminBookingFormHtml(detail, "request"),
             wide: true,
             footerHtml: `
-                <button class="outline-btn" type="button" data-close-modal>Close</button>
                 ${isPending ? `
-                    <button class="success-btn" type="button" data-review-action="approve">Approve / Create Booking</button>
+                    <button class="success-btn" type="button" data-review-action="approve">Approve</button>
                     <button class="danger-btn" type="button" data-review-action="reject">Reject</button>
                     <button class="warn-btn" type="button" data-review-action="sendBack">Send Back</button>
                 ` : ""}
@@ -2811,7 +3175,14 @@ async function openAdminBookingRequestDetails(request) {
             onBind: () => {
                 bindAdminBookingForm(rooms, detail.preferred_room || "", detail.preferred_prefix || state.prefix);
                 document.querySelectorAll("[data-review-action]").forEach((button) => {
-                    button.addEventListener("click", () => runBookingRequestReviewAction(button, detail));
+                    button.addEventListener("click", () => {
+                        if (button.dataset.reviewAction === "delete") {
+                            const remarks = document.getElementById("admin-review-remarks")?.value?.trim() || "";
+                            openDeleteAdminBookingRequestModal(detail, remarks);
+                            return;
+                        }
+                        runBookingRequestReviewAction(button, detail);
+                    });
                 });
             },
         });
@@ -2838,13 +3209,6 @@ async function runBookingRequestReviewAction(button, request) {
             }
             await apiFetch(`/api/admin/booking-requests/${request.id}/send-back/`, { method: "POST", body: { remarks } });
             toast("Request sent back for correction.");
-        } else if (action === "delete") {
-            if (!window.confirm("Are you sure you want to delete this booking request?")) {
-                button.disabled = false;
-                return;
-            }
-            await apiFetch(`/api/admin/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
-            toast("Booking request deleted successfully.");
         }
         closeModal();
         await loadBookingRequests();
@@ -2854,8 +3218,34 @@ async function runBookingRequestReviewAction(button, request) {
     }
 }
 
+function openDeleteAdminBookingRequestModal(request, initialRemarks = "") {
+    openActionModal({
+        title: "Delete Booking Request",
+        body: `
+            <p class="item-meta">Are you sure you want to delete this booking request?</p>
+            <div class="field-row">
+                <label for="delete-request-remarks">Remarks</label>
+                <textarea id="delete-request-remarks" placeholder="Optional deletion remarks">${htmlValue(initialRemarks)}</textarea>
+            </div>
+        `,
+        confirmText: "Delete Request",
+        confirmClass: "danger-btn",
+        onConfirm: async () => {
+            const remarks = document.getElementById("delete-request-remarks")?.value?.trim() || "";
+            await apiFetch(`/api/admin/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
+            toast("Booking request deleted successfully.");
+            await loadBookingRequests();
+        },
+    });
+}
+
 function openBookingRequestDetails(request) {
-    openDetailsModal("Booking Request Details", [
+    openDetailsModal("Booking Request Details", bookingRequestDetailRows(request));
+}
+
+function bookingRequestDetailRows(request) {
+    const budgetHead = normalizedBudgetHeadFields(request);
+    return [
         { section: "Request Status" },
         ["ID", request.id],
         ["Status", titleCase(request.status)],
@@ -2878,6 +3268,10 @@ function openBookingRequestDetails(request) {
         ["Email", request.visitor_email],
         ["Category", titleCase(request.visitor_category)],
         ["Purpose", request.purpose_of_visit],
+        { section: "Budget Head" },
+        ["Individual", budgetHead.individual],
+        ["Institute Head", budgetHead.instituteHead],
+        ["Project code", budgetHead.projectHead],
         { section: "Requester Details" },
         ["Requester account", request.requester_name],
         ["Requester email", request.requester_email],
@@ -2896,7 +3290,7 @@ function openBookingRequestDetails(request) {
         ["Deleted by", request.deleted_by_name],
         ["Deleted by role", titleCase(request.deleted_by_role)],
         ["Delete remarks", request.remarks],
-    ]);
+    ];
 }
 
 function renderRequesterAccountsView() {
@@ -2930,6 +3324,7 @@ async function loadRequesterAccounts() {
         const rows = await apiFetch(`/api/admin/requester-accounts/${statusParam}`);
         if (!rows.length) {
             list.innerHTML = `<div class="empty-state">No requester accounts found.</div>`;
+            loadWorkflowNotificationCounts();
             return;
         }
         list.innerHTML = rows.map((account) => `
@@ -2941,22 +3336,65 @@ async function loadRequesterAccounts() {
                     </div>
                     <span class="status-chip ${account.approval_status}">${titleCase(account.approval_status)}</span>
                 </div>
-                ${accountActionButtonsHtml(account)}
             </article>
         `).join("");
         list.querySelectorAll("[data-account-id]").forEach((card) => {
-            card.addEventListener("click", () => openAccountDetails(rows.find((item) => String(item.id) === card.dataset.accountId)));
+            const account = rows.find((item) => String(item.id) === card.dataset.accountId);
+            bindRequesterAccountCard(card, account);
         });
-        list.querySelectorAll("[data-account-action]").forEach((button) => {
-            button.addEventListener("click", (event) => {
-                event.stopPropagation();
-                const account = rows.find((item) => String(item.id) === button.dataset.id);
-                handleAccountAction(button.dataset.accountAction, account);
-            });
-        });
+        loadWorkflowNotificationCounts();
     } catch (error) {
         list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
     }
+}
+
+function bindRequesterAccountCard(card, account) {
+    if (!card || !account) {
+        return;
+    }
+    let longPressTimer = null;
+    let quickActionOpened = false;
+    const clearLongPress = () => {
+        if (longPressTimer) {
+            window.clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+    };
+    const openQuickActions = () => {
+        clearLongPress();
+        quickActionOpened = true;
+        openRequesterAccountQuickActions(account);
+    };
+
+    card.tabIndex = 0;
+    card.addEventListener("click", () => {
+        if (quickActionOpened) {
+            quickActionOpened = false;
+            return;
+        }
+        openAccountDetails(account);
+    });
+    card.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        openQuickActions();
+    });
+    card.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) {
+            return;
+        }
+        quickActionOpened = false;
+        clearLongPress();
+        longPressTimer = window.setTimeout(openQuickActions, 650);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((eventName) => {
+        card.addEventListener(eventName, clearLongPress);
+    });
+    card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openAccountDetails(account);
+        }
+    });
 }
 
 function accountActionButtonsHtml(account, compact = false) {
@@ -3011,6 +3449,36 @@ function openAccountDetails(account) {
     });
 }
 
+function openRequesterAccountQuickActions(account) {
+    const detailsHtml = `<div class="details-list">${[
+        ["Name", account.name],
+        ["Email", account.email],
+        ["Department", account.department],
+        ["Designation", account.designation],
+    ].map(([label, value]) => `
+        <div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>
+    `).join("")}</div>`;
+    openActionModal({
+        title: "Quick Actions",
+        body: detailsHtml,
+        confirmText: "Close",
+        confirmClass: "outline-btn",
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            ${accountActionButtonsHtml(account, true)}
+        `,
+        onBind: () => {
+            document.querySelectorAll(".modal-footer [data-account-action]").forEach((button) => {
+                button.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    closeModal();
+                    handleAccountAction(button.dataset.accountAction, account);
+                });
+            });
+        },
+    });
+}
+
 function handleAccountAction(action, account) {
     if (action === "approve") {
         openActionModal({
@@ -3029,6 +3497,204 @@ function handleAccountAction(action, account) {
             await apiFetch(`/api/admin/requester-accounts/${account.id}/reject/`, { method: "POST", body: { remarks } });
             toast("Requester account rejected.");
             loadRequesterAccounts();
+        });
+    }
+}
+
+function renderSuperadminAccountsView() {
+    if (!isSuperadmin()) {
+        navigateToView("calendar", true);
+        return;
+    }
+    viewRoot().innerHTML = `
+        <div class="section-header">
+            <div>
+                <h2>User Profiles</h2>
+                <p>Simple Mode account management for admin and requester users.</p>
+            </div>
+            <button class="outline-btn" id="refresh-superadmin-accounts">Refresh</button>
+        </div>
+        <section class="surface side-panel">
+            <div class="simple-filter-grid">
+                <div class="field-row">
+                    <label for="simple-account-role">Role</label>
+                    <select id="simple-account-role">
+                        <option value="all" ${state.superadminAccountRoleFilter === "all" ? "selected" : ""}>All</option>
+                        <option value="admin" ${state.superadminAccountRoleFilter === "admin" ? "selected" : ""}>Admin</option>
+                        <option value="requester" ${state.superadminAccountRoleFilter === "requester" ? "selected" : ""}>Requester</option>
+                    </select>
+                </div>
+                <div class="field-row">
+                    <label for="simple-account-status">Approval Status</label>
+                    <select id="simple-account-status">
+                        <option value="all" ${state.superadminAccountStatusFilter === "all" ? "selected" : ""}>All</option>
+                        <option value="pending" ${state.superadminAccountStatusFilter === "pending" ? "selected" : ""}>Pending</option>
+                        <option value="approved" ${state.superadminAccountStatusFilter === "approved" ? "selected" : ""}>Approved</option>
+                        <option value="rejected" ${state.superadminAccountStatusFilter === "rejected" ? "selected" : ""}>Rejected</option>
+                    </select>
+                </div>
+            </div>
+            <div id="superadmin-accounts-list" class="card-list"><div class="loading-state">Loading user profiles...</div></div>
+        </section>
+    `;
+    document.getElementById("simple-account-role").addEventListener("change", (event) => {
+        state.superadminAccountRoleFilter = event.target.value;
+        loadSuperadminAccounts();
+    });
+    document.getElementById("simple-account-status").addEventListener("change", (event) => {
+        state.superadminAccountStatusFilter = event.target.value;
+        loadSuperadminAccounts();
+    });
+    document.getElementById("refresh-superadmin-accounts").addEventListener("click", loadSuperadminAccounts);
+    loadSuperadminAccounts();
+}
+
+async function loadSuperadminAccounts() {
+    const list = document.getElementById("superadmin-accounts-list");
+    if (!list) {
+        return;
+    }
+    list.innerHTML = `<div class="loading-state">Loading user profiles...</div>`;
+    const params = new URLSearchParams();
+    if (state.superadminAccountRoleFilter !== "all") {
+        params.set("role", state.superadminAccountRoleFilter);
+    }
+    if (state.superadminAccountStatusFilter !== "all") {
+        params.set("status", state.superadminAccountStatusFilter);
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    try {
+        const rows = await apiFetch(`/api/superadmin/account-requests/${query}`);
+        if (!rows.length) {
+            list.innerHTML = `<div class="empty-state">${superadminAccountEmptyText()}</div>`;
+            loadWorkflowNotificationCounts();
+            return;
+        }
+        list.innerHTML = rows.map((account) => superadminAccountCard(account)).join("");
+        list.querySelectorAll("[data-superadmin-account-id]").forEach((card) => {
+            const account = rows.find((item) => String(item.id) === card.dataset.superadminAccountId);
+            card.addEventListener("click", () => openSuperadminAccountDetails(account));
+        });
+        loadWorkflowNotificationCounts();
+    } catch (error) {
+        list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function superadminAccountEmptyText() {
+    const status = state.superadminAccountStatusFilter;
+    const role = state.superadminAccountRoleFilter;
+    if (role === "all" && status === "all") {
+        return "No admin or requester profiles found.";
+    }
+    const roleText = role === "all" ? "accounts" : `${role} accounts`;
+    if (status === "all") {
+        return `No ${roleText} found.`;
+    }
+    return `No ${titleCase(status).toLowerCase()} ${roleText} found.`;
+}
+
+function superadminAccountCard(account) {
+    return `
+        <article class="item-card" data-superadmin-account-id="${account.id}">
+            <div class="item-main">
+                <div>
+                    <h3 class="item-title">${escapeHtml(account.name || account.email)}</h3>
+                    <p class="item-meta">${escapeHtml(account.email || "-")}</p>
+                    <p class="item-meta">${titleCase(account.role)} - ${escapeHtml(account.department || "No department")}</p>
+                </div>
+                <span class="status-chip ${account.approval_status}">${titleCase(account.approval_status)}</span>
+            </div>
+        </article>
+    `;
+}
+
+function superadminAccountActionButtonsHtml(account) {
+    const actions = [];
+    if (account.approval_status === "pending") {
+        actions.push(`<button class="success-btn" type="button" data-superadmin-account-action="approve">Approve</button>`);
+        actions.push(`<button class="danger-btn" type="button" data-superadmin-account-action="reject">Reject</button>`);
+    } else if (account.approval_status === "approved") {
+        actions.push(`<button class="danger-btn" type="button" data-superadmin-account-action="reject">Reject</button>`);
+    } else if (account.approval_status === "rejected") {
+        actions.push(`<button class="success-btn" type="button" data-superadmin-account-action="approve">Approve Again</button>`);
+    }
+    actions.push(`<button class="danger-btn" type="button" data-superadmin-account-action="delete">Delete</button>`);
+    return actions.join("");
+}
+
+function openSuperadminAccountDetails(account) {
+    if (!account) {
+        return;
+    }
+    const rows = [
+        { section: "Account" },
+        ["Name", account.name],
+        ["Email", account.email],
+        ["Role", titleCase(account.role)],
+        ["Approval Status", titleCase(account.approval_status)],
+        ["Department", account.department],
+        ["Designation", account.designation],
+        ["Mobile", account.mobile],
+        { section: "Approval" },
+        ["Approved by", account.approved_by_name],
+        ["Approved at", formatDateTime(account.approved_at)],
+        ["Remarks", account.remarks],
+        { section: "Audit" },
+        ["Created at", formatDateTime(account.created_at)],
+        ["Updated at", formatDateTime(account.updated_at)],
+    ];
+    openActionModal({
+        title: `${titleCase(account.role)} Profile`,
+        body: detailsRowsHtml(rows),
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            ${superadminAccountActionButtonsHtml(account)}
+        `,
+        onBind: () => {
+            document.querySelectorAll("[data-superadmin-account-action]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    closeModal();
+                    handleSuperadminAccountAction(button.dataset.superadminAccountAction, account);
+                });
+            });
+        },
+    });
+}
+
+function handleSuperadminAccountAction(action, account) {
+    if (action === "approve") {
+        openActionModal({
+            title: `Approve ${titleCase(account.role)} Account`,
+            body: `<p class="item-meta">Approve ${escapeHtml(account.name || account.email)}?</p>`,
+            confirmText: "Approve",
+            confirmClass: "success-btn",
+            onConfirm: async () => {
+                await apiFetch(`/api/superadmin/account-requests/${account.id}/approve/`, { method: "POST", body: {} });
+                toast("Account approved successfully.");
+                await loadSuperadminAccounts();
+            },
+        });
+    } else if (action === "reject") {
+        openRemarksModal(`Reject ${titleCase(account.role)} Account`, "Reject", "danger-btn", async (remarks) => {
+            await apiFetch(`/api/superadmin/account-requests/${account.id}/reject/`, { method: "POST", body: { remarks } });
+            toast("Account rejected successfully.");
+            await loadSuperadminAccounts();
+        });
+    } else if (action === "delete") {
+        openActionModal({
+            title: "Delete Account",
+            body: `
+                <p class="item-meta">Delete ${escapeHtml(account.name || account.email)}?</p>
+                <p class="item-meta">This deletes the linked user account and profile. This action cannot be undone.</p>
+            `,
+            confirmText: "Delete",
+            confirmClass: "danger-btn",
+            onConfirm: async () => {
+                await apiFetch(`/api/superadmin/account-requests/${account.id}/delete/`, { method: "DELETE" });
+                toast("Account deleted successfully.");
+                await loadSuperadminAccounts();
+            },
         });
     }
 }
@@ -3064,6 +3730,7 @@ async function loadMyRequests() {
         const rows = await apiFetch(`/api/requester/booking-requests/${statusParam}`);
         if (!rows.length) {
             list.innerHTML = `<div class="empty-state">No booking requests found.</div>`;
+            loadWorkflowNotificationCounts();
             return;
         }
         list.innerHTML = rows.map((request) => `
@@ -3076,72 +3743,204 @@ async function loadMyRequests() {
                     </div>
                     <span class="status-chip ${request.status}">${titleCase(request.status)}</span>
                 </div>
-                <div class="card-actions">
-                    ${request.status === "pending" || request.status === "correction_required" ? `<button class="outline-btn" data-my-action="edit" data-id="${request.id}">Edit</button>` : ""}
-                    <button class="danger-btn" data-my-action="delete" data-id="${request.id}">Delete Request</button>
-                </div>
             </article>
         `).join("");
         list.querySelectorAll("[data-my-request-id]").forEach((card) => {
-            card.addEventListener("click", () => openBookingRequestDetails(rows.find((item) => String(item.id) === card.dataset.myRequestId)));
+            card.addEventListener("click", () => openMyRequestDetails(rows.find((item) => String(item.id) === card.dataset.myRequestId)));
         });
-        list.querySelectorAll("[data-my-action]").forEach((button) => {
-            button.addEventListener("click", (event) => {
-                event.stopPropagation();
-                const request = rows.find((item) => String(item.id) === button.dataset.id);
-                if (button.dataset.myAction === "edit") {
-                    openRequestForm(request);
-                } else {
-                    openRemarksModal("Delete Request", "Delete Request", "danger-btn", async (remarks) => {
-                        await apiFetch(`/api/requester/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
-                        toast("Request deleted successfully.");
-                        loadMyRequests();
-                    }, "Optional deletion remarks");
-                }
-            });
-        });
+        loadWorkflowNotificationCounts();
     } catch (error) {
         list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
     }
 }
 
-async function openRequestForm(existing = null) {
+function openMyRequestDetails(request) {
+    if (!request) {
+        return;
+    }
+    const canEdit = request.status === "pending" || request.status === "correction_required";
+    const editText = request.status === "correction_required" ? "Edit & Resubmit" : "Edit";
+    openActionModal({
+        title: `Booking Request #${request.id}`,
+        body: detailsRowsHtml(bookingRequestDetailRows(request)),
+        wide: true,
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            ${canEdit ? `<button class="primary-btn" type="button" id="my-request-edit">${editText}</button>` : ""}
+            <button class="danger-btn" type="button" id="my-request-delete">Delete Request</button>
+        `,
+        onBind: () => {
+            document.getElementById("my-request-edit")?.addEventListener("click", () => {
+                closeModal();
+                openRequestForm(request);
+            });
+            document.getElementById("my-request-delete")?.addEventListener("click", () => openDeleteMyRequestModal(request));
+        },
+    });
+}
+
+function openDeleteMyRequestModal(request) {
+    openActionModal({
+        title: "Delete Request",
+        body: `
+            <p class="item-meta">Are you sure you want to delete this request?</p>
+            <div class="field-row">
+                <label for="delete-my-request-remarks">Remarks</label>
+                <textarea id="delete-my-request-remarks" placeholder="Optional deletion remarks"></textarea>
+            </div>
+        `,
+        confirmText: "Delete Request",
+        confirmClass: "danger-btn",
+        onConfirm: async () => {
+            const remarks = document.getElementById("delete-my-request-remarks")?.value?.trim() || "";
+            await apiFetch(`/api/requester/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
+            toast("Request deleted successfully.");
+            await loadMyRequests();
+        },
+    });
+}
+
+async function openRequesterAvailableRoomsChooser() {
+    const { arrivalDate, departureDate } = requesterSelectedSchedule();
+    if (!arrivalDate) {
+        toast("Select an arrival date first.", "error");
+        return;
+    }
+    if (!departureDate) {
+        toast("Select a departure date first.", "error");
+        return;
+    }
+    if (departureDate < arrivalDate) {
+        toast("Departure date cannot be before arrival date.", "error");
+        return;
+    }
+    openActionModal({
+        title: "Available Rooms",
+        body: `<div class="loading-state">Loading available rooms...</div>`,
+        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
+    });
+
+    try {
+        const data = await apiFetch(`/api/requester/available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
+        const rooms = data?.rooms || [];
+        const body = document.querySelector(".modal-body");
+        if (!body) {
+            return;
+        }
+        if (!rooms.length) {
+            body.innerHTML = `<div class="empty-state">No rooms are available for the selected range.</div>`;
+            return;
+        }
+        body.innerHTML = `
+            <p class="item-meta">Select a preferred room for your booking request.</p>
+            <div class="available-room-list">
+                ${rooms.map((room, index) => {
+                    const selection = requesterRoomSelection(room, data?.prefix || state.prefix);
+                    return `
+                        <button class="available-room-card" type="button" data-room-index="${index}">
+                            <span class="available-room-title">${escapeHtml(selection.roomName)}</span>
+                            <span class="available-room-status ${room.availability_status === "partial" ? "partial" : "available"}">${escapeHtml(availableRoomStatusText(room))}</span>
+                        </button>
+                    `;
+                }).join("")}
+            </div>
+        `;
+        body.querySelectorAll("[data-room-index]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const room = rooms[Number(button.dataset.roomIndex)];
+                closeModal();
+                openRequestForm(null, requesterRoomSelection(room, data?.prefix || state.prefix));
+            });
+        });
+    } catch (error) {
+        const body = document.querySelector(".modal-body");
+        if (body) {
+            body.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</div>`;
+        }
+    }
+}
+
+async function openRequestForm(existing = null, selectedRoom = null) {
     const editing = Boolean(existing);
     const arrival = editing ? indiaParts(existing.arrival_at) : { date: state.rangeStart || todayIso(), time: "10:00" };
     const departure = editing ? indiaParts(existing.departure_at) : { date: state.rangeEnd || state.rangeStart || todayIso(), time: "18:00" };
-    const prefix = editing ? (existing.preferred_prefix || state.prefix) : state.prefix;
+    const calendarSchedule = requesterSelectedSchedule();
+    if (!editing) {
+        arrival.date = calendarSchedule.arrivalDate;
+        departure.date = calendarSchedule.departureDate;
+    }
+    const prefix = editing ? (existing.preferred_prefix || state.prefix) : (selectedRoom?.prefix || state.prefix);
+    const existingHasRoom = Boolean(existing?.preferred_room || existing?.preferred_room_name);
+    const roomSelection = editing && existingHasRoom
+        ? requesterRoomSelection({
+            id: existing.preferred_room,
+            room_id: existing.preferred_room,
+            room_name: existing.preferred_room_name,
+            selection_label: existing.preferred_room_name,
+            prefix,
+        }, prefix)
+        : requesterRoomSelection(selectedRoom, prefix);
+    const requestorName = state.user?.name || existing?.requestor_name || "";
+    const requestorEmail = existing?.requestor_email || state.user?.email || "";
+    const budgetHead = normalizedBudgetHeadFields(existing || {});
     openActionModal({
         title: editing ? "Edit Request" : "Request Booking",
         body: `
             <form id="request-form" class="field-grid">
+                <div class="form-section-title">Room Details</div>
+                <input id="req-arrival-date" type="hidden" value="${htmlValue(arrival.date)}">
+                <input id="req-departure-date" type="hidden" value="${htmlValue(departure.date)}">
+                <input id="req-prefix" type="hidden" value="${htmlValue(prefix)}">
+                <input id="req-room" type="hidden" value="${htmlValue(roomSelection.roomId)}">
                 <div class="two-col">
-                    <div class="field-row"><label>Arrival date</label><input id="req-arrival-date" type="date" value="${arrival.date}" required></div>
-                    <div class="field-row"><label>Arrival time</label><input id="req-arrival-time" type="time" value="${arrival.time || "10:00"}" required></div>
-                    <div class="field-row"><label>Departure date</label><input id="req-departure-date" type="date" value="${departure.date}" required></div>
-                    <div class="field-row"><label>Departure time</label><input id="req-departure-time" type="time" value="${departure.time || "18:00"}" required></div>
+                    <div class="field-row"><label>Room</label><input value="${htmlValue(roomSelection.roomName)}" readonly></div>
+                    <div class="field-row"><label>Building</label><input value="${htmlValue(prefix)}" readonly></div>
                 </div>
+
+                <div class="form-section-title">Stay Details</div>
                 <div class="two-col">
-                    <div class="field-row"><label>Building</label><select id="req-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
-                    <div class="field-row"><label>Preferred room</label><select id="req-room"><option value="">No specific room</option></select></div>
+                    <div class="field-row"><label>Arrival</label><input value="${htmlValue(formatDateOnly(arrival.date))}" readonly></div>
+                    <div class="field-row"><label>Arrival time</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
+                    <div class="field-row"><label>Departure</label><input value="${htmlValue(formatDateOnly(departure.date))}" readonly></div>
+                    <div class="field-row"><label>Departure time</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
                 </div>
+
+                <div class="form-section-title">Visitor Details</div>
                 <div class="two-col">
                     <div class="field-row"><label>Visitor name</label><input id="req-visitor-name" value="${escapeHtml(existing?.visitor_name || "")}" required></div>
+                    <div class="field-row"><label>Designation</label><input id="req-visitor-designation" value="${escapeHtml(existing?.visitor_designation || "")}"></div>
+                    <div class="field-row"><label>Organisation</label><input id="req-visitor-organisation" value="${escapeHtml(existing?.visitor_organisation || "")}"></div>
+                    <div class="field-row"><label>Gender</label><select id="req-visitor-gender">
+                        <option value="" ${!existing?.visitor_gender ? "selected" : ""}>Select gender</option>
+                        <option value="Male" ${existing?.visitor_gender === "Male" ? "selected" : ""}>Male</option>
+                        <option value="Female" ${existing?.visitor_gender === "Female" ? "selected" : ""}>Female</option>
+                        <option value="Other" ${existing?.visitor_gender === "Other" ? "selected" : ""}>Other</option>
+                    </select></div>
                     <div class="field-row"><label>Visitor mobile</label><input id="req-visitor-mobile" value="${escapeHtml(existing?.visitor_mobile || "")}"></div>
                     <div class="field-row"><label>Visitor email</label><input id="req-visitor-email" type="email" value="${escapeHtml(existing?.visitor_email || "")}"></div>
-                    <div class="field-row"><label>Visitor category</label><select id="req-visitor-category">
-                        <option value="">Select category</option>
-                        <option value="institute_guest" ${existing?.visitor_category === "institute_guest" ? "selected" : ""}>Institute Guest</option>
-                        <option value="conference_workshop_guest" ${existing?.visitor_category === "conference_workshop_guest" ? "selected" : ""}>Conference/Workshop Guest</option>
-                        <option value="other_guest" ${existing?.visitor_category === "other_guest" ? "selected" : ""}>Other Guest</option>
-                    </select></div>
                 </div>
                 <div class="field-row"><label>Purpose of visit</label><textarea id="req-purpose">${escapeHtml(existing?.purpose_of_visit || "")}</textarea></div>
-                <div class="two-col">
-                    <div class="field-row"><label>Requester name</label><input id="req-requestor-name" value="${escapeHtml(existing?.requestor_name || state.user?.name || "")}"></div>
-                    <div class="field-row"><label>Department</label><input id="req-requestor-department" value="${escapeHtml(existing?.requestor_department || state.user?.department || "")}"></div>
-                    <div class="field-row"><label>Designation</label><input id="req-requestor-designation" value="${escapeHtml(existing?.requestor_designation || state.user?.designation || "")}"></div>
-                    <div class="field-row"><label>Mobile</label><input id="req-requestor-mobile" value="${escapeHtml(existing?.requestor_mobile || state.user?.mobile || "")}"></div>
+
+                <div class="form-section-title">Visitor Category</div>
+                <div class="radio-list">
+                    <label class="check-row"><input name="req-visitor-category" type="radio" value="institute_guest" ${existing?.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
+                    <label class="check-row"><input name="req-visitor-category" type="radio" value="conference_workshop_guest" ${existing?.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
+                    <label class="check-row"><input name="req-visitor-category" type="radio" value="other_guest" ${existing?.visitor_category === "other_guest" ? "checked" : ""}> Other Guest</label>
+                    <button class="outline-btn compact-btn" id="req-clear-visitor-category" type="button">Clear Selection</button>
                 </div>
+
+                <div class="form-section-title">Budget Head</div>
+                <div class="budget-head-group">
+                    <label class="check-row"><input id="req-budget-individual" data-requester-budget-head-field="req-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
+                    <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="req-budget-name">Name</label><input id="req-budget-name" placeholder="Name" value="${htmlValue(budgetHead.individual)}"></div>
+                    <label class="check-row"><input id="req-budget-institute-head" data-requester-budget-head-field="req-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
+                    <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="req-budget-department">Department Name</label><input id="req-budget-department" placeholder="Department Name" value="${htmlValue(budgetHead.instituteHead)}"></div>
+                    <label class="check-row"><input id="req-budget-project-head" data-requester-budget-head-field="req-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
+                    <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="req-budget-project-code">Project code</label><input id="req-budget-project-code" placeholder="Project code" value="${htmlValue(budgetHead.projectHead)}"></div>
+                    <button class="outline-btn compact-btn budget-clear-btn" id="req-clear-budget-head" type="button">Clear Budget Head</button>
+                </div>
+
+                <div class="form-section-title">Attender Requirement</div>
                 <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required</label>
                 <div class="two-col">
                     <div class="field-row"><label>No. of attenders</label><input id="req-attender-count" type="number" min="0" value="${existing?.attender_count_per_day || 0}"></div>
@@ -3149,40 +3948,25 @@ async function openRequestForm(existing = null) {
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}> Morning shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-day" type="checkbox" ${existing?.attender_day_shift ? "checked" : ""}> Day shift</label>
                 </div>
+
+                <div class="form-section-title">Requester Details</div>
+                <div class="two-col">
+                    <div class="field-row"><label>Requester name</label><input id="req-requestor-name" value="${escapeHtml(requestorName)}" disabled aria-readonly="true"></div>
+                    <div class="field-row"><label>Department</label><input id="req-requestor-department" value="${escapeHtml(existing?.requestor_department || state.user?.department || "")}"></div>
+                    <div class="field-row"><label>Designation</label><input id="req-requestor-designation" value="${escapeHtml(existing?.requestor_designation || state.user?.designation || "")}"></div>
+                    <div class="field-row"><label>Mobile</label><input id="req-requestor-mobile" value="${escapeHtml(existing?.requestor_mobile || state.user?.mobile || "")}"></div>
+                    <div class="field-row"><label>Email</label><input id="req-requestor-email" type="email" value="${escapeHtml(requestorEmail)}" readonly></div>
+                </div>
             </form>
         `,
         confirmText: editing ? "Resubmit Request" : "Submit Request",
         confirmClass: "primary-btn",
-        onBind: () => populateRequesterRoomSelect(existing?.preferred_room || ""),
+        onBind: () => {
+            bindRequesterAttenderRequirement();
+            bindRequesterBudgetHeadFields();
+        },
         onConfirm: async () => submitRequesterRequest(existing),
     });
-}
-
-async function populateRequesterRoomSelect(selectedRoomId = "") {
-    const select = document.getElementById("req-room");
-    const prefixSelect = document.getElementById("req-prefix");
-    if (!select || !prefixSelect) {
-        return;
-    }
-    const load = async () => {
-        select.innerHTML = `<option value="">Loading rooms...</option>`;
-        try {
-            const arrivalDate = document.getElementById("req-arrival-date").value;
-            const departureDate = document.getElementById("req-departure-date").value;
-            const prefix = prefixSelect.value;
-            const data = await apiFetch(`/api/requester/available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(prefix)}`);
-            const rooms = data.rooms || [];
-            select.innerHTML = `<option value="">No specific room</option>` + rooms.map((room) => `
-                <option value="${room.room_id}" ${String(room.room_id) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(room.room_name)}${room.availability_status === "partial" ? " - Available from " + escapeHtml(room.available_from_time || room.available_from || "") : ""}</option>
-            `).join("");
-        } catch (error) {
-            select.innerHTML = `<option value="">No specific room</option>`;
-        }
-    };
-    ["req-arrival-date", "req-departure-date", "req-prefix"].forEach((id) => {
-        document.getElementById(id)?.addEventListener("change", load);
-    });
-    load();
 }
 
 async function submitRequesterRequest(existing = null) {
@@ -3196,21 +3980,34 @@ async function submitRequesterRequest(existing = null) {
         throw new Error("Departure datetime must be after arrival datetime.");
     }
     const attenderRequired = document.getElementById("req-attender").checked;
+    const checked = (id) => Boolean(document.getElementById(id)?.checked);
+    const val = (id) => document.getElementById(id)?.value?.trim() || "";
+    const budgetName = checked("req-budget-individual") ? val("req-budget-name") : "";
+    const budgetDepartment = checked("req-budget-institute-head") ? val("req-budget-department") : "";
+    const budgetProjectCode = checked("req-budget-project-head") ? val("req-budget-project-code") : "";
     const payload = {
         arrival_at: arrivalAt,
         departure_at: departureAt,
         preferred_prefix: document.getElementById("req-prefix").value,
         preferred_room: document.getElementById("req-room").value || null,
         visitor_name: document.getElementById("req-visitor-name").value.trim(),
+        visitor_designation: document.getElementById("req-visitor-designation").value.trim(),
+        visitor_organisation: document.getElementById("req-visitor-organisation").value.trim(),
+        visitor_gender: document.getElementById("req-visitor-gender").value,
         visitor_mobile: document.getElementById("req-visitor-mobile").value.trim(),
         visitor_email: document.getElementById("req-visitor-email").value.trim(),
-        visitor_category: document.getElementById("req-visitor-category").value,
+        visitor_category: document.querySelector('input[name="req-visitor-category"]:checked')?.value || "",
         purpose_of_visit: document.getElementById("req-purpose").value.trim(),
-        requestor_name: document.getElementById("req-requestor-name").value.trim(),
+        budget_head_type: "",
+        budget_head_value: "",
+        budget_head_name: budgetName,
+        budget_head_department_name: budgetDepartment,
+        budget_head_project_code: budgetProjectCode,
+        requestor_name: (state.user?.name || document.getElementById("req-requestor-name").value).trim(),
         requestor_department: document.getElementById("req-requestor-department").value.trim(),
         requestor_designation: document.getElementById("req-requestor-designation").value.trim(),
         requestor_mobile: document.getElementById("req-requestor-mobile").value.trim(),
-        requestor_email: state.user?.email || "",
+        requestor_email: document.getElementById("req-requestor-email").value.trim() || state.user?.email || "",
         attender_required: attenderRequired,
         attender_count_per_day: attenderRequired ? Number(document.getElementById("req-attender-count").value || 0) : 0,
         attender_general_shift: attenderRequired && document.getElementById("req-general").checked,
@@ -3241,17 +4038,21 @@ function openRemarksModal(title, confirmText, confirmClass, onConfirm, placehold
 function openDetailsModal(title, rows) {
     openActionModal({
         title,
-        body: `<div class="details-list">${rows.map((row) => {
-            if (!Array.isArray(row)) {
-                return `<div class="detail-section-title">${escapeHtml(row.section || "Details")}</div>`;
-            }
-            const [label, value] = row;
-            return `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>`;
-        }).join("")}</div>`,
+        body: detailsRowsHtml(rows),
         confirmText: "Close",
         confirmClass: "outline-btn",
         onConfirm: async () => {},
     });
+}
+
+function detailsRowsHtml(rows) {
+    return `<div class="details-list">${rows.map((row) => {
+        if (!Array.isArray(row)) {
+            return `<div class="detail-section-title">${escapeHtml(row.section || "Details")}</div>`;
+        }
+        const [label, value] = row;
+        return `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>`;
+    }).join("")}</div>`;
 }
 
 function openActionModal({ title, body, confirmText, confirmClass, onConfirm, onBind, wide = false, footerHtml = "" }) {

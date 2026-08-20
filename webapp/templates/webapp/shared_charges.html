@@ -5,12 +5,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ share.title|default:"Charges Sheet" }}</title>
-    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260818-share-validity">
+    <link rel="icon" type="image/jpeg" href="{% static 'webapp/mainlogo.jpeg' %}">
+    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260820-main-logo">
 </head>
 <body class="shared-page">
     <header class="shared-header">
         <div class="brand-row shared-brand-row">
-            <div class="brand-mark">RB</div>
+            <div class="brand-mark"><img class="brand-logo" src="{% static 'webapp/mainlogo.jpeg' %}" alt="Room Booking logo"></div>
             <div>
                 <h1>{{ share.title|default:"Charges Sheet" }}</h1>
                 <p>Read-only shared charges sheet</p>

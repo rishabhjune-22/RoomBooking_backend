@@ -1103,6 +1103,13 @@ class BookingRequestWorkflowTests(TestCase):
         booking_request = BookingRequest.objects.get()
         self.assertEqual(booking_request.requester, self.requester)
         self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+        self.assertEqual(booking_request.budget_head_name, "Requester Individual")
+        self.assertEqual(booking_request.budget_head_department_name, "Requester Institute")
+        self.assertEqual(booking_request.budget_head_project_code, "REQ-2026-001")
+        data = response.json()["data"]
+        self.assertEqual(data["budget_head_name"], "Requester Individual")
+        self.assertEqual(data["budget_head_department_name"], "Requester Institute")
+        self.assertEqual(data["budget_head_project_code"], "REQ-2026-001")
 
     def test_requester_sees_only_own_requests(self):
         own_request = BookingRequest.objects.create(
@@ -1460,6 +1467,9 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertIsNotNone(booking_request.approved_booking)
         self.assertEqual(booking_request.approved_booking.room, self.room)
         self.assertEqual(booking_request.approved_booking.created_by, self.admin)
+        self.assertEqual(booking_request.approved_booking.budget_head_name, "Requester Individual")
+        self.assertEqual(booking_request.approved_booking.budget_head_department_name, "Requester Institute")
+        self.assertEqual(booking_request.approved_booking.budget_head_project_code, "REQ-2026-001")
 
     def test_admin_approve_can_use_create_booking_form_overrides(self):
         booking_request = BookingRequest.objects.create(
@@ -1716,6 +1726,9 @@ class BookingRequestWorkflowTests(TestCase):
             "visitor_mobile": "9876543210",
             "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
             "purpose_of_visit": "Official visit",
+            "budget_head_name": "Requester Individual",
+            "budget_head_department_name": "Requester Institute",
+            "budget_head_project_code": "REQ-2026-001",
             "requestor_name": "Requester One",
             "requestor_email": "requester@example.com",
         }
@@ -1731,6 +1744,9 @@ class BookingRequestWorkflowTests(TestCase):
             "visitor_mobile": "9876543210",
             "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
             "purpose_of_visit": "Official visit",
+            "budget_head_name": "Requester Individual",
+            "budget_head_department_name": "Requester Institute",
+            "budget_head_project_code": "REQ-2026-001",
             "requestor_name": "Requester One",
             "requestor_email": "requester@example.com",
         }

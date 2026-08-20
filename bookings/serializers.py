@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 PHONE_ALLOWED_RE = re.compile(r"^\+?[0-9][0-9\s().-]*$")
 PHONE_DIGIT_RE = re.compile(r"\d")
 
+
 class BookingSerializer(serializers.ModelSerializer):
     room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.filter(is_active=True))
     room_name = serializers.SerializerMethodField()
@@ -771,6 +772,11 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "visitor_email",
             "visitor_category",
             "purpose_of_visit",
+            "budget_head_type",
+            "budget_head_value",
+            "budget_head_name",
+            "budget_head_department_name",
+            "budget_head_project_code",
             "attender_required",
             "attender_count_per_day",
             "attender_general_shift",
@@ -852,6 +858,11 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             "visitor_email": {"required": False, "allow_blank": True},
             "visitor_category": {"required": False, "allow_blank": True},
             "purpose_of_visit": {"required": False, "allow_blank": True},
+            "budget_head_type": {"required": False, "allow_blank": True},
+            "budget_head_value": {"required": False, "allow_blank": True},
+            "budget_head_name": {"required": False, "allow_blank": True},
+            "budget_head_department_name": {"required": False, "allow_blank": True},
+            "budget_head_project_code": {"required": False, "allow_blank": True},
             "preferred_prefix": {"required": False, "allow_blank": True},
             "room_preference_note": {"required": False, "allow_blank": True},
             "requestor_name": {"required": False, "allow_blank": True},

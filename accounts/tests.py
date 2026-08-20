@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.contrib import admin as django_admin
 from django.test import override_settings
@@ -18,6 +20,8 @@ from accounts.roles import (
     get_user_profile,
     set_user_role,
 )
+from bookings.models import BookingRequest
+
 User = get_user_model()
 
 
@@ -550,6 +554,94 @@ class AccountApprovalApiTests(TestCase):
         self.assertEqual(signup_again.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("email", signup_again.json()["errors"])
 
+    def test_superadmin_can_delete_admin_and_requester_accounts_from_simple_mode(self):
+        superadmin = self.create_superadmin()
+        admin_user = User.objects.create_user(
+            username="simple-delete-admin@example.com",
+            email="simple-delete-admin@example.com",
+            password="StrongPass123",
+            first_name="Delete Admin",
+        )
+        admin_profile = set_user_role(admin_user, ROLE_ADMIN, approval_status=APPROVAL_PENDING)
+        requester = self.create_pending_requester(email="simple-delete-requester@example.com")
+        requester_profile = get_user_profile(requester)
+        admin_user_id = admin_user.pk
+        admin_profile_id = admin_profile.pk
+        requester_id = requester.pk
+        requester_profile_id = requester_profile.pk
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(superadmin)
+
+        admin_response = self.client.delete(
+            reverse("superadmin-account-request-delete", kwargs={"pk": admin_profile.pk}),
+            content_type="application/json",
+        )
+        requester_response = self.client.delete(
+            reverse("superadmin-account-request-delete", kwargs={"pk": requester_profile.pk}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(requester_response.status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(pk=admin_user_id).exists())
+        self.assertFalse(UserProfile.objects.filter(pk=admin_profile_id).exists())
+        self.assertFalse(User.objects.filter(pk=requester_id).exists())
+        self.assertFalse(UserProfile.objects.filter(pk=requester_profile_id).exists())
+
+        admin_signup_again = self.client.post(
+            reverse("auth-admin-signup"),
+            data={
+                "name": "Delete Admin",
+                "email": "simple-delete-admin@example.com",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+                "admin_code": "test-admin-code",
+            },
+            content_type="application/json",
+        )
+        requester_signup_again = self.client.post(
+            reverse("auth-requester-signup"),
+            data={
+                "name": "Delete Requester",
+                "email": "simple-delete-requester@example.com",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(admin_signup_again.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(requester_signup_again.status_code, status.HTTP_201_CREATED)
+
+    def test_superadmin_account_delete_api_is_protected(self):
+        superadmin = self.create_superadmin()
+        admin = self.create_approved_admin()
+        requester = self.create_pending_requester(email="protected-delete-requester@example.com")
+        requester_profile = get_user_profile(requester)
+        target_superadmin = User.objects.create_superuser(
+            username="target-super-delete@example.com",
+            email="target-super-delete@example.com",
+            password="StrongPass123",
+        )
+        target_superadmin_profile = get_user_profile(target_superadmin)
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(admin)
+        admin_response = self.client.delete(
+            reverse("superadmin-account-request-delete", kwargs={"pk": requester_profile.pk}),
+            content_type="application/json",
+        )
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(superadmin)
+        superadmin_response = self.client.delete(
+            reverse("superadmin-account-request-delete", kwargs={"pk": target_superadmin_profile.pk}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(admin_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(superadmin_response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(User.objects.filter(pk=requester.pk).exists())
+        self.assertTrue(UserProfile.objects.filter(pk=requester_profile.pk).exists())
+        self.assertTrue(User.objects.filter(pk=target_superadmin.pk).exists())
+        self.assertTrue(UserProfile.objects.filter(pk=target_superadmin_profile.pk).exists())
+
     def test_admin_can_approve_and_reject_requesters_only(self):
         admin = self.create_approved_admin()
         requester = self.create_pending_requester()
@@ -715,6 +807,76 @@ class AccountApprovalApiTests(TestCase):
         emails = [item["email"] for item in response.json()["data"]]
         self.assertIn("visible-requester@example.com", emails)
         self.assertIn("legacy-rejected@example.com", emails)
+
+    def test_workflow_notification_counts_are_role_aware(self):
+        superadmin = self.create_superadmin()
+        admin = self.create_approved_admin()
+        requester = self.create_pending_requester(email="count-requester@example.com")
+        requester_profile = get_user_profile(requester)
+        requester_profile.approval_status = APPROVAL_APPROVED
+        requester_profile.save(update_fields=["approval_status"])
+        pending_requester = self.create_pending_requester(email="pending-count-requester@example.com")
+        pending_admin = User.objects.create_user(
+            username="pending-count-admin@example.com",
+            email="pending-count-admin@example.com",
+            password="StrongPass123",
+        )
+        set_user_role(pending_admin, ROLE_ADMIN, approval_status=APPROVAL_PENDING)
+        now = timezone.now()
+        BookingRequest.objects.create(
+            requester=requester,
+            status=BookingRequest.STATUS_PENDING,
+            arrival_at=now,
+            departure_at=now + timedelta(hours=8),
+            preferred_prefix="Delta",
+            visitor_name="Pending Visitor",
+        )
+        BookingRequest.objects.create(
+            requester=requester,
+            status=BookingRequest.STATUS_CORRECTION_REQUIRED,
+            arrival_at=now + timedelta(days=1),
+            departure_at=now + timedelta(days=1, hours=8),
+            preferred_prefix="Delta",
+            visitor_name="Correction Visitor",
+        )
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(admin)
+        admin_response = self.client.get(reverse("workflow-notification-counts"))
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(superadmin)
+        superadmin_response = self.client.get(reverse("workflow-notification-counts"))
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(requester)
+        requester_response = self.client.get(reverse("workflow-notification-counts"))
+
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(superadmin_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(requester_response.status_code, status.HTTP_200_OK)
+
+        admin_counts = admin_response.json()["data"]
+        self.assertEqual(admin_counts["booking_requests"], 1)
+        self.assertEqual(admin_counts["requester_accounts"], 1)
+        self.assertEqual(admin_counts["admin_accounts"], 0)
+        self.assertEqual(admin_counts["my_requests"], 0)
+        self.assertEqual(admin_counts["total"], 2)
+        self.assertEqual(len(admin_counts["items"]["booking_requests"]), 1)
+        self.assertEqual(len(admin_counts["items"]["requester_accounts"]), 1)
+
+        superadmin_counts = superadmin_response.json()["data"]
+        self.assertEqual(superadmin_counts["booking_requests"], 1)
+        self.assertEqual(superadmin_counts["requester_accounts"], 1)
+        self.assertEqual(superadmin_counts["admin_accounts"], 1)
+        self.assertEqual(superadmin_counts["my_requests"], 0)
+        self.assertEqual(superadmin_counts["total"], 3)
+        self.assertEqual(len(superadmin_counts["items"]["admin_accounts"]), 1)
+
+        requester_counts = requester_response.json()["data"]
+        self.assertEqual(requester_counts["booking_requests"], 0)
+        self.assertEqual(requester_counts["requester_accounts"], 0)
+        self.assertEqual(requester_counts["admin_accounts"], 0)
+        self.assertEqual(requester_counts["my_requests"], 1)
+        self.assertEqual(requester_counts["total"], 1)
+        self.assertEqual(len(requester_counts["items"]["my_requests"]), 1)
 
     def test_requester_signup_creates_pending_account(self):
         response = self.client.post(

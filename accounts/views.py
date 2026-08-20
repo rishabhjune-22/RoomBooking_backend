@@ -4,9 +4,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 
 from backend.responses import api_error, api_success, serializer_error_response
+from bookings.models import BookingRequest
 
 from .models import UserProfile
 from .permissions import IsAdminOrSuperAdminRole, IsApprovedUser, IsSuperAdminRole
@@ -138,6 +140,67 @@ class LogoutView(APIView):
                 )
 
         return api_success("Logged out successfully.", None)
+
+
+class WorkflowNotificationCountView(APIView):
+    permission_classes = [IsApprovedUser]
+
+    def get(self, request):
+        profile = get_user_profile(request.user)
+        counts = {
+            "booking_requests": 0,
+            "requester_accounts": 0,
+            "admin_accounts": 0,
+            "my_requests": 0,
+        }
+        items = {
+            "booking_requests": [],
+            "requester_accounts": [],
+            "admin_accounts": [],
+            "my_requests": [],
+        }
+
+        def item_keys(queryset, prefix):
+            return [f"{prefix}:{pk}" for pk in queryset.values_list("pk", flat=True)]
+
+        if profile.role in {ROLE_ADMIN, ROLE_SUPERADMIN}:
+            booking_request_qs = BookingRequest.objects.filter(
+                status=BookingRequest.STATUS_PENDING,
+                is_deleted=False,
+            )
+            requester_account_qs = UserProfile.objects.filter(
+                role=ROLE_REQUESTER,
+                approval_status=UserProfile.APPROVAL_PENDING,
+            )
+            items["booking_requests"] = item_keys(booking_request_qs, "booking_request")
+            items["requester_accounts"] = item_keys(requester_account_qs, "requester_account")
+            counts["booking_requests"] = len(items["booking_requests"])
+            counts["requester_accounts"] = len(items["requester_accounts"])
+
+        if profile.role == ROLE_SUPERADMIN:
+            admin_account_qs = UserProfile.objects.filter(
+                role=ROLE_ADMIN,
+                approval_status=UserProfile.APPROVAL_PENDING,
+            )
+            items["admin_accounts"] = item_keys(admin_account_qs, "admin_account")
+            counts["admin_accounts"] = len(items["admin_accounts"])
+
+        if profile.role == ROLE_REQUESTER:
+            my_request_qs = BookingRequest.objects.filter(
+                requester=request.user,
+                status__in=[
+                    BookingRequest.STATUS_APPROVED,
+                    BookingRequest.STATUS_REJECTED,
+                    BookingRequest.STATUS_CORRECTION_REQUIRED,
+                ],
+                is_deleted=False,
+            )
+            items["my_requests"] = item_keys(my_request_qs, "my_request")
+            counts["my_requests"] = len(items["my_requests"])
+
+        counts["total"] = sum(counts.values())
+        counts["items"] = items
+        return api_success("Workflow notification counts fetched successfully.", counts)
 
 
 class AccountRequestQueryMixin:
@@ -292,6 +355,33 @@ class AccountApprovalActionMixin:
             AccountRequestSerializer(profile).data,
         )
 
+    @transaction.atomic
+    def delete_profile(self, request, pk):
+        profile = self.get_profile(pk)
+        if profile is None:
+            return api_error(self.not_found_message, status_code=status.HTTP_404_NOT_FOUND)
+        if (
+                profile.role == ROLE_SUPERADMIN
+                or profile.user_id == request.user.id
+                or profile.user.is_superuser
+        ):
+            return api_error("Protected account cannot be deleted.")
+
+        profile_id = profile.pk
+        user_id = profile.user_id
+        try:
+            profile.user.delete()
+        except ProtectedError as exc:
+            return api_error(
+                "Account could not be deleted because related protected data exists.",
+                errors={"account": [str(exc)]},
+            )
+
+        return api_success(
+            "Account deleted successfully.",
+            {"id": profile_id, "user_id": user_id},
+        )
+
 
 class SuperadminAccountRequestApproveView(AccountApprovalActionMixin, APIView):
     permission_classes = [IsSuperAdminRole]
@@ -309,6 +399,15 @@ class SuperadminAccountRequestRejectView(AccountApprovalActionMixin, APIView):
 
     def post(self, request, pk):
         return self.reject_profile(request, pk)
+
+
+class SuperadminAccountRequestDeleteView(AccountApprovalActionMixin, APIView):
+    permission_classes = [IsSuperAdminRole]
+    allowed_roles = (ROLE_ADMIN, ROLE_REQUESTER)
+    not_found_message = "Account request not found."
+
+    def delete(self, request, pk):
+        return self.delete_profile(request, pk)
 
 
 class AdminRequesterAccountApproveView(AccountApprovalActionMixin, APIView):
