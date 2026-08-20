@@ -302,6 +302,12 @@ function requesterSelectedSchedule() {
     return { arrivalDate, departureDate };
 }
 
+function selectedScheduleFromCalendar() {
+    const arrivalDate = state.rangeStart || state.selectedDate || "";
+    const departureDate = state.rangeEnd || state.rangeStart || state.selectedDate || arrivalDate;
+    return { arrivalDate, departureDate };
+}
+
 function requesterRoomSelection(room = null, prefix = state.prefix) {
     if (!room) {
         return {
@@ -327,6 +333,43 @@ function requesterRoomSelection(room = null, prefix = state.prefix) {
         availabilityStatus: room.availabilityStatus || room.availability_status || "",
         availableFrom: room.availableFrom || room.available_from || room.available_from_time || "",
     };
+}
+
+function parseDisplayTimeTo24(value) {
+    const text = String(value || "").trim();
+    const match = text.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+    if (!match) {
+        return "";
+    }
+    let hour = Number(match[1]);
+    const minute = Number(match[2]);
+    const meridiem = match[3].toUpperCase();
+    if (Number.isNaN(hour) || Number.isNaN(minute)) {
+        return "";
+    }
+    if (meridiem === "PM" && hour < 12) {
+        hour += 12;
+    }
+    if (meridiem === "AM" && hour === 12) {
+        hour = 0;
+    }
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function availableRoomPrefillArrivalTime(room, arrivalDate, fallback = "10:00") {
+    if (room?.availability_status !== "partial") {
+        return fallback;
+    }
+    if (room.available_from) {
+        const parts = indiaParts(room.available_from);
+        if (!room.available_from_date || parts.date === arrivalDate) {
+            return parts.time || fallback;
+        }
+    }
+    if (room.available_from_date && room.available_from_date !== arrivalDate) {
+        return fallback;
+    }
+    return parseDisplayTimeTo24(room.available_from_time) || fallback;
 }
 
 function availableRoomStatusText(room) {
@@ -1041,7 +1084,7 @@ function renderCalendarView() {
     document.getElementById("prev-month").addEventListener("click", () => changeMonth(-1));
     document.getElementById("next-month").addEventListener("click", () => changeMonth(1));
     if (isAdminLike()) {
-        document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminBookingForm());
+        document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminAvailableRoomsChooser());
     } else {
         document.getElementById("request-booking-btn").addEventListener("click", () => openRequesterAvailableRoomsChooser());
     }
@@ -1411,6 +1454,7 @@ function exportTableClone(tableSelector) {
     });
     clone.querySelectorAll(".sheet-booking-pill").forEach((button) => {
         const span = document.createElement("span");
+        span.className = button.className;
         span.textContent = button.textContent.trim();
         button.replaceWith(span);
     });
@@ -1432,8 +1476,8 @@ function exportTableClone(tableSelector) {
         node.removeAttribute("tabindex");
         node.removeAttribute("aria-sort");
     });
-    clone.querySelectorAll("[class]").forEach((node) => {
-        node.removeAttribute("class");
+    clone.querySelectorAll(".selected-row").forEach((node) => {
+        node.classList.remove("selected-row");
     });
     return clone;
 }
@@ -1588,12 +1632,17 @@ function downloadSheetPdf(tableSelector, title) {
                 <title>${escapeHtml(title)}</title>
                 <style>
                     @page { size: A4 landscape; margin: 10mm; }
-                    * { box-sizing: border-box; }
+                    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
                     body { margin: 0; font-family: Arial, sans-serif; color: #172033; }
                     h2 { margin: 0 0 12px; font-size: 18px; }
                     table { width: 100%; border-collapse: collapse; font-size: 9px; }
                     th, td { border: 1px solid #b7c6d8; padding: 4px 5px; vertical-align: top; word-break: break-word; }
                     th { background: #dceeff; color: #0f4f86; font-weight: 700; }
+                    .sheet-booking-pill { display: block; border-radius: 6px; background: #dff5ea; color: #248b5b; padding: 4px 6px; font-weight: 700; line-height: 1.25; }
+                    .sheet-booking-pill.partial { background: #fff1d6; color: #a45a00; }
+                    .sheet-booking-pill.expired { background: #ffe4e0; color: #b42318; }
+                    .charge-sheet-table tbody tr.active-row td { background: #dff5ea; color: #248b5b; }
+                    .charge-sheet-table tbody tr.expired-row td { background: #ffe4e0; color: #b42318; }
                 </style>
             </head>
             <body>
@@ -2478,7 +2527,7 @@ function sheetCellHtml(entries = [], dateValue = "", room = null) {
     });
     const hasFullDayBooking = entries.some((entry) => entry.availabilityStatus === "full");
     const availableFromValues = entries
-        .filter((entry) => entry.availabilityStatus === "partial" && entry.availableFrom)
+        .filter((entry) => !entry.isExpired && entry.availabilityStatus === "partial" && entry.availableFrom)
         .map((entry) => entry.availableFrom);
     const latestAvailableFrom = availableFromValues.length
         ? new Date(Math.max(...availableFromValues.map((value) => new Date(value).getTime())))
@@ -3798,6 +3847,79 @@ function openDeleteMyRequestModal(request) {
             await loadMyRequests();
         },
     });
+}
+
+async function openAdminAvailableRoomsChooser() {
+    const { arrivalDate, departureDate } = selectedScheduleFromCalendar();
+    if (!arrivalDate) {
+        toast("Select a date range first.", "error");
+        return;
+    }
+    if (!departureDate) {
+        toast("Select a departure date first.", "error");
+        return;
+    }
+    if (departureDate < arrivalDate) {
+        toast("Departure date cannot be before arrival date.", "error");
+        return;
+    }
+
+    openActionModal({
+        title: "Available Rooms",
+        body: `<div class="loading-state">Loading available rooms...</div>`,
+        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
+    });
+
+    try {
+        const data = await apiFetch(`/api/room-available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
+        const rooms = data?.rooms || [];
+        const body = document.querySelector(".modal-body");
+        if (!body) {
+            return;
+        }
+        if (!rooms.length) {
+            body.innerHTML = `<div class="empty-state">No rooms are available for the selected range.</div>`;
+            return;
+        }
+        body.innerHTML = `
+            <p class="item-meta">Select a room to create a booking for ${escapeHtml(selectedRangeDisplayText())}.</p>
+            <div class="available-room-list">
+                ${rooms.map((room, index) => {
+                    const roomName = roomLabel({
+                        id: room.room_id || room.id,
+                        prefix: room.prefix || data?.prefix || state.prefix,
+                        selection_label: room.selection_label,
+                        room_name: room.room_name,
+                        number: room.room_number || room.number,
+                    });
+                    return `
+                        <button class="available-room-card" type="button" data-room-index="${index}">
+                            <span class="available-room-title">${escapeHtml(roomName)}</span>
+                            <span class="available-room-status ${room.availability_status === "partial" ? "partial" : "available"}">${escapeHtml(availableRoomStatusText(room))}</span>
+                        </button>
+                    `;
+                }).join("")}
+            </div>
+        `;
+        body.querySelectorAll("[data-room-index]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const room = rooms[Number(button.dataset.roomIndex)];
+                const arrivalTime = availableRoomPrefillArrivalTime(room, arrivalDate, "10:00");
+                closeModal();
+                openAdminBookingForm({
+                    room: room?.room_id || room?.id || "",
+                    prefix: room?.prefix || data?.prefix || state.prefix,
+                    arrival_at: buildIsoDateTime(arrivalDate, arrivalTime),
+                    departure_at: buildIsoDateTime(departureDate, "18:00"),
+                });
+            });
+        });
+    } catch (error) {
+        const body = document.querySelector(".modal-body");
+        if (body) {
+            body.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</div>`;
+        }
+    }
 }
 
 async function openRequesterAvailableRoomsChooser() {

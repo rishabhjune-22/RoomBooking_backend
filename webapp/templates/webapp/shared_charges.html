@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ share.title|default:"Charges Sheet" }}</title>
     <link rel="icon" type="image/jpeg" href="{% static 'webapp/mainlogo.jpeg' %}">
-    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260820-main-logo">
+    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260820-share-status">
 </head>
 <body class="shared-page">
     <header class="shared-header">
@@ -58,7 +58,7 @@
                     </thead>
                     <tbody>
                         {% for row in rows %}
-                            <tr>
+                            <tr class="{% if row.booking.status == 'expired' %}expired-row{% else %}active-row{% endif %}">
                                 <td>{{ row.id }}</td>
                                 <td>{{ row.booking.arrival_at|date:"d M Y, h:i A" }}</td>
                                 <td>{{ row.booking.departure_at|date:"d M Y, h:i A" }}</td>

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ share.title|default:"Booking Sheet" }}</title>
     <link rel="icon" type="image/jpeg" href="{% static 'webapp/mainlogo.jpeg' %}">
-    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260820-main-logo">
+    <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v=20260820-sheet-expired-create">
 </head>
 <body class="shared-page">
     <header class="shared-header">
@@ -54,10 +54,10 @@
                                     <td>
                                         {% if cell.entries %}
                                             {% for entry in cell.entries %}
-                                                <div class="shared-booking-pill {% if entry.availability_status == 'partial' %}partial{% endif %}">
+                                                <div class="shared-booking-pill {% if entry.status == 'expired' %}expired{% elif entry.availability_status == 'partial' %}partial{% endif %}">
                                                     <strong>{{ entry.text }}</strong>
                                                     <span>{{ entry.status_label }}</span>
-                                                    {% if entry.available_from %}
+                                                    {% if entry.available_from and entry.status != 'expired' %}
                                                         <span>Available after {{ entry.available_from }}</span>
                                                     {% endif %}
                                                 </div>

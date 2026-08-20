@@ -924,6 +924,31 @@ class BookingShareApiTests(TestCase):
         self.assertContains(response, "Beta")
         self.assertContains(response, "201")
 
+    def test_public_booking_share_marks_expired_booking_pill(self):
+        self.booking.status = Booking.STATUS_EXPIRED
+        self.booking.save(update_fields=["status"])
+        share = BookingShare.objects.create(
+            share_type=BookingShare.SHARE_TYPE_BOOKING_SHEET,
+            expires_at=timezone.now() + timedelta(days=7),
+            filters={
+                "prefix": "Beta",
+                "status": Booking.STATUS_EXPIRED,
+                "arrival_from": "2026-07-01",
+                "departure_to": "2026-07-31",
+            },
+            created_by=self.admin,
+            created_by_name="Admin Share",
+        )
+
+        response = self.client.get(
+            reverse("webapp:shared-bookings", kwargs={"token": share.token})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, "Shared Visitor")
+        self.assertContains(response, 'class="shared-booking-pill expired"')
+        self.assertNotContains(response, "Available after")
+
     def test_public_charge_share_page_renders_without_authentication(self):
         share = BookingShare.objects.create(
             share_type=BookingShare.SHARE_TYPE_CHARGE_SHEET,
@@ -949,6 +974,32 @@ class BookingShareApiTests(TestCase):
         self.assertContains(response, "Shared Visitor")
         self.assertContains(response, "Shared Event")
         self.assertContains(response, "250")
+
+    def test_public_charge_share_marks_expired_booking_row(self):
+        self.booking.status = Booking.STATUS_EXPIRED
+        self.booking.save(update_fields=["status"])
+        share = BookingShare.objects.create(
+            share_type=BookingShare.SHARE_TYPE_CHARGE_SHEET,
+            expires_at=timezone.now() + timedelta(days=7),
+            filters={
+                "prefix": "Beta",
+                "payment": "pending",
+                "checkout_from": "2026-07-01",
+                "checkout_to": "2026-07-31",
+                "search": "Shared",
+                "ordering": "-created_at",
+            },
+            created_by=self.admin,
+            created_by_name="Admin Share",
+        )
+
+        response = self.client.get(
+            reverse("webapp:shared-charges", kwargs={"token": share.token})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, "Shared Visitor")
+        self.assertContains(response, 'class="expired-row"')
 
     def test_public_share_rejects_expired_token(self):
         share = BookingShare.objects.create(
