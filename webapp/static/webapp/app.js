@@ -2746,6 +2746,15 @@ function normalizedBudgetHeadFields(source = {}) {
     };
 }
 
+function adminReviewRemarksHtml(source = {}) {
+    return `
+        <div class="field-row review-remarks-field">
+            <label for="admin-review-remarks">Remarks</label>
+            <textarea id="admin-review-remarks" placeholder="Approval, rejection, or send-back remarks">${htmlValue(source.admin_remarks || source.remarks || "")}</textarea>
+        </div>
+    `;
+}
+
 async function openBookingDetails(bookingId) {
     try {
         const booking = await apiFetch(`/api/bookings/${bookingId}/`);
@@ -2846,11 +2855,6 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             <div class="field-row"><label>Assigned booking</label><input value="${htmlValue(source.assigned_room_name || source.approved_booking_id || "")}" readonly></div>
         </div>
     ` : "";
-    const requestRemarks = source.id && context === "request" ? `
-        <div class="form-section-title">Review Remarks</div>
-        <div class="field-row"><label for="admin-review-remarks">Remarks</label><textarea id="admin-review-remarks" placeholder="Approval, rejection, or send-back remarks">${htmlValue(source.admin_remarks || source.remarks || "")}</textarea></div>
-    ` : "";
-
     return `
         <form id="admin-booking-form" class="field-grid booking-form" novalidate>
             ${requestMeta}
@@ -2936,7 +2940,6 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 </select></div>
                 <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
             </div>
-            ${requestRemarks}
         </form>
     `;
 }
@@ -3251,12 +3254,20 @@ async function openAdminBookingRequestDetails(request) {
             body: adminBookingFormHtml(detail, "request"),
             wide: true,
             footerHtml: `
-                ${isPending ? `
-                    <button class="success-btn" type="button" data-review-action="approve">Approve</button>
-                    <button class="danger-btn" type="button" data-review-action="reject">Reject</button>
-                    <button class="warn-btn" type="button" data-review-action="sendBack">Send Back</button>
-                ` : ""}
-                <button class="danger-btn" type="button" data-review-action="delete">Delete Request</button>
+                <div class="review-footer-stack">
+                    <div>
+                        <div class="form-section-title">Review Remarks</div>
+                        ${adminReviewRemarksHtml(detail)}
+                    </div>
+                    <div class="review-action-row">
+                        ${isPending ? `
+                            <button class="success-btn" type="button" data-review-action="approve">Approve</button>
+                            <button class="danger-btn" type="button" data-review-action="reject">Reject</button>
+                            <button class="warn-btn" type="button" data-review-action="sendBack">Send Back</button>
+                        ` : ""}
+                        <button class="danger-btn" type="button" data-review-action="delete">Delete Request</button>
+                    </div>
+                </div>
             `,
             onBind: () => {
                 bindAdminBookingForm(rooms, detail.preferred_room || "", detail.preferred_prefix || state.prefix);

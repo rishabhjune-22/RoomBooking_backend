@@ -1426,6 +1426,27 @@ button:disabled {
     border-top: 1px solid var(--line);
 }
 
+.review-footer-stack {
+    width: 100%;
+    display: grid;
+    gap: 12px;
+}
+
+.review-footer-stack .form-section-title {
+    margin-top: 0;
+}
+
+.review-remarks-field textarea {
+    min-height: 88px;
+}
+
+.review-action-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
 .notification-summary {
     display: grid;
     gap: 12px;
