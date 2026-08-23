@@ -949,7 +949,7 @@ class BookingRequestApproveSerializer(serializers.Serializer):
 
 
 class BookingRequestRejectSerializer(serializers.Serializer):
-    remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    remarks = serializers.CharField(required=True, allow_blank=False, trim_whitespace=True)
 
 
 class BookingRequestSendBackSerializer(serializers.Serializer):

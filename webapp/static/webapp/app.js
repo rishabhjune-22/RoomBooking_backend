@@ -83,6 +83,31 @@ const state = {
     },
 };
 
+function emptyWorkflowNotificationCounts() {
+    return {
+        total: 0,
+        booking_requests: 0,
+        requester_accounts: 0,
+        admin_accounts: 0,
+        my_requests: 0,
+    };
+}
+
+function emptyWorkflowNotificationItems() {
+    return {
+        booking_requests: [],
+        requester_accounts: [],
+        admin_accounts: [],
+        my_requests: [],
+    };
+}
+
+function resetWorkflowNotificationState() {
+    state.workflowNotificationCounts = emptyWorkflowNotificationCounts();
+    state.workflowNotificationRawCounts = emptyWorkflowNotificationCounts();
+    state.workflowNotificationItems = emptyWorkflowNotificationItems();
+}
+
 function escapeHtml(value) {
     return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -409,6 +434,7 @@ function htmlValue(value) {
 }
 
 function setTokens(payload) {
+    resetWorkflowNotificationState();
     state.access = payload.access || "";
     state.refresh = payload.refresh || "";
     state.user = payload.user || null;
@@ -421,6 +447,7 @@ function clearSession() {
     state.access = "";
     state.refresh = "";
     state.user = null;
+    resetWorkflowNotificationState();
     localStorage.removeItem(STORAGE_KEYS.access);
     localStorage.removeItem(STORAGE_KEYS.refresh);
     localStorage.removeItem(STORAGE_KEYS.user);
@@ -521,12 +548,12 @@ function renderAuth(message = "", isError = false) {
                     </div>
                 </div>
                 <div class="segmented" role="tablist" aria-label="Role">
-                    <button class="segment-btn ${state.authRole === "admin" ? "active" : ""}" data-auth-role="admin">Admin</button>
-                    <button class="segment-btn ${state.authRole === "requester" ? "active" : ""}" data-auth-role="requester">Requester</button>
+                    <button class="segment-btn ${state.authRole === "admin" ? "active" : ""}" data-auth-role="admin" aria-label="Use admin role" aria-pressed="${state.authRole === "admin"}">Admin</button>
+                    <button class="segment-btn ${state.authRole === "requester" ? "active" : ""}" data-auth-role="requester" aria-label="Use requester role" aria-pressed="${state.authRole === "requester"}">Requester</button>
                 </div>
                 <div class="segmented" role="tablist" aria-label="Mode">
-                    <button class="segment-btn ${!isSignup ? "active" : ""}" data-auth-mode="login">Login</button>
-                    <button class="segment-btn ${isSignup ? "active" : ""}" data-auth-mode="signup">Signup</button>
+                    <button class="segment-btn ${!isSignup ? "active" : ""}" data-auth-mode="login" aria-label="Use login mode" aria-pressed="${!isSignup}">Login</button>
+                    <button class="segment-btn ${isSignup ? "active" : ""}" data-auth-mode="signup" aria-label="Use signup mode" aria-pressed="${isSignup}">Signup</button>
                 </div>
                 <form id="auth-form" class="field-grid">
                     ${isSignup ? `
@@ -729,7 +756,7 @@ function workflowNotificationCountForView(viewId) {
         return counts.requester_accounts || 0;
     }
     if (viewId === "accounts") {
-        return (counts.admin_accounts || 0) + (counts.requester_accounts || 0);
+        return counts.admin_accounts || 0;
     }
     if (viewId === "myRequests") {
         return counts.my_requests || 0;
@@ -745,7 +772,7 @@ function workflowNotificationCategoriesForView(viewId) {
         return ["requester_accounts"];
     }
     if (viewId === "accounts") {
-        return ["admin_accounts", "requester_accounts"];
+        return ["admin_accounts"];
     }
     if (viewId === "myRequests") {
         return ["my_requests"];
@@ -917,14 +944,16 @@ function renderDashboard() {
     renderCurrentView();
 }
 
-async function loadWorkflowNotificationCounts() {
+async function loadWorkflowNotificationCounts({ markCurrentViewRead = true, viewId = state.view } = {}) {
     if (!state.access || !state.user) {
         return;
     }
     try {
         const counts = await apiFetch("/api/workflow-notification-counts/");
         applyWorkflowNotificationPayload(counts);
-        markWorkflowNotificationViewRead(state.view);
+        if (markCurrentViewRead && state.view === viewId) {
+            markWorkflowNotificationViewRead(viewId);
+        }
         updateWorkflowNotificationBell();
         updateVisibleMenuBadges();
     } catch (error) {
@@ -963,6 +992,7 @@ function workflowNotificationRows() {
             count: counts.booking_requests || 0,
             rawCount: rawCounts.booking_requests || 0,
             description: "Pending booking requests waiting for review.",
+            details: workflowNotificationDetailsForView("bookingRequests").slice(0, 3),
         });
         rows.push({
             view: "requesters",
@@ -970,6 +1000,7 @@ function workflowNotificationRows() {
             count: counts.requester_accounts || 0,
             rawCount: rawCounts.requester_accounts || 0,
             description: "Pending requester accounts waiting for approval.",
+            details: workflowNotificationDetailsForView("requesters").slice(0, 3),
         });
     }
     if (isSuperadmin()) {
@@ -979,6 +1010,7 @@ function workflowNotificationRows() {
             count: counts.admin_accounts || 0,
             rawCount: rawCounts.admin_accounts || 0,
             description: "Pending admin accounts waiting for superadmin approval.",
+            details: workflowNotificationDetailsForView("accounts").slice(0, 3),
         });
     }
     if (state.user?.role === "requester") {
@@ -996,6 +1028,12 @@ function workflowNotificationRows() {
     return rows;
 }
 
+function workflowNotificationDetailsForView(viewId) {
+    return workflowNotificationCategoriesForView(viewId)
+        .flatMap((category) => state.workflowNotificationItems?.[category] || [])
+        .filter((item) => typeof item === "object" && (item.title || item.message));
+}
+
 function workflowNotificationDetailHtml(details = []) {
     if (!details.length) {
         return "";
@@ -1010,6 +1048,35 @@ function workflowNotificationDetailHtml(details = []) {
             `).join("")}
         </span>
     `;
+}
+
+function openWorkflowNotificationDetails(viewId) {
+    const details = workflowNotificationDetailsForView(viewId);
+    const title = menuItems().find(([id]) => id === viewId)?.[1] || "Notification Details";
+    markWorkflowNotificationViewRead(viewId);
+    openActionModal({
+        title: `${title} Notifications`,
+        body: details.length ? `
+            <div class="notification-detail-panel">
+                ${details.map((item) => `
+                    <article class="notification-detail-card">
+                        ${item.title ? `<h4>${escapeHtml(item.title)}</h4>` : ""}
+                        ${item.message ? `<p>${escapeHtml(item.message)}</p>` : ""}
+                    </article>
+                `).join("")}
+            </div>
+        ` : `<div class="empty-state">No notification details available.</div>`,
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            <button class="primary-btn" type="button" id="open-notification-view">Open ${escapeHtml(title)}</button>
+        `,
+        onBind: () => {
+            document.getElementById("open-notification-view")?.addEventListener("click", () => {
+                closeModal();
+                navigateToView(viewId);
+            });
+        },
+    });
 }
 
 function openWorkflowNotificationSummary() {
@@ -1042,9 +1109,14 @@ function openWorkflowNotificationSummary() {
         onBind: () => {
             document.querySelectorAll("[data-notification-view]").forEach((button) => {
                 button.addEventListener("click", () => {
-                    markWorkflowNotificationViewRead(button.dataset.notificationView);
+                    const viewId = button.dataset.notificationView;
+                    if (workflowNotificationDetailsForView(viewId).length) {
+                        openWorkflowNotificationDetails(viewId);
+                        return;
+                    }
+                    markWorkflowNotificationViewRead(viewId);
                     closeModal();
-                    navigateToView(button.dataset.notificationView);
+                    navigateToView(viewId);
                 });
             });
         },
@@ -1307,7 +1379,6 @@ function renderCalendarSide(content = "") {
             </div>
             <div class="detail-row"><span class="detail-label">Building</span><span class="detail-value">${escapeHtml(state.prefix)}</span></div>
             <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
-            <div class="detail-row"><span class="detail-label">Privacy</span><span class="detail-value">Only availability is shown. Booking names and details are hidden.</span></div>
         </div>
     `;
     const requestButton = document.getElementById("request-booking-btn");
@@ -2746,11 +2817,11 @@ function normalizedBudgetHeadFields(source = {}) {
     };
 }
 
-function adminReviewRemarksHtml(source = {}) {
+function adminReviewRemarksHtml() {
     return `
         <div class="field-row review-remarks-field">
             <label for="admin-review-remarks">Remarks</label>
-            <textarea id="admin-review-remarks" placeholder="Approval, rejection, or send-back remarks">${htmlValue(source.admin_remarks || source.remarks || "")}</textarea>
+            <textarea id="admin-review-remarks" placeholder="Approval, rejection, send-back, or delete remarks"></textarea>
         </div>
     `;
 }
@@ -3257,7 +3328,7 @@ async function openAdminBookingRequestDetails(request) {
                 <div class="review-footer-stack">
                     <div>
                         <div class="form-section-title">Review Remarks</div>
-                        ${adminReviewRemarksHtml(detail)}
+                        ${adminReviewRemarksHtml()}
                     </div>
                     <div class="review-action-row">
                         ${isPending ? `
@@ -3295,8 +3366,13 @@ async function openAdminBookingRequestDetails(request) {
 
 async function runBookingRequestReviewAction(button, request) {
     const action = button.dataset.reviewAction;
-    button.disabled = true;
     const remarks = document.getElementById("admin-review-remarks")?.value?.trim() || "";
+    if ((action === "reject" || action === "sendBack") && !remarks) {
+        toast("Remarks are required.", "error");
+        document.getElementById("admin-review-remarks")?.focus();
+        return;
+    }
+    button.disabled = true;
     try {
         if (action === "approve") {
             const payload = { ...readAdminBookingPayload(), remarks };
@@ -3306,9 +3382,6 @@ async function runBookingRequestReviewAction(button, request) {
             await apiFetch(`/api/admin/booking-requests/${request.id}/reject/`, { method: "POST", body: { remarks } });
             toast("Booking request rejected.");
         } else if (action === "sendBack") {
-            if (!remarks) {
-                throw new Error("Remarks are required.");
-            }
             await apiFetch(`/api/admin/booking-requests/${request.id}/send-back/`, { method: "POST", body: { remarks } });
             toast("Request sent back for correction.");
         }

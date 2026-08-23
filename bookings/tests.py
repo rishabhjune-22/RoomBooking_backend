@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -12,7 +12,7 @@ from rest_framework import status
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from accounts.roles import APPROVAL_PENDING, ROLE_ADMIN, ROLE_REQUESTER, set_user_role
+from accounts.roles import APPROVAL_APPROVED, APPROVAL_PENDING, ROLE_ADMIN, ROLE_REQUESTER, set_user_role
 from hostels.models import Room
 
 from .models import Booking, BookingChargeSheet, BookingEditHistory, BookingRequest, BookingShare
@@ -102,6 +102,26 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertFalse(response.json()["success"])
         self.assertIn("cooling period", response.json()["message"])
 
+    def test_create_allows_arrival_at_cooling_boundary(self):
+        self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 8, 0),
+            utc_dt(2026, 7, 1, 10, 0),
+        )
+
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 11, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.json()["success"])
+
     def test_create_rejects_same_day_when_cooling_runs_past_6pm(self):
         self.create_booking(
             self.room,
@@ -123,31 +143,97 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertFalse(response.json()["success"])
         self.assertIn("unavailable", response.json()["message"])
 
+    def test_create_rejects_departure_too_close_before_next_booking(self):
+        self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 12, 0),
+            utc_dt(2026, 7, 1, 14, 0),
+        )
+
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 9, 0),
+                departure_at=utc_dt(2026, 7, 1, 11, 30),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.json()["success"])
+        self.assertIn("1-hour gap", response.json()["message"])
+
+    def test_create_allows_departure_at_next_booking_cooling_boundary(self):
+        self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 12, 0),
+            utc_dt(2026, 7, 1, 14, 0),
+        )
+
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 9, 0),
+                departure_at=utc_dt(2026, 7, 1, 11, 0),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.json()["success"])
+
     def test_update_moving_booking_to_occupied_room_is_rejected(self):
         booking = self.create_booking(
             self.room,
-            utc_dt(2026, 7, 1, 8, 0),
-            utc_dt(2026, 7, 1, 9, 0),
+            utc_dt(2026, 9, 1, 8, 0),
+            utc_dt(2026, 9, 1, 9, 0),
         )
         self.create_booking(
             self.other_room,
-            utc_dt(2026, 7, 1, 12, 0),
-            utc_dt(2026, 7, 1, 13, 0),
+            utc_dt(2026, 9, 1, 12, 0),
+            utc_dt(2026, 9, 1, 13, 0),
         )
 
         response = self.client.patch(
             reverse("booking-edit", kwargs={"pk": booking.pk}),
             data={
                 "room": self.other_room.id,
-                "arrival_at": iso(utc_dt(2026, 7, 1, 12, 30)),
-                "departure_at": iso(utc_dt(2026, 7, 1, 13, 30)),
+                "arrival_at": iso(utc_dt(2026, 9, 1, 12, 30)),
+                "departure_at": iso(utc_dt(2026, 9, 1, 13, 30)),
             },
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already booked", response.json()["message"])
         booking.refresh_from_db()
         self.assertEqual(booking.room_id, self.room.id)
+
+    def test_update_rejects_departure_too_close_before_next_booking(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 9, 1, 9, 0),
+            utc_dt(2026, 9, 1, 10, 0),
+        )
+        self.create_booking(
+            self.room,
+            utc_dt(2026, 9, 1, 12, 0),
+            utc_dt(2026, 9, 1, 14, 0),
+        )
+
+        response = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": booking.pk}),
+            data={"departure_at": iso(utc_dt(2026, 9, 1, 11, 30))},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.json()["success"])
+        self.assertIn("1-hour gap", response.json()["message"])
+        booking.refresh_from_db()
+        self.assertEqual(booking.departure_at, utc_dt(2026, 9, 1, 10, 0))
 
     def test_delete_removes_booking(self):
         booking = self.create_booking(
@@ -691,6 +777,71 @@ class BookingApiBusinessRuleTests(TestCase):
         by_id = {room["room_id"]: room for room in rooms}
         self.assertEqual(by_id[self.room.id]["availability_status"], "partial")
         self.assertEqual(by_id[self.other_room.id]["availability_status"], "available")
+
+    def test_available_rooms_by_date_excludes_room_when_cooling_runs_past_6pm(self):
+        self.create_booking(
+            self.room,
+            local_dt(2026, 7, 3, 10, 0),
+            local_dt(2026, 7, 3, 12, 0),
+        )
+        self.create_booking(
+            self.other_room,
+            local_dt(2026, 7, 3, 15, 0),
+            local_dt(2026, 7, 3, 17, 30),
+        )
+
+        response = self.client.get(
+            reverse("room-available-rooms"),
+            {"date": "2026-07-03", "prefix": "Beta"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rooms = response.json()["data"]["rooms"]
+        by_id = {room["room_id"]: room for room in rooms}
+        self.assertEqual(by_id[self.room.id]["availability_status"], "partial")
+        self.assertNotIn(self.other_room.id, by_id)
+
+    def test_available_rooms_range_excludes_room_when_cooling_runs_past_6pm(self):
+        self.create_booking(
+            self.room,
+            local_dt(2026, 7, 3, 15, 0),
+            local_dt(2026, 7, 3, 17, 30),
+        )
+
+        response = self.client.get(
+            reverse("room-available-rooms-range"),
+            {
+                "arrival_date": "2026-07-03",
+                "departure_date": "2026-07-03",
+                "prefix": "Beta",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        by_id = {room["room_id"]: room for room in response.json()["data"]["rooms"]}
+        self.assertNotIn(self.room.id, by_id)
+        self.assertEqual(by_id[self.other_room.id]["availability_status"], "available")
+
+    def test_available_rooms_range_marks_multiday_departure_day_partial(self):
+        self.create_booking(
+            self.room,
+            local_dt(2026, 7, 1, 10, 0),
+            local_dt(2026, 7, 3, 12, 0),
+        )
+
+        response = self.client.get(
+            reverse("room-available-rooms-range"),
+            {
+                "arrival_date": "2026-07-03",
+                "departure_date": "2026-07-03",
+                "prefix": "Beta",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        by_id = {room["room_id"]: room for room in response.json()["data"]["rooms"]}
+        self.assertEqual(by_id[self.room.id]["availability_status"], "partial")
+        self.assertEqual(by_id[self.room.id]["available_from_time"], "01:00 PM")
 
     def test_booking_mutation_scope_returns_429(self):
         original_rates = ScopedRateThrottle.THROTTLE_RATES
@@ -1600,6 +1751,23 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertIsNone(booking_request.approved_booking)
         self.assertEqual(Booking.objects.count(), 0)
 
+    def test_reject_requires_remarks(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-reject", kwargs={"pk": booking_request.pk}),
+            data={"remarks": ""},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+
     def test_admin_can_send_back_pending_request_for_correction(self):
         booking_request = BookingRequest.objects.create(
             requester=self.requester,
@@ -1733,8 +1901,9 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertIsNone(booking_request.reviewed_at)
         self.assertEqual(booking_request.visitor_mobile, "9123456789")
         self.assertEqual(booking_request.purpose_of_visit, "Corrected purpose")
-        self.assertEqual(booking_request.admin_remarks, "Update mobile.")
+        self.assertEqual(booking_request.admin_remarks, "")
         self.assertEqual(response.json()["data"]["status"], BookingRequest.STATUS_PENDING)
+        self.assertEqual(response.json()["data"]["admin_remarks"], "")
 
     def test_admin_can_approve_after_requester_resubmits(self):
         booking_request = BookingRequest.objects.create(
@@ -1790,6 +1959,36 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
         self.assertIsNone(booking_request.approved_booking)
 
+    def test_approve_rechecks_cooling_period(self):
+        Booking.objects.create(
+            room=self.room,
+            arrival_at=utc_dt(2026, 7, 1, 8, 0),
+            departure_at=utc_dt(2026, 7, 1, 10, 0),
+            visitor_name="Existing Visitor",
+        )
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(
+                arrival_at=utc_dt(2026, 7, 1, 10, 30),
+                departure_at=utc_dt(2026, 7, 1, 11, 30),
+            ),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
+            data={"room": self.room.id, "remarks": "Approved."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("no longer available", response.json()["message"])
+        self.assertIn("cooling period", str(response.json()["errors"]))
+        self.assertEqual(Booking.objects.count(), 1)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+        self.assertIsNone(booking_request.approved_booking)
+
     def request_payload(self, **overrides):
         payload = {
             "arrival_at": iso(utc_dt(2026, 7, 1, 10, 0)),
@@ -1835,6 +2034,558 @@ class BookingRequestWorkflowTests(TestCase):
             "visitor_mobile": "9876543210",
             "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
         }
+
+
+@override_settings(ADMIN_SIGNUP_CODE="integration-admin-code")
+class BookingApiIntegrationTests(TestCase):
+    def setUp(self):
+        self.signal_sync = patch("bookings.signals.request_calendar_sync", return_value=True)
+        self.signal_sync.start()
+        self.addCleanup(self.signal_sync.stop)
+
+        self.room = Room.objects.create(prefix="Delta", number="INT101", hostel_name="Integration")
+        self.other_room = Room.objects.create(prefix="Delta", number="INT102", hostel_name="Integration")
+        self.superadmin = User.objects.create_superuser(
+            username="integration-superadmin@example.com",
+            email="integration-superadmin@example.com",
+            password="StrongPass123",
+            first_name="Integration Superadmin",
+        )
+
+    def test_full_account_request_booking_lifecycle_uses_consistent_api_rules(self):
+        admin_token = self.signup_approve_and_login_admin()
+        requester_token = self.signup_approve_and_login_requester(admin_token)
+
+        self.authenticate(requester_token)
+        availability_before = self.client.get(
+            reverse("requester-available-rooms-range"),
+            {
+                "arrival_date": "2026-09-10",
+                "departure_date": "2026-09-10",
+                "prefix": "Delta",
+            },
+        )
+        self.assertEqual(availability_before.status_code, status.HTTP_200_OK)
+        before_by_id = {
+            room["room_id"]: room
+            for room in availability_before.json()["data"]["rooms"]
+        }
+        self.assertEqual(before_by_id[self.room.id]["availability_status"], "available")
+
+        create_request = self.client.post(
+            reverse("requester-booking-request-list"),
+            data=self.booking_request_payload(
+                arrival_at=local_dt(2026, 9, 10, 10, 0),
+                departure_at=local_dt(2026, 9, 10, 12, 0),
+                preferred_room=self.room.id,
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(create_request.status_code, status.HTTP_201_CREATED)
+        request_id = create_request.json()["data"]["id"]
+
+        self.authenticate(admin_token)
+        request_list = self.client.get(
+            reverse("admin-booking-request-list"),
+            {"status": BookingRequest.STATUS_PENDING},
+        )
+        self.assertEqual(request_list.status_code, status.HTTP_200_OK)
+        self.assertIn(request_id, [item["id"] for item in request_list.json()["data"]])
+
+        approve = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": request_id}),
+            data={"room": self.room.id, "remarks": "Approved by integration test."},
+            content_type="application/json",
+        )
+        self.assertEqual(approve.status_code, status.HTTP_200_OK)
+        approved_booking_id = approve.json()["data"]["approved_booking_id"]
+        self.assertIsNotNone(approved_booking_id)
+
+        booking = Booking.objects.get(pk=approved_booking_id)
+        self.assertEqual(booking.room, self.room)
+        self.assertEqual(booking.created_by.email, "integration-admin@example.com")
+
+        availability_after = self.client.get(
+            reverse("room-available-rooms-range"),
+            {
+                "arrival_date": "2026-09-10",
+                "departure_date": "2026-09-10",
+                "prefix": "Delta",
+            },
+        )
+        self.assertEqual(availability_after.status_code, status.HTTP_200_OK)
+        after_by_id = {
+            room["room_id"]: room
+            for room in availability_after.json()["data"]["rooms"]
+        }
+        self.assertEqual(after_by_id[self.room.id]["availability_status"], "partial")
+        self.assertEqual(after_by_id[self.room.id]["available_from_time"], "01:00 PM")
+
+        conflict = self.client.post(
+            reverse("booking-create"),
+            data=self.admin_booking_payload(
+                room=self.room,
+                arrival_at=local_dt(2026, 9, 10, 11, 0),
+                departure_at=local_dt(2026, 9, 10, 13, 0),
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(conflict.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already booked", conflict.json()["message"])
+
+        boundary_create = self.client.post(
+            reverse("booking-create"),
+            data=self.admin_booking_payload(
+                room=self.room,
+                arrival_at=local_dt(2026, 9, 10, 13, 0),
+                departure_at=local_dt(2026, 9, 10, 14, 0),
+                visitor_name="Boundary Visitor",
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(boundary_create.status_code, status.HTTP_201_CREATED)
+        boundary_booking_id = boundary_create.json()["data"]["booking_id"]
+
+        edit = self.client.patch(
+            reverse("booking-edit", kwargs={"pk": approved_booking_id}),
+            data={"purpose_of_visit": "Updated after approval"},
+            content_type="application/json",
+        )
+        self.assertEqual(edit.status_code, status.HTTP_200_OK)
+        booking.refresh_from_db()
+        self.assertEqual(booking.purpose_of_visit, "Updated after approval")
+
+        self.authenticate(requester_token)
+        requester_requests = self.client.get(
+            reverse("requester-booking-request-list"),
+            {"status": BookingRequest.STATUS_APPROVED},
+        )
+        self.assertEqual(requester_requests.status_code, status.HTTP_200_OK)
+        self.assertIn(request_id, [item["id"] for item in requester_requests.json()["data"]])
+
+        self.authenticate(admin_token)
+        delete_approved = self.client.delete(
+            reverse("booking-delete", kwargs={"pk": approved_booking_id})
+        )
+        self.assertEqual(delete_approved.status_code, status.HTTP_200_OK)
+        source_request = BookingRequest.objects.get(pk=request_id)
+        self.assertTrue(source_request.is_deleted)
+        self.assertEqual(source_request.delete_reason, "Linked booking was deleted by admin.")
+
+        delete_boundary = self.client.delete(
+            reverse("booking-delete", kwargs={"pk": boundary_booking_id})
+        )
+        self.assertEqual(delete_boundary.status_code, status.HTTP_200_OK)
+        self.assertEqual(Booking.objects.count(), 0)
+
+    def test_request_sendback_resubmit_reject_and_delete_are_stateful(self):
+        admin = self.create_approved_user(
+            "workflow-admin@example.com",
+            "Workflow Admin",
+            ROLE_ADMIN,
+        )
+        requester = self.create_approved_user(
+            "workflow-requester@example.com",
+            "Workflow Requester",
+            ROLE_REQUESTER,
+        )
+        admin_token = bearer_token(admin)
+        requester_token = bearer_token(requester)
+
+        self.authenticate(requester_token)
+        create_request = self.client.post(
+            reverse("requester-booking-request-list"),
+            data=self.booking_request_payload(
+                arrival_at=utc_dt(2026, 9, 12, 10, 0),
+                departure_at=utc_dt(2026, 9, 12, 12, 0),
+                preferred_room=self.other_room.id,
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(create_request.status_code, status.HTTP_201_CREATED)
+        request_id = create_request.json()["data"]["id"]
+
+        self.authenticate(admin_token)
+        blank_sendback = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": request_id}),
+            data={"remarks": ""},
+            content_type="application/json",
+        )
+        self.assertEqual(blank_sendback.status_code, status.HTTP_400_BAD_REQUEST)
+
+        sendback = self.client.post(
+            reverse("admin-booking-request-send-back", kwargs={"pk": request_id}),
+            data={"remarks": "Please correct visitor mobile."},
+            content_type="application/json",
+        )
+        self.assertEqual(sendback.status_code, status.HTTP_200_OK)
+        self.assertEqual(sendback.json()["data"]["status"], BookingRequest.STATUS_CORRECTION_REQUIRED)
+
+        self.authenticate(requester_token)
+        resubmit = self.client.patch(
+            reverse("requester-booking-request-detail", kwargs={"pk": request_id}),
+            data={"visitor_mobile": "9123456789"},
+            content_type="application/json",
+        )
+        self.assertEqual(resubmit.status_code, status.HTTP_200_OK)
+        self.assertEqual(resubmit.json()["data"]["status"], BookingRequest.STATUS_PENDING)
+        self.assertEqual(resubmit.json()["data"]["admin_remarks"], "")
+
+        self.authenticate(admin_token)
+        blank_reject = self.client.post(
+            reverse("admin-booking-request-reject", kwargs={"pk": request_id}),
+            data={"remarks": ""},
+            content_type="application/json",
+        )
+        self.assertEqual(blank_reject.status_code, status.HTTP_400_BAD_REQUEST)
+
+        reject = self.client.post(
+            reverse("admin-booking-request-reject", kwargs={"pk": request_id}),
+            data={"remarks": "No room can be assigned."},
+            content_type="application/json",
+        )
+        self.assertEqual(reject.status_code, status.HTTP_200_OK)
+        self.assertEqual(reject.json()["data"]["status"], BookingRequest.STATUS_REJECTED)
+        self.assertEqual(Booking.objects.count(), 0)
+
+        blank_delete = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": request_id}),
+            data={"remarks": ""},
+            content_type="application/json",
+        )
+        self.assertEqual(blank_delete.status_code, status.HTTP_400_BAD_REQUEST)
+
+        delete = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": request_id}),
+            data={"remarks": "Archived rejected integration request."},
+            content_type="application/json",
+        )
+        self.assertEqual(delete.status_code, status.HTTP_200_OK)
+        booking_request = BookingRequest.objects.get(pk=request_id)
+        self.assertTrue(booking_request.is_deleted)
+        self.assertEqual(
+            booking_request.delete_reason,
+            "Archived rejected integration request.",
+        )
+
+    def signup_approve_and_login_admin(self):
+        signup = self.client.post(
+            reverse("auth-admin-signup"),
+            data={
+                "name": "Integration Admin",
+                "email": "integration-admin@example.com",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+                "admin_code": "integration-admin-code",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(signup.status_code, status.HTTP_201_CREATED)
+        admin_user = User.objects.get(email="integration-admin@example.com")
+        self.assertEqual(admin_user.profile.approval_status, APPROVAL_PENDING)
+
+        login_before = self.client.post(
+            reverse("auth-admin-login"),
+            data={"email": admin_user.email, "password": "StrongPass123"},
+            content_type="application/json",
+        )
+        self.assertEqual(login_before.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.authenticate(bearer_token(self.superadmin))
+        approve = self.client.post(
+            reverse("superadmin-account-request-approve", kwargs={"pk": admin_user.profile.pk}),
+            data={},
+            content_type="application/json",
+        )
+        self.assertEqual(approve.status_code, status.HTTP_200_OK)
+
+        self.clear_auth()
+        login_after = self.client.post(
+            reverse("auth-admin-login"),
+            data={"email": admin_user.email, "password": "StrongPass123"},
+            content_type="application/json",
+        )
+        self.assertEqual(login_after.status_code, status.HTTP_200_OK)
+        return f"Bearer {login_after.json()['data']['access']}"
+
+    def signup_approve_and_login_requester(self, admin_token):
+        signup = self.client.post(
+            reverse("auth-requester-signup"),
+            data={
+                "name": "Integration Requester",
+                "email": "integration-requester@example.com",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+                "department": "CSE",
+                "designation": "Student",
+                "mobile": "9876543210",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(signup.status_code, status.HTTP_201_CREATED)
+        requester_user = User.objects.get(email="integration-requester@example.com")
+        self.assertEqual(requester_user.profile.approval_status, APPROVAL_PENDING)
+
+        login_before = self.client.post(
+            reverse("auth-requester-login"),
+            data={"email": requester_user.email, "password": "StrongPass123"},
+            content_type="application/json",
+        )
+        self.assertEqual(login_before.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.authenticate(admin_token)
+        approve = self.client.post(
+            reverse("admin-requester-account-approve", kwargs={"pk": requester_user.profile.pk}),
+            data={},
+            content_type="application/json",
+        )
+        self.assertEqual(approve.status_code, status.HTTP_200_OK)
+
+        self.clear_auth()
+        login_after = self.client.post(
+            reverse("auth-requester-login"),
+            data={"email": requester_user.email, "password": "StrongPass123"},
+            content_type="application/json",
+        )
+        self.assertEqual(login_after.status_code, status.HTTP_200_OK)
+        return f"Bearer {login_after.json()['data']['access']}"
+
+    def create_approved_user(self, email, name, role):
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password="StrongPass123",
+            first_name=name,
+        )
+        set_user_role(user, role, approval_status=APPROVAL_APPROVED)
+        return user
+
+    def authenticate(self, token):
+        self.client.defaults["HTTP_AUTHORIZATION"] = token
+
+    def clear_auth(self):
+        self.client.defaults.pop("HTTP_AUTHORIZATION", None)
+
+    def booking_request_payload(self, arrival_at, departure_at, preferred_room=None, **overrides):
+        payload = {
+            "arrival_at": iso(arrival_at),
+            "departure_at": iso(departure_at),
+            "preferred_prefix": "Delta",
+            "preferred_room": preferred_room,
+            "visitor_name": "Integration Visitor",
+            "visitor_mobile": "9876543210",
+            "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
+            "purpose_of_visit": "Integration test visit",
+            "requestor_name": "Integration Requester",
+            "requestor_email": "integration-requester@example.com",
+        }
+        payload.update(overrides)
+        return payload
+
+    def admin_booking_payload(self, room, arrival_at, departure_at, **overrides):
+        payload = {
+            "room": room.id,
+            "arrival_at": iso(arrival_at),
+            "departure_at": iso(departure_at),
+            "visitor_name": "Direct Integration Visitor",
+            "visitor_mobile": "9876543210",
+            "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
+            "room_charges_status": Booking.CHARGE_STATUS_NO,
+            "attender_charges_status": Booking.CHARGE_STATUS_NO,
+            "room_charges_amount": "0",
+            "attender_charges_amount": "0",
+        }
+        payload.update(overrides)
+        return payload
+
+
+class BookingApiVolumeTests(TestCase):
+    def setUp(self):
+        self.signal_sync = patch("bookings.signals.request_calendar_sync", return_value=True)
+        self.signal_sync.start()
+        self.addCleanup(self.signal_sync.stop)
+
+        self.admin = create_user("volume-admin@example.com", "Volume Admin")
+        self.requester = create_requester("volume-requester@example.com", "Volume Requester")
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+    def test_availability_endpoints_handle_hundreds_of_rooms_and_bookings(self):
+        rooms = self.create_rooms("VolAvail", 300)
+        bookings = []
+        for room in rooms[:120]:
+            bookings.append(self.booking_model(room, local_dt(2026, 9, 15, 10, 0), local_dt(2026, 9, 15, 12, 0)))
+        for room in rooms[120:200]:
+            bookings.append(self.booking_model(room, local_dt(2026, 9, 15, 15, 0), local_dt(2026, 9, 15, 17, 30)))
+        for index in range(500):
+            room = rooms[index % len(rooms)]
+            day = 1 + (index % 20)
+            bookings.append(self.booking_model(room, local_dt(2026, 10, day, 8, 0), local_dt(2026, 10, day, 9, 0)))
+        Booking.objects.bulk_create(bookings)
+
+        range_response = self.client.get(
+            reverse("room-available-rooms-range"),
+            {
+                "arrival_date": "2026-09-15",
+                "departure_date": "2026-09-15",
+                "prefix": "VolAvail",
+            },
+        )
+        day_response = self.client.get(
+            reverse("room-available-rooms"),
+            {"date": "2026-09-15", "prefix": "VolAvail"},
+        )
+
+        self.assertEqual(range_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(day_response.status_code, status.HTTP_200_OK)
+        for response in [range_response, day_response]:
+            data = response.json()["data"]
+            rooms_payload = data["rooms"]
+            self.assertEqual(data["total_available_rooms"], 220)
+            self.assertEqual(len(rooms_payload), 220)
+            self.assertEqual(
+                sum(1 for room in rooms_payload if room["availability_status"] == "partial"),
+                120,
+            )
+            self.assertEqual(
+                sum(1 for room in rooms_payload if room["availability_status"] == "available"),
+                100,
+            )
+            returned_ids = {room["room_id"] for room in rooms_payload}
+            self.assertTrue(all(room.id not in returned_ids for room in rooms[120:200]))
+
+    def test_paginated_booking_and_charge_sheet_lists_handle_hundreds_of_bookings(self):
+        rooms = self.create_rooms("VolList", 80)
+        bookings = []
+        for index in range(350):
+            room = rooms[index % len(rooms)]
+            day = 1 + (index % 25)
+            bookings.append(
+                self.booking_model(
+                    room,
+                    utc_dt(2026, 9, day, 8, 0),
+                    utc_dt(2026, 9, day, 10, 0),
+                    visitor_name=f"Volume Guest {index:04d}",
+                    requestor_name=f"Volume Requestor {index % 17:02d}",
+                )
+            )
+        Booking.objects.bulk_create(bookings)
+
+        booking_list = self.client.get(
+            reverse("booking-list"),
+            {"prefix": "VolList", "page_size": 100},
+        )
+        charge_sheet_list = self.client.get(
+            reverse("booking-charge-sheet-list"),
+            {"prefix": "VolList", "page_size": 100},
+        )
+        charge_sheet_search = self.client.get(
+            reverse("booking-charge-sheet-list"),
+            {"prefix": "VolList", "search": "Volume Guest 0342"},
+        )
+
+        self.assertEqual(booking_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking_list.json()["data"]["count"], 350)
+        self.assertEqual(len(booking_list.json()["data"]["results"]), 100)
+        self.assertEqual(charge_sheet_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(charge_sheet_list.json()["data"]["count"], 350)
+        self.assertEqual(len(charge_sheet_list.json()["data"]["results"]), 100)
+        self.assertEqual(BookingChargeSheet.objects.filter(booking__room__prefix="VolList").count(), 350)
+        self.assertEqual(charge_sheet_search.status_code, status.HTTP_200_OK)
+        self.assertEqual(charge_sheet_search.json()["data"]["count"], 1)
+        self.assertEqual(
+            charge_sheet_search.json()["data"]["results"][0]["guest_name"],
+            "Volume Guest 0342",
+        )
+
+    def test_pending_request_review_paths_handle_large_request_volume(self):
+        room = Room.objects.create(prefix="VolReq", number="VR001", hostel_name="Integration")
+        requests = []
+        for index in range(600):
+            day = 1 + (index % 25)
+            requests.append(
+                BookingRequest(
+                    requester=self.requester,
+                    status=BookingRequest.STATUS_PENDING,
+                    arrival_at=utc_dt(2026, 11, day, 8, 0),
+                    departure_at=utc_dt(2026, 11, day, 10, 0),
+                    preferred_prefix="VolReq",
+                    visitor_name=f"Volume Request Visitor {index:04d}",
+                    visitor_mobile="9876543210",
+                    visitor_category=Booking.VISITOR_CATEGORY_INSTITUTE,
+                    purpose_of_visit="Volume request test",
+                    requestor_name="Volume Requester",
+                    requestor_email="volume-requester@example.com",
+                )
+            )
+        BookingRequest.objects.bulk_create(requests)
+
+        pending_list = self.client.get(
+            reverse("admin-booking-request-list"),
+            {"status": BookingRequest.STATUS_PENDING},
+        )
+        approve_target = BookingRequest.objects.get(visitor_name="Volume Request Visitor 0300")
+        reject_target = BookingRequest.objects.get(visitor_name="Volume Request Visitor 0301")
+        delete_target = BookingRequest.objects.get(visitor_name="Volume Request Visitor 0302")
+
+        approve = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": approve_target.pk}),
+            data={"room": room.id, "remarks": "Approved in volume test."},
+            content_type="application/json",
+        )
+        reject = self.client.post(
+            reverse("admin-booking-request-reject", kwargs={"pk": reject_target.pk}),
+            data={"remarks": "Rejected in volume test."},
+            content_type="application/json",
+        )
+        delete = self.client.delete(
+            reverse("admin-booking-request-delete", kwargs={"pk": delete_target.pk}),
+            data={"remarks": "Deleted in volume test."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(pending_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(pending_list.json()["data"]), 600)
+        self.assertEqual(approve.status_code, status.HTTP_200_OK)
+        self.assertEqual(reject.status_code, status.HTTP_200_OK)
+        self.assertEqual(delete.status_code, status.HTTP_200_OK)
+        self.assertEqual(Booking.objects.count(), 1)
+        approve_target.refresh_from_db()
+        reject_target.refresh_from_db()
+        delete_target.refresh_from_db()
+        self.assertEqual(approve_target.status, BookingRequest.STATUS_APPROVED)
+        self.assertEqual(reject_target.status, BookingRequest.STATUS_REJECTED)
+        self.assertTrue(delete_target.is_deleted)
+        self.assertEqual(
+            BookingRequest.objects.filter(
+                status=BookingRequest.STATUS_PENDING,
+                is_deleted=False,
+            ).count(),
+            597,
+        )
+
+    def create_rooms(self, prefix, count):
+        Room.objects.bulk_create([
+            Room(
+                prefix=prefix,
+                number=f"V{index:04d}",
+                hostel_name="Integration",
+                display_order=index,
+            )
+            for index in range(count)
+        ])
+        return list(Room.objects.filter(prefix=prefix).order_by("display_order", "number"))
+
+    def booking_model(self, room, arrival_at, departure_at, **overrides):
+        data = {
+            "room": room,
+            "arrival_at": arrival_at,
+            "departure_at": departure_at,
+            "visitor_name": "Volume Guest",
+            "purpose_of_visit": "Volume test",
+            "requestor_name": "Volume Requestor",
+        }
+        data.update(overrides)
+        return Booking(**data)
 
 
 class BackendOperationalTests(TestCase):

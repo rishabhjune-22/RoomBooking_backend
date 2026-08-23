@@ -823,7 +823,7 @@ class AccountApprovalApiTests(TestCase):
         )
         set_user_role(pending_admin, ROLE_ADMIN, approval_status=APPROVAL_PENDING)
         now = timezone.now()
-        BookingRequest.objects.create(
+        pending_request = BookingRequest.objects.create(
             requester=requester,
             status=BookingRequest.STATUS_PENDING,
             arrival_at=now,
@@ -831,9 +831,11 @@ class AccountApprovalApiTests(TestCase):
             preferred_prefix="Delta",
             visitor_name="Pending Visitor",
         )
-        BookingRequest.objects.create(
+        correction_request = BookingRequest.objects.create(
             requester=requester,
             status=BookingRequest.STATUS_CORRECTION_REQUIRED,
+            reviewed_at=now + timedelta(minutes=30),
+            admin_remarks="Please update visitor details.",
             arrival_at=now + timedelta(days=1),
             departure_at=now + timedelta(days=1, hours=8),
             preferred_prefix="Delta",
@@ -874,6 +876,12 @@ class AccountApprovalApiTests(TestCase):
         self.assertEqual(admin_counts["total"], 2)
         self.assertEqual(len(admin_counts["items"]["booking_requests"]), 1)
         self.assertEqual(len(admin_counts["items"]["requester_accounts"]), 1)
+        admin_booking_item = admin_counts["items"]["booking_requests"][0]
+        self.assertEqual(admin_booking_item["id"], pending_request.id)
+        self.assertIn("Pending Visitor", admin_booking_item["message"])
+        self.assertIn(str(pending_request.id), admin_booking_item["key"])
+        admin_requester_item = admin_counts["items"]["requester_accounts"][0]
+        self.assertIn("Requester account", admin_requester_item["title"])
 
         superadmin_counts = superadmin_response.json()["data"]
         self.assertEqual(superadmin_counts["booking_requests"], 1)
@@ -890,6 +898,13 @@ class AccountApprovalApiTests(TestCase):
         self.assertEqual(requester_counts["my_requests"], 2)
         self.assertEqual(requester_counts["total"], 2)
         self.assertEqual(len(requester_counts["items"]["my_requests"]), 2)
+        correction_items = [
+            item for item in requester_counts["items"]["my_requests"]
+            if isinstance(item, dict) and item["id"] == correction_request.id
+        ]
+        self.assertEqual(len(correction_items), 1)
+        self.assertIn("correction", correction_items[0]["title"].lower())
+        self.assertIn("Please update visitor details", correction_items[0]["message"])
         deleted_items = [
             item for item in requester_counts["items"]["my_requests"]
             if isinstance(item, dict) and item["id"] == deleted_request.id
@@ -897,6 +912,40 @@ class AccountApprovalApiTests(TestCase):
         self.assertEqual(len(deleted_items), 1)
         self.assertIn("deleted", deleted_items[0]["title"].lower())
         self.assertIn("Duplicate request", deleted_items[0]["message"])
+
+    def test_workflow_notification_key_changes_when_request_is_reviewed_again(self):
+        requester = self.create_pending_requester(email="review-key-requester@example.com")
+        requester_profile = get_user_profile(requester)
+        requester_profile.approval_status = APPROVAL_APPROVED
+        requester_profile.save(update_fields=["approval_status"])
+        now = timezone.now()
+        booking_request = BookingRequest.objects.create(
+            requester=requester,
+            status=BookingRequest.STATUS_CORRECTION_REQUIRED,
+            reviewed_at=now,
+            admin_remarks="Please correct the visit purpose.",
+            arrival_at=now + timedelta(days=1),
+            departure_at=now + timedelta(days=1, hours=8),
+            preferred_prefix="Delta",
+            visitor_name="Review Key Visitor",
+        )
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(requester)
+        first_response = self.client.get(reverse("workflow-notification-counts"))
+
+        booking_request.status = BookingRequest.STATUS_APPROVED
+        booking_request.reviewed_at = now + timedelta(hours=2)
+        booking_request.admin_remarks = "Approved after correction."
+        booking_request.save(update_fields=["status", "reviewed_at", "admin_remarks"])
+        second_response = self.client.get(reverse("workflow-notification-counts"))
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        first_item = first_response.json()["data"]["items"]["my_requests"][0]
+        second_item = second_response.json()["data"]["items"]["my_requests"][0]
+        self.assertNotEqual(first_item["key"], second_item["key"])
+        self.assertIn("correction", first_item["title"].lower())
+        self.assertIn("approved", second_item["title"].lower())
 
     def test_requester_signup_creates_pending_account(self):
         response = self.client.post(

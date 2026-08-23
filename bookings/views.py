@@ -1419,7 +1419,8 @@ class RequesterBookingRequestDetailView(APIView):
             booking_request.status = BookingRequest.STATUS_PENDING
             booking_request.reviewed_by = None
             booking_request.reviewed_at = None
-            booking_request.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+            booking_request.admin_remarks = ""
+            booking_request.save(update_fields=["status", "reviewed_by", "reviewed_at", "admin_remarks"])
 
         return api_success(
             "Booking request resubmitted successfully."

@@ -1,3 +1,5 @@
+import hashlib
+
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -160,8 +162,113 @@ class WorkflowNotificationCountView(APIView):
             "my_requests": [],
         }
 
-        def item_keys(queryset, prefix):
-            return [f"{prefix}:{pk}" for pk in queryset.values_list("pk", flat=True)]
+        def marker_for(value):
+            return int(value.timestamp()) if value else "none"
+
+        def user_display_name(user):
+            return (
+                user.get_full_name()
+                or user.email
+                or user.username
+                or "Unknown user"
+            )
+
+        def booking_request_fingerprint(booking_request):
+            values = [
+                booking_request.arrival_at.isoformat() if booking_request.arrival_at else "",
+                booking_request.departure_at.isoformat() if booking_request.departure_at else "",
+                booking_request.preferred_prefix,
+                str(booking_request.preferred_room_id or ""),
+                booking_request.room_preference_note,
+                booking_request.visitor_name,
+                booking_request.visitor_mobile,
+                booking_request.visitor_email,
+                booking_request.visitor_organisation,
+                booking_request.purpose_of_visit,
+                booking_request.requestor_name,
+                booking_request.requestor_department,
+                booking_request.requestor_mobile,
+                booking_request.requestor_email,
+                booking_request.budget_head_type,
+                booking_request.budget_head_value,
+                booking_request.budget_head_name,
+                booking_request.budget_head_department_name,
+                booking_request.budget_head_project_code,
+                str(booking_request.attender_required),
+                str(booking_request.attender_count_per_day),
+                str(booking_request.attender_general_shift),
+                str(booking_request.attender_morning_shift),
+                str(booking_request.attender_day_shift),
+            ]
+            return hashlib.sha256("|".join(values).encode("utf-8")).hexdigest()[:12]
+
+        def date_range_text(booking_request):
+            arrival_at = timezone.localtime(booking_request.arrival_at)
+            departure_at = timezone.localtime(booking_request.departure_at)
+            return (
+                f"{arrival_at.strftime('%d %b %Y, %I:%M %p')} to "
+                f"{departure_at.strftime('%d %b %Y, %I:%M %p')}"
+            )
+
+        def booking_request_items(queryset):
+            items = []
+            for booking_request in queryset:
+                requester_name = user_display_name(booking_request.requester)
+                room_text = (
+                    booking_request.preferred_room.selection_label
+                    if booking_request.preferred_room
+                    else booking_request.preferred_prefix or "No room preference"
+                )
+                items.append({
+                    "key": (
+                        f"booking_request:{booking_request.pk}:"
+                        f"{marker_for(booking_request.requested_at)}:"
+                        f"{booking_request_fingerprint(booking_request)}"
+                    ),
+                    "id": booking_request.pk,
+                    "title": f"Booking request from {requester_name}",
+                    "message": (
+                        f"{booking_request.visitor_name or 'Visitor'} requested {room_text} "
+                        f"for {date_range_text(booking_request)}."
+                    ),
+                })
+            return items
+
+        def account_items(queryset, prefix, label):
+            items = []
+            for account_profile in queryset:
+                user = account_profile.user
+                display_name = user_display_name(user)
+                items.append({
+                    "key": f"{prefix}:{account_profile.pk}:{marker_for(account_profile.updated_at)}",
+                    "id": account_profile.pk,
+                    "title": f"{label} approval pending",
+                    "message": f"{display_name} ({user.email or user.username}) is waiting for approval.",
+                })
+            return items
+
+        def reviewed_request_items(queryset):
+            titles = {
+                BookingRequest.STATUS_APPROVED: "Booking request approved",
+                BookingRequest.STATUS_REJECTED: "Booking request rejected",
+                BookingRequest.STATUS_CORRECTION_REQUIRED: "Booking request needs correction",
+            }
+            items = []
+            for booking_request in queryset:
+                remarks = booking_request.admin_remarks or "No remarks provided."
+                items.append({
+                    "key": (
+                        f"my_request:{booking_request.pk}:{booking_request.status}:"
+                        f"{marker_for(booking_request.reviewed_at or booking_request.requested_at)}"
+                    ),
+                    "id": booking_request.pk,
+                    "title": titles.get(booking_request.status, "Booking request reviewed"),
+                    "message": (
+                        f"{booking_request.visitor_name or 'Your booking request'} was "
+                        f"{booking_request.get_status_display().lower()}. Remarks: {remarks}"
+                    ),
+                })
+            return items
 
         def deleted_request_items(queryset):
             items = []
@@ -185,16 +292,24 @@ class WorkflowNotificationCountView(APIView):
             return items
 
         if profile.role in {ROLE_ADMIN, ROLE_SUPERADMIN}:
-            booking_request_qs = BookingRequest.objects.filter(
-                status=BookingRequest.STATUS_PENDING,
-                is_deleted=False,
+            booking_request_qs = (
+                BookingRequest.objects
+                .select_related("requester", "preferred_room")
+                .filter(
+                    status=BookingRequest.STATUS_PENDING,
+                    is_deleted=False,
+                )
             )
             requester_account_qs = UserProfile.objects.filter(
                 role=ROLE_REQUESTER,
                 approval_status=UserProfile.APPROVAL_PENDING,
+            ).select_related("user")
+            items["booking_requests"] = booking_request_items(booking_request_qs)
+            items["requester_accounts"] = account_items(
+                requester_account_qs,
+                "requester_account",
+                "Requester account",
             )
-            items["booking_requests"] = item_keys(booking_request_qs, "booking_request")
-            items["requester_accounts"] = item_keys(requester_account_qs, "requester_account")
             counts["booking_requests"] = len(items["booking_requests"])
             counts["requester_accounts"] = len(items["requester_accounts"])
 
@@ -202,19 +317,26 @@ class WorkflowNotificationCountView(APIView):
             admin_account_qs = UserProfile.objects.filter(
                 role=ROLE_ADMIN,
                 approval_status=UserProfile.APPROVAL_PENDING,
+            ).select_related("user")
+            items["admin_accounts"] = account_items(
+                admin_account_qs,
+                "admin_account",
+                "Admin account",
             )
-            items["admin_accounts"] = item_keys(admin_account_qs, "admin_account")
             counts["admin_accounts"] = len(items["admin_accounts"])
 
         if profile.role == ROLE_REQUESTER:
-            my_request_qs = BookingRequest.objects.filter(
-                requester=request.user,
-                status__in=[
-                    BookingRequest.STATUS_APPROVED,
-                    BookingRequest.STATUS_REJECTED,
-                    BookingRequest.STATUS_CORRECTION_REQUIRED,
-                ],
-                is_deleted=False,
+            my_request_qs = (
+                BookingRequest.objects
+                .filter(
+                    requester=request.user,
+                    status__in=[
+                        BookingRequest.STATUS_APPROVED,
+                        BookingRequest.STATUS_REJECTED,
+                        BookingRequest.STATUS_CORRECTION_REQUIRED,
+                    ],
+                    is_deleted=False,
+                )
             )
             deleted_by_admin_qs = (
                 BookingRequest.objects
@@ -224,7 +346,7 @@ class WorkflowNotificationCountView(APIView):
                 .order_by("-deleted_at", "-pk")
             )
             items["my_requests"] = (
-                item_keys(my_request_qs, "my_request")
+                reviewed_request_items(my_request_qs)
                 + deleted_request_items(deleted_by_admin_qs)
             )
             counts["my_requests"] = len(items["my_requests"])

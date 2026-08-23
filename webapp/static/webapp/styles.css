@@ -1525,6 +1525,30 @@ button:disabled {
     color: var(--ink);
 }
 
+.notification-detail-panel {
+    display: grid;
+    gap: 12px;
+}
+
+.notification-detail-card {
+    border: 1px solid rgba(15, 111, 191, 0.18);
+    border-radius: 8px;
+    background: rgba(15, 111, 191, 0.05);
+    padding: 14px;
+}
+
+.notification-detail-card h4 {
+    margin: 0 0 8px;
+    color: var(--ink);
+    font-size: 15px;
+}
+
+.notification-detail-card p {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.45;
+}
+
 .notification-row-count {
     display: inline-grid;
     place-items: center;
