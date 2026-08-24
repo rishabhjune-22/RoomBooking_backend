@@ -746,6 +746,32 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertNotIn("attender_count_per_day", detail.json()["data"])
         self.assertNotIn("attender_night_shift", detail.json()["data"])
 
+    def test_backdated_create_is_expired_and_visible_in_expired_list(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json()["data"]["status"], Booking.STATUS_EXPIRED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.status, Booking.STATUS_EXPIRED)
+
+        active_response = self.client.get(reverse("booking-list"), {"status": Booking.STATUS_ACTIVE})
+        expired_response = self.client.get(reverse("booking-list"), {"status": Booking.STATUS_EXPIRED})
+
+        self.assertEqual(active_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(expired_response.status_code, status.HTTP_200_OK)
+        active_ids = [item["id"] for item in active_response.json()["data"]["results"]]
+        expired_ids = [item["id"] for item in expired_response.json()["data"]["results"]]
+        self.assertNotIn(booking.id, active_ids)
+        self.assertIn(booking.id, expired_ids)
+
     def test_booking_list_filters_use_india_local_dates(self):
         booking = self.create_booking(
             self.room,

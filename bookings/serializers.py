@@ -184,6 +184,11 @@ class BookingSerializer(serializers.ModelSerializer):
         self.validate_same_day_full_block(room, arrival_at, instance)
         self.validate_cooling_period(room, arrival_at, instance)
         self.validate_next_booking_cooling_period(room, departure_at, instance)
+        attrs["status"] = (
+            Booking.STATUS_EXPIRED
+            if departure_at <= timezone.now()
+            else Booking.STATUS_ACTIVE
+        )
 
         return attrs
     def validate_charge_fields(self, attrs):
