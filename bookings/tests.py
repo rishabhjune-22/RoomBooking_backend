@@ -672,7 +672,7 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertEqual(history[0]["new_value"], "New purpose")
         self.assertIn("edited_at", history[0])
 
-    def test_expired_booking_edit_is_rejected_but_delete_is_allowed(self):
+    def test_expired_booking_edit_is_allowed_and_delete_is_allowed(self):
         booking = self.create_booking(
             self.room,
             utc_dt(2026, 7, 1, 10, 0),
@@ -686,12 +686,18 @@ class BookingApiBusinessRuleTests(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.json()["success"])
-        self.assertIn("only be deleted", response.json()["message"])
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         booking.refresh_from_db()
-        self.assertEqual(booking.purpose_of_visit, "Old purpose")
-        self.assertEqual(BookingEditHistory.objects.filter(booking=booking).count(), 0)
+        self.assertEqual(booking.purpose_of_visit, "New purpose")
+        self.assertEqual(
+            BookingEditHistory.objects.filter(
+                booking=booking,
+                field_name="purpose_of_visit",
+                old_value="Old purpose",
+                new_value="New purpose",
+            ).count(),
+            1,
+        )
 
         delete_response = self.client.delete(reverse("booking-delete", kwargs={"pk": booking.pk}))
 
@@ -717,7 +723,7 @@ class BookingApiBusinessRuleTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_create_accepts_updated_attender_shifts_without_night_shift(self):
+    def test_create_accepts_attender_shifts_without_count_or_night_shift(self):
         response = self.client.post(
             reverse("booking-create"),
             data=self.valid_payload(
@@ -725,7 +731,6 @@ class BookingApiBusinessRuleTests(TestCase):
                 arrival_at=utc_dt(2026, 7, 1, 10, 0),
                 departure_at=utc_dt(2026, 7, 1, 12, 0),
                 attender_required=True,
-                attender_count_per_day=1,
                 attender_day_shift=True,
             ),
             content_type="application/json",
@@ -738,6 +743,7 @@ class BookingApiBusinessRuleTests(TestCase):
         detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
         self.assertTrue(detail.json()["data"]["attender_day_shift"])
+        self.assertNotIn("attender_count_per_day", detail.json()["data"])
         self.assertNotIn("attender_night_shift", detail.json()["data"])
 
     def test_booking_list_filters_use_india_local_dates(self):
@@ -1312,6 +1318,23 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(data["budget_head_name"], "Requester Individual")
         self.assertEqual(data["budget_head_department_name"], "Requester Institute")
         self.assertEqual(data["budget_head_project_code"], "REQ-2026-001")
+
+    def test_requester_submits_attender_request_without_count(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.post(
+            reverse("requester-booking-request-list"),
+            data=self.request_payload(
+                attender_required=True,
+                attender_day_shift=True,
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking_request = BookingRequest.objects.get()
+        self.assertTrue(booking_request.attender_day_shift)
+        self.assertNotIn("attender_count_per_day", response.json()["data"])
 
     def test_requester_sees_only_own_requests(self):
         own_request = BookingRequest.objects.create(
@@ -2678,7 +2701,7 @@ class BookingChargeSheetApiTests(TestCase):
             ).exists()
         )
 
-    def test_charge_sheet_update_rejects_expired_booking(self):
+    def test_charge_sheet_update_allows_expired_booking(self):
         booking = self.create_booking(
             self.room,
             arrival_at=utc_dt(2026, 7, 1, 10, 0),
@@ -2689,21 +2712,21 @@ class BookingChargeSheetApiTests(TestCase):
 
         response = self.client.patch(
             reverse("booking-charge-sheet-detail", kwargs={"pk": sheet_row.pk}),
-            data={"guest_name": "Should Not Save"},
+            data={"guest_name": "Expired Guest Edited"},
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.json()["success"])
-        self.assertIn("only be deleted", response.json()["message"])
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         sheet_row.refresh_from_db()
         booking.refresh_from_db()
-        self.assertEqual(sheet_row.guest_name, "Expired Guest")
-        self.assertEqual(booking.visitor_name, "Expired Guest")
-        self.assertFalse(
+        self.assertEqual(sheet_row.guest_name, "Expired Guest Edited")
+        self.assertEqual(booking.visitor_name, "Expired Guest Edited")
+        self.assertTrue(
             BookingEditHistory.objects.filter(
                 booking=booking,
                 field_name="visitor_name",
+                old_value="Expired Guest",
+                new_value="Expired Guest Edited",
             ).exists()
         )
 

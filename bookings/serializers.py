@@ -40,7 +40,6 @@ class BookingSerializer(serializers.ModelSerializer):
             "budget_head_department_name",
             "budget_head_project_code",
 "attender_required",
-"attender_count_per_day",
 "attender_general_shift",
 "attender_morning_shift",
 "attender_day_shift",
@@ -218,11 +217,6 @@ class BookingSerializer(serializers.ModelSerializer):
             getattr(instance, "attender_required", False)
         )
 
-        attender_count = attrs.get(
-            "attender_count_per_day",
-            getattr(instance, "attender_count_per_day", 0)
-        )
-
         general_shift = attrs.get(
             "attender_general_shift",
             getattr(instance, "attender_general_shift", False)
@@ -238,13 +232,6 @@ class BookingSerializer(serializers.ModelSerializer):
             getattr(instance, "attender_day_shift", False)
         )
 
-        if attender_required and attender_count <= 0:
-            raise serializers.ValidationError({
-                "attender_count_per_day": [
-                    "Enter number of attenders required per day."
-                ]
-            })
-
         if attender_required and not any([
             general_shift,
             morning_shift,
@@ -257,7 +244,6 @@ class BookingSerializer(serializers.ModelSerializer):
             })
 
         if not attender_required:
-            attrs["attender_count_per_day"] = 0
             attrs["attender_general_shift"] = False
             attrs["attender_morning_shift"] = False
             attrs["attender_day_shift"] = False
@@ -778,7 +764,6 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "budget_head_department_name",
             "budget_head_project_code",
             "attender_required",
-            "attender_count_per_day",
             "attender_general_shift",
             "attender_morning_shift",
             "attender_day_shift",
@@ -897,10 +882,6 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             "attender_required",
             getattr(instance, "attender_required", False),
         )
-        attender_count = attrs.get(
-            "attender_count_per_day",
-            getattr(instance, "attender_count_per_day", 0),
-        )
         has_shift = any([
             attrs.get(
                 "attender_general_shift",
@@ -916,18 +897,12 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             ),
         ])
 
-        if attender_required and attender_count <= 0:
-            raise serializers.ValidationError({
-                "attender_count_per_day": ["Enter number of attenders required per day."]
-            })
-
         if attender_required and not has_shift:
             raise serializers.ValidationError({
                 "attender_shift": ["Please select at least one attender shift."]
             })
 
         if not attender_required:
-            attrs["attender_count_per_day"] = 0
             attrs["attender_general_shift"] = False
             attrs["attender_morning_shift"] = False
             attrs["attender_day_shift"] = False

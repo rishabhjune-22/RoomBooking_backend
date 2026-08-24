@@ -1044,19 +1044,6 @@ button:disabled {
     border-color: #fecaca;
 }
 
-.day-cell.past-date,
-.day-cell:disabled.past-date {
-    background: #f1f5f9;
-    border-color: #e2e8f0;
-    color: #94a3b8;
-    cursor: not-allowed;
-    opacity: 0.62;
-}
-
-.day-cell.past-date .availability-note {
-    color: #94a3b8;
-}
-
 .day-cell.selected,
 .day-cell.in-range {
     outline: 3px solid rgba(15, 111, 191, 0.28);

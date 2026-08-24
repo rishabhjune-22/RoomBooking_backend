@@ -1274,10 +1274,6 @@ function isInSelectedRange(dateValue) {
     return dateValue >= state.rangeStart && dateValue <= state.rangeEnd;
 }
 
-function isPastCalendarDate(dateValue) {
-    return Boolean(dateValue) && dateValue < todayIso();
-}
-
 function drawCalendar() {
     const grid = document.getElementById("calendar-grid");
     const group = currentCalendarGroup();
@@ -1298,11 +1294,9 @@ function drawCalendar() {
     for (let day = 1; day <= daysInMonth; day += 1) {
         const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
         const item = daysByDate[dateValue];
-        const isPast = isPastCalendarDate(dateValue);
-        const selectedClass = !isPast && isInSelectedRange(dateValue) ? "in-range" : "";
-        const disabledAttrs = isPast ? `disabled aria-disabled="true" title="Past dates are not selectable"` : "";
+        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
         cells.push(`
-            <button class="day-cell ${availabilityClass(item)} ${selectedClass} ${isPast ? "past-date" : ""}" type="button" data-date="${dateValue}" ${disabledAttrs}>
+            <button class="day-cell ${availabilityClass(item)} ${selectedClass}" type="button" data-date="${dateValue}">
                 <span class="day-number">${day}</span>
                 <span class="availability-note">${item ? `${item.available_rooms}/${item.total_rooms} rooms` : "No rooms"}</span>
             </button>
@@ -1315,10 +1309,6 @@ function drawCalendar() {
 }
 
 function handleDateClick(dateValue) {
-    if (isPastCalendarDate(dateValue)) {
-        return;
-    }
-
     if (isAdminLike()) {
         state.selectedDate = dateValue;
         if (!state.rangeStart || (state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd)) {
@@ -1521,14 +1511,14 @@ function bookingSheetLegendHtml() {
         { className: "available", label: "Available for create" },
         { className: "booked", label: "Booked" },
         { className: "partial", label: "Available after cooling" },
-        { className: "expired", label: "Expired - delete only" },
+        { className: "expired", label: "Expired" },
     ]);
 }
 
 function chargeSheetLegendHtml() {
     return sheetLegend([
         { className: "normal-row", label: "Editable booking" },
-        { className: "expired", label: "Expired - delete only" },
+        { className: "expired", label: "Expired" },
         { className: "selected", label: "Selected row" },
     ]);
 }
@@ -2255,7 +2245,7 @@ function chargeSheetTextarea(field, value) {
 }
 
 function chargeSheetEditableCell(row, field, type = "text") {
-    if (isChargeSheetRowExpired(row) || String(state.chargeSheetEditingId) !== String(row.id)) {
+    if (String(state.chargeSheetEditingId) !== String(row.id)) {
         return escapeHtml(valueOrDash(row[field]));
     }
     if (field === "purpose_event") {
@@ -2270,7 +2260,7 @@ function isChargeSheetRowExpired(row) {
 
 function chargeSheetRowHtml(row) {
     const expired = isChargeSheetRowExpired(row);
-    const editing = !expired && String(state.chargeSheetEditingId) === String(row.id);
+    const editing = String(state.chargeSheetEditingId) === String(row.id);
     const selected = String(state.chargeSheetSelectedId) === String(row.id);
     return `
         <tr class="${[selected ? "selected-row" : "", expired ? "expired-row" : ""].filter(Boolean).join(" ")}" data-charge-row-id="${row.id}" aria-selected="${selected ? "true" : "false"}">
@@ -2294,7 +2284,7 @@ function chargeSheetRowHtml(row) {
                     <button class="sheet-action-btn" type="button" data-charge-action="save" data-id="${row.id}">Save</button>
                     <button class="sheet-action-btn" type="button" data-charge-action="cancel" data-id="${row.id}">Cancel</button>
                 ` : `
-                    ${expired ? "" : `<button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>`}
+                    <button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>
                     <button class="sheet-action-btn danger" type="button" data-charge-action="delete" data-id="${row.id}" data-booking-id="${row.booking}">Delete</button>
                 `}
             </td>
@@ -2406,11 +2396,6 @@ function bindChargeSheetTable(shell) {
         const rowId = actionButton.dataset.id;
         const action = actionButton.dataset.chargeAction;
         if (action === "edit") {
-            const row = state.chargeSheetRows.find((item) => String(item.id) === String(rowId));
-            if (isChargeSheetRowExpired(row)) {
-                toast("Expired bookings can only be deleted.", "error");
-                return;
-            }
             state.chargeSheetEditingId = rowId;
             renderChargeSheetRows(shell);
             bindChargeSheetTable(shell);
@@ -2441,14 +2426,6 @@ function bindChargeSheetTable(shell) {
 }
 
 async function saveChargeSheetRow(rowId, shell) {
-    const rowData = state.chargeSheetRows.find((item) => String(item.id) === String(rowId));
-    if (isChargeSheetRowExpired(rowData)) {
-        state.chargeSheetEditingId = "";
-        toast("Expired bookings can only be deleted.", "error");
-        renderChargeSheetRows(shell);
-        bindChargeSheetTable(shell);
-        return;
-    }
     const safeRowId = String(rowId).replaceAll('"', '\\"');
     const row = shell.querySelector(`[data-charge-row-id="${safeRowId}"]`);
     if (!row) {
@@ -2652,7 +2629,7 @@ function sheetCellHtml(entries = [], dateValue = "", room = null) {
         <div class="sheet-booking-entry">
             <button class="sheet-booking-pill ${entry.availabilityStatus === "partial" ? "partial" : ""} ${entry.isExpired ? "expired" : ""}" type="button" data-sheet-booking-id="${id}">${escapeHtml(entry.text)}</button>
             <div class="sheet-inline-actions">
-                ${entry.isExpired ? "" : `<button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>`}
+                <button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>
                 <button class="sheet-action-btn danger" type="button" data-booking-action="delete" data-id="${id}">Delete</button>
             </div>
         </div>
@@ -2757,10 +2734,6 @@ function handleBookingInlineAction(action, bookingId, dataset = {}) {
         return;
     }
     if (action === "edit") {
-        if (dataset.expired === "true") {
-            toast("Expired bookings can only be deleted.", "error");
-            return;
-        }
         openAdminBookingEditForm(bookingId);
     } else if (action === "delete") {
         openDeleteBookingModal(bookingId);
@@ -2865,7 +2838,6 @@ async function openBookingDetails(bookingId) {
             ["Mobile", booking.logistics_mobile],
             { section: "Attender Requirement" },
             ["Attender required", yesNo(booking.attender_required)],
-            ["Attender count", booking.attender_count_per_day],
             ["Shifts", shiftsText(booking)],
             { section: "Charges" },
             ["Room charges", titleCase(booking.room_charges_status)],
@@ -2887,7 +2859,7 @@ async function openBookingDetails(bookingId) {
             wide: true,
             footerHtml: `
                 <button class="outline-btn" type="button" data-close-modal>Close</button>
-                ${expired ? "" : `<button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>`}
+                <button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>
                 <button class="danger-btn" type="button" id="booking-detail-delete">Delete Booking</button>
             `,
             onBind: () => {
@@ -2990,7 +2962,6 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             <div class="form-section-title">Attender Requirement</div>
             <label class="check-row"><input id="admin-attender" type="checkbox" ${source.attender_required ? "checked" : ""}> Attender required</label>
             <div class="two-col">
-                <div class="field-row"><label for="admin-attender-count">No. of attenders</label><input id="admin-attender-count" type="number" min="0" value="${htmlValue(source.attender_count_per_day || 0)}"></div>
                 <label class="check-row"><input id="admin-general" type="checkbox" ${source.attender_general_shift ? "checked" : ""}> General shift</label>
                 <label class="check-row"><input id="admin-morning" type="checkbox" ${source.attender_morning_shift ? "checked" : ""}> Morning shift</label>
                 <label class="check-row"><input id="admin-day" type="checkbox" ${source.attender_day_shift ? "checked" : ""}> Day shift</label>
@@ -3019,7 +2990,6 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     const prefixSelect = document.getElementById("admin-prefix");
     const roomSelect = document.getElementById("admin-room");
     const attender = document.getElementById("admin-attender");
-    const attenderCount = document.getElementById("admin-attender-count");
     const shiftInputs = ["admin-general", "admin-morning", "admin-day"].map((id) => document.getElementById(id));
     const budgetOptions = Array.from(document.querySelectorAll("[data-budget-head-field]"));
     if (!prefixSelect || !roomSelect) {
@@ -3045,10 +3015,6 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
 
     const syncAttender = () => {
         const enabled = attender?.checked;
-        if (attenderCount) {
-            attenderCount.disabled = !enabled;
-            if (!enabled) attenderCount.value = "0";
-        }
         shiftInputs.forEach((input) => {
             if (!input) return;
             input.disabled = !enabled;
@@ -3089,16 +3055,9 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
 
 function bindRequesterAttenderRequirement() {
     const attender = document.getElementById("req-attender");
-    const attenderCount = document.getElementById("req-attender-count");
     const shiftInputs = ["req-general", "req-morning", "req-day"].map((id) => document.getElementById(id));
     const syncAttender = () => {
         const enabled = Boolean(attender?.checked);
-        if (attenderCount) {
-            attenderCount.disabled = !enabled;
-            if (!enabled) {
-                attenderCount.value = "0";
-            }
-        }
         shiftInputs.forEach((input) => {
             if (!input) return;
             input.disabled = !enabled;
@@ -3183,7 +3142,6 @@ function readAdminBookingPayload() {
         requestor_department: val("admin-requestor-department"),
         requestor_mobile: val("admin-requestor-mobile"),
         attender_required: attenderRequired,
-        attender_count_per_day: attenderRequired ? Number(val("admin-attender-count") || 0) : 0,
         attender_general_shift: attenderRequired && checked("admin-general"),
         attender_morning_shift: attenderRequired && checked("admin-morning"),
         attender_day_shift: attenderRequired && checked("admin-day"),
@@ -3453,7 +3411,6 @@ function bookingRequestDetailRows(request) {
         ["Requestor email", request.requestor_email],
         { section: "Attender Requirement" },
         ["Attender required", yesNo(request.attender_required)],
-        ["Attender count", request.attender_count_per_day],
         ["Shifts", shiftsText(request)],
         { section: "Deletion Audit" },
         ["Deleted", yesNo(request.is_deleted)],
@@ -4187,7 +4144,6 @@ async function openRequestForm(existing = null, selectedRoom = null) {
                 <div class="form-section-title">Attender Requirement</div>
                 <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required</label>
                 <div class="two-col">
-                    <div class="field-row"><label>No. of attenders</label><input id="req-attender-count" type="number" min="0" value="${existing?.attender_count_per_day || 0}"></div>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-general" type="checkbox" ${existing?.attender_general_shift ? "checked" : ""}> General shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}> Morning shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-day" type="checkbox" ${existing?.attender_day_shift ? "checked" : ""}> Day shift</label>
@@ -4253,7 +4209,6 @@ async function submitRequesterRequest(existing = null) {
         requestor_mobile: document.getElementById("req-requestor-mobile").value.trim(),
         requestor_email: document.getElementById("req-requestor-email").value.trim() || state.user?.email || "",
         attender_required: attenderRequired,
-        attender_count_per_day: attenderRequired ? Number(document.getElementById("req-attender-count").value || 0) : 0,
         attender_general_shift: attenderRequired && document.getElementById("req-general").checked,
         attender_morning_shift: attenderRequired && document.getElementById("req-morning").checked,
         attender_day_shift: attenderRequired && document.getElementById("req-day").checked,

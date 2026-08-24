@@ -76,7 +76,6 @@ AUDITED_BOOKING_FIELDS = [
     ("logistics_designation", "Logistics Designation"),
     ("logistics_mobile", "Logistics Mobile"),
     ("attender_required", "Attender Required"),
-    ("attender_count_per_day", "Attender Count Per Day"),
     ("attender_general_shift", "Attender General Shift"),
     ("attender_morning_shift", "Attender Morning Shift"),
     ("attender_day_shift", "Attender Day Shift"),
@@ -116,17 +115,6 @@ def delete_response_body(booking_id):
             "booking_id": booking_id,
         },
     }
-
-
-def is_booking_expired_for_edit(booking):
-    return booking.status == Booking.STATUS_EXPIRED or booking.departure_at <= timezone.now()
-
-
-def expired_booking_edit_response():
-    return api_error(
-        "Expired bookings can only be deleted.",
-        errors={"booking": ["Expired bookings can only be deleted."]},
-    )
 
 
 def booking_charge_sheet_defaults(booking):
@@ -524,7 +512,6 @@ def booking_payload_from_request(booking_request, room):
         "requestor_department": booking_request.requestor_department,
         "requestor_mobile": booking_request.requestor_mobile,
         "attender_required": booking_request.attender_required,
-        "attender_count_per_day": booking_request.attender_count_per_day,
         "attender_general_shift": booking_request.attender_general_shift,
         "attender_morning_shift": booking_request.attender_morning_shift,
         "attender_day_shift": booking_request.attender_day_shift,
@@ -551,7 +538,6 @@ APPROVAL_BOOKING_OVERRIDE_FIELDS = [
     "requestor_department",
     "requestor_mobile",
     "attender_required",
-    "attender_count_per_day",
     "attender_general_shift",
     "attender_morning_shift",
     "attender_day_shift",
@@ -806,9 +792,6 @@ class BookingChargeSheetDetailView(RetrieveAPIView, UpdateAPIView):
                 ),
                 pk=kwargs.get("pk"),
             )
-            if is_booking_expired_for_edit(sheet_row.booking):
-                return expired_booking_edit_response()
-
             serializer = self.get_serializer(sheet_row, data=request.data, partial=partial)
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -888,9 +871,6 @@ class BookingUpdateView(UpdateAPIView):
             Booking.objects.select_for_update().select_related("room", "created_by"),
             pk=kwargs.get("pk"),
         )
-
-        if is_booking_expired_for_edit(instance):
-            return expired_booking_edit_response()
 
         lock_rooms_for_booking_write(
             instance.room_id,
