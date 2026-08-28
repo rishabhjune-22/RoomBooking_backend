@@ -22,6 +22,37 @@ const BUILDINGS = ["Delta", "Gamma", "Beta"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHEET_COOLING_HOURS = 1;
 const SHEET_DAY_END_MINUTES = 18 * 60;
+const DISPLAY_LOCALE = "en-IN";
+const DISPLAY_TIME_ZONE = "Asia/Kolkata";
+const DISPLAY_DATETIME_OPTIONS = {
+    timeZone: DISPLAY_TIME_ZONE,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+};
+const DISPLAY_DATE_OPTIONS = {
+    timeZone: DISPLAY_TIME_ZONE,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+};
+const DISPLAY_TIME_OPTIONS = {
+    timeZone: DISPLAY_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+};
+const DISPLAY_MONTH_YEAR_OPTIONS = {
+    timeZone: DISPLAY_TIME_ZONE,
+    month: "long",
+    year: "numeric",
+};
+const API_DATE_TIME_IN_TEXT =
+    /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})/g;
+const initialCalendarDateParts = todayIso().split("-").map(Number);
 
 const state = {
     authRole: "admin",
@@ -31,8 +62,8 @@ const state = {
     refresh: localStorage.getItem(STORAGE_KEYS.refresh) || "",
     view: "calendar",
     prefix: "Delta",
-    calendarMonth: new Date().getMonth() + 1,
-    calendarYear: new Date().getFullYear(),
+    calendarMonth: initialCalendarDateParts[1],
+    calendarYear: initialCalendarDateParts[0],
     availability: null,
     selectedDate: "",
     rangeStart: "",
@@ -130,17 +161,14 @@ function isoDate(year, month, day) {
 }
 
 function todayIso() {
-    const now = new Date();
-    return isoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    return indiaParts(new Date()).date;
 }
 
 function currentMonthRange() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
+    const [year, month] = todayIso().split("-").map(Number);
     return {
         start: isoDate(year, month, 1),
-        end: isoDate(year, month, new Date(year, month, 0).getDate()),
+        end: isoDate(year, month, new Date(Date.UTC(year, month, 0)).getUTCDate()),
     };
 }
 
@@ -182,29 +210,23 @@ function formatSheetTime(value) {
     if (!value) {
         return "";
     }
-    return new Intl.DateTimeFormat("en-IN", {
-        timeZone: "Asia/Kolkata",
-        hour: "2-digit",
-        minute: "2-digit",
-    }).format(new Date(value));
+    return normalizeDisplayPeriod(
+        new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_TIME_OPTIONS)
+            .format(new Date(value)),
+    );
 }
 
 function formatSheetDate(value) {
     if (!value) {
         return "-";
     }
-    return new Intl.DateTimeFormat("en-IN", {
-        timeZone: "Asia/Kolkata",
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-    }).format(new Date(`${value}T00:00:00+05:30`));
+    return new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_DATE_OPTIONS)
+        .format(new Date(`${value}T00:00:00+05:30`));
 }
 
 function monthName(year, month) {
-    return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(
-        new Date(year, month - 1, 1),
-    );
+    return new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_MONTH_YEAR_OPTIONS)
+        .format(new Date(`${isoDate(year, month, 1)}T00:00:00+05:30`));
 }
 
 function indiaParts(value) {
@@ -212,13 +234,13 @@ function indiaParts(value) {
         return { date: "", time: "" };
     }
     const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Asia/Kolkata",
+        timeZone: DISPLAY_TIME_ZONE,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
-        hour12: false,
+        hourCycle: "h23",
     }).formatToParts(new Date(value));
     const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
     return {
@@ -231,26 +253,29 @@ function formatDateTime(value) {
     if (!value) {
         return "-";
     }
-    return new Intl.DateTimeFormat("en-IN", {
-        timeZone: "Asia/Kolkata",
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    }).format(new Date(value));
+    return normalizeDisplayPeriod(
+        new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_DATETIME_OPTIONS)
+            .format(new Date(value)),
+    );
 }
 
 function formatDateOnly(value) {
     if (!value) {
         return "-";
     }
-    return new Intl.DateTimeFormat("en-IN", {
-        timeZone: "Asia/Kolkata",
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-    }).format(new Date(`${value}T00:00:00+05:30`));
+    return new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_DATE_OPTIONS)
+        .format(new Date(`${value}T00:00:00+05:30`));
+}
+
+function formatDateTimesInText(text) {
+    if (!text) {
+        return text;
+    }
+    return String(text).replace(API_DATE_TIME_IN_TEXT, (value) => formatDateTime(value));
+}
+
+function normalizeDisplayPeriod(value) {
+    return String(value || "").replace(/\b(am|pm)\b/gi, (period) => period.toUpperCase());
 }
 
 function formatDateRange(item) {
@@ -457,16 +482,56 @@ function messageFromErrors(payload) {
     if (!payload) {
         return "Request failed.";
     }
-    if (payload.message) {
-        return payload.message;
+
+    const errorMessage = firstFieldErrorMessage(payload.errors || {});
+    if (errorMessage) {
+        return formatDateTimesInText(errorMessage);
     }
-    const errors = payload.errors || {};
-    const firstKey = Object.keys(errors)[0];
-    if (!firstKey) {
-        return "Request failed.";
+
+    return formatDateTimesInText(payload.message || "Request failed.");
+}
+
+function firstFieldErrorMessage(errors) {
+    for (const [field, value] of Object.entries(errors)) {
+        const message = firstErrorValue(value);
+        if (!message) {
+            continue;
+        }
+        const label = errorFieldLabel(field);
+        const readableMessage = formatDateTimesInText(message);
+        return label ? `${label}: ${readableMessage}` : readableMessage;
     }
-    const value = errors[firstKey];
-    return Array.isArray(value) ? value[0] : String(value);
+    return "";
+}
+
+function firstErrorValue(value) {
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const message = firstErrorValue(item);
+            if (message) {
+                return message;
+            }
+        }
+        return "";
+    }
+    if (value && typeof value === "object") {
+        return firstFieldErrorMessage(value);
+    }
+    return String(value || "").trim();
+}
+
+function errorFieldLabel(field) {
+    const labels = {
+        admin_code: "Admin invite code",
+        confirm_password: "Confirm password",
+        email: "Email",
+        name: "Name",
+        password: "Password",
+    };
+    if (field === "detail" || field === "non_field_errors") {
+        return "";
+    }
+    return labels[field] || titleCase(field);
 }
 
 async function apiFetch(path, options = {}, retry = true) {
@@ -1224,9 +1289,6 @@ function changeMonth(delta) {
         state.calendarMonth = 1;
         state.calendarYear += 1;
     }
-    state.selectedDate = "";
-    state.rangeStart = "";
-    state.rangeEnd = "";
     loadCalendar();
 }
 
@@ -2859,10 +2921,18 @@ async function openBookingDetails(bookingId) {
             wide: true,
             footerHtml: `
                 <button class="outline-btn" type="button" data-close-modal>Close</button>
+                <button class="outline-btn" type="button" id="booking-detail-print">Print</button>
                 <button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>
                 <button class="danger-btn" type="button" id="booking-detail-delete">Delete Booking</button>
             `,
             onBind: () => {
+                document.getElementById("booking-detail-print")?.addEventListener("click", () => {
+                    printDetailsDocument(
+                        `Booking Details - ${bookingDisplayId(booking)}`,
+                        rows,
+                        `${valueOrDash(booking.room_name)} | ${formatDateRange(booking)}`
+                    );
+                });
                 document.getElementById("booking-detail-edit")?.addEventListener("click", () => {
                     closeModal();
                     openAdminBookingEditForm(booking.id);
@@ -4252,6 +4322,59 @@ function detailsRowsHtml(rows) {
         const [label, value] = row;
         return `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>`;
     }).join("")}</div>`;
+}
+
+function printDetailsDocument(title, rows, subtitle = "") {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+        toast("Allow pop-ups to print booking details.", "error");
+        return;
+    }
+    printWindow.document.write(`
+        <!doctype html>
+        <html>
+            <head>
+                <meta charset="utf-8">
+                <title>${escapeHtml(title)}</title>
+                <style>
+                    @page { size: A4 portrait; margin: 14mm; }
+                    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                    body { margin: 0; font-family: Arial, sans-serif; color: #172033; }
+                    h1 { margin: 0 0 6px; font-size: 22px; }
+                    .subtitle { margin: 0 0 18px; color: #667085; font-size: 12px; }
+                    .section { margin: 16px 0 8px; padding: 7px 9px; background: #dbeeff; color: #0a4f8d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+                    .row { display: grid; grid-template-columns: 42mm 1fr; gap: 8px; border-bottom: 1px solid #d8e0ea; padding: 6px 0; page-break-inside: avoid; }
+                    .label { color: #667085; font-size: 11px; font-weight: 700; }
+                    .value { font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+                </style>
+            </head>
+            <body>
+                <h1>${escapeHtml(title)}</h1>
+                ${subtitle ? `<p class="subtitle">${escapeHtml(subtitle)}</p>` : ""}
+                ${printableDetailsRowsHtml(rows)}
+            </body>
+        </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => {
+        printWindow.print();
+    }, 250);
+}
+
+function printableDetailsRowsHtml(rows) {
+    return rows.map((row) => {
+        if (!Array.isArray(row)) {
+            return `<div class="section">${escapeHtml(row.section || "Details")}</div>`;
+        }
+        const [label, value] = row;
+        return `
+            <div class="row">
+                <div class="label">${escapeHtml(label)}</div>
+                <div class="value">${escapeHtml(valueOrDash(value))}</div>
+            </div>
+        `;
+    }).join("");
 }
 
 function openActionModal({ title, body, confirmText, confirmClass, onConfirm, onBind, wide = false, footerHtml = "" }) {

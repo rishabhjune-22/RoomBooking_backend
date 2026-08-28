@@ -1,4 +1,4 @@
-{% load static %}
+{% load static tz %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -21,7 +21,7 @@
             <span>{{ start_date|date:"d M Y" }} to {{ end_date|date:"d M Y" }}</span>
             {% if filters.prefix %}<span>{{ filters.prefix }}</span>{% endif %}
             {% if filters.status %}<span>{{ filters.status|title }}</span>{% endif %}
-            {% if share.expires_at %}<span>Valid until {{ share.expires_at|date:"d M Y, h:i A" }}</span>{% endif %}
+            {% if share.expires_at %}<span>Valid until {{ share.expires_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</span>{% endif %}
         </div>
     </header>
 
@@ -33,7 +33,7 @@
                     <p>{{ visible_booking_count }} booking{{ visible_booking_count|pluralize }}</p>
                 </div>
                 <div class="sheet-summary-actions">
-                    <span>Generated {{ share.created_at|date:"d M Y, h:i A" }}</span>
+                    <span>Generated {{ share.created_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</span>
                 </div>
             </div>
             <div class="sheet-scroll shared-sheet-scroll" role="region" aria-label="Shared booking sheet view">

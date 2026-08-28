@@ -45,6 +45,49 @@ def signup_payload(user):
     return {"user": AuthUserSerializer(user).data}
 
 
+def signup_error_field_label(field_name):
+    labels = {
+        "admin_code": "Admin invite code",
+        "confirm_password": "Confirm password",
+        "email": "Email",
+        "name": "Name",
+        "password": "Password",
+    }
+    field = str(field_name or "")
+    if field in {"detail", "non_field_errors"}:
+        return ""
+    return labels.get(field, field.replace("_", " ").capitalize())
+
+
+def first_error_value(value):
+    if isinstance(value, dict):
+        for nested_value in value.values():
+            message = first_error_value(nested_value)
+            if message:
+                return message
+        return ""
+
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            message = first_error_value(item)
+            if message:
+                return message
+        return ""
+
+    return str(value or "").strip()
+
+
+def signup_error_message(serializer):
+    for field_name, field_errors in serializer.errors.items():
+        message = first_error_value(field_errors)
+        if not message:
+            continue
+        label = signup_error_field_label(field_name)
+        return f"{label}: {message}" if label else message
+
+    return "Account could not be created."
+
+
 class SignupView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -53,7 +96,7 @@ class SignupView(APIView):
     def post(self, request):
         serializer = SignupSerializer(data=request.data, role=self.role)
         if not serializer.is_valid():
-            return serializer_error_response(serializer, "Account could not be created.")
+            return serializer_error_response(serializer, signup_error_message(serializer))
 
         user = serializer.save()
         profile = get_user_profile(user)

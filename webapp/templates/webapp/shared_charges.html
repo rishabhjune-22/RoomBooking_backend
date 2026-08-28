@@ -1,4 +1,4 @@
-{% load static %}
+{% load static tz %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -20,7 +20,7 @@
         <div class="shared-meta">
             {% if filters.prefix %}<span>{{ filters.prefix }}</span>{% endif %}
             {% if filters.payment %}<span>{{ filters.payment|title }}</span>{% endif %}
-            {% if share.expires_at %}<span>Valid until {{ share.expires_at|date:"d M Y, h:i A" }}</span>{% endif %}
+            {% if share.expires_at %}<span>Valid until {{ share.expires_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</span>{% endif %}
         </div>
     </header>
 
@@ -32,7 +32,7 @@
                     <p>{{ rows|length }} row{{ rows|length|pluralize }}</p>
                 </div>
                 <div class="sheet-summary-actions">
-                    <span>Generated {{ share.created_at|date:"d M Y, h:i A" }}</span>
+                    <span>Generated {{ share.created_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</span>
                 </div>
             </div>
             <div class="sheet-scroll shared-sheet-scroll" role="region" aria-label="Shared charges sheet view">
@@ -60,8 +60,8 @@
                         {% for row in rows %}
                             <tr class="{% if row.booking.status == 'expired' %}expired-row{% else %}active-row{% endif %}">
                                 <td>{{ row.id }}</td>
-                                <td>{{ row.booking.arrival_at|date:"d M Y, h:i A" }}</td>
-                                <td>{{ row.booking.departure_at|date:"d M Y, h:i A" }}</td>
+                                <td>{{ row.booking.arrival_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</td>
+                                <td>{{ row.booking.departure_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</td>
                                 <td>{{ row.booking.booking_reference_number }}</td>
                                 <td>{{ row.requestor_name|default:"-" }}</td>
                                 <td>{{ row.guest_name|default:"-" }}</td>

@@ -1,4 +1,5 @@
 {% extends "admin/base_site.html" %}
+{% load tz %}
 
 {% block breadcrumbs %}
 <div class="breadcrumbs">
@@ -123,10 +124,10 @@
       <div class="approval-value">{{ profile.mobile|default:"-" }}</div>
 
       <div class="approval-label">Created At</div>
-      <div class="approval-value">{{ profile.created_at|date:"d M Y, h:i A" }}</div>
+      <div class="approval-value">{{ profile.created_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</div>
 
       <div class="approval-label">Updated At</div>
-      <div class="approval-value">{{ profile.updated_at|date:"d M Y, h:i A" }}</div>
+      <div class="approval-value">{{ profile.updated_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}</div>
 
       <div class="approval-label">Approved By</div>
       <div class="approval-value">
@@ -139,7 +140,7 @@
 
       <div class="approval-label">Approved At</div>
       <div class="approval-value">
-        {% if profile.approved_at %}{{ profile.approved_at|date:"d M Y, h:i A" }}{% else %}-{% endif %}
+        {% if profile.approved_at %}{{ profile.approved_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }}{% else %}-{% endif %}
       </div>
 
       {% if profile.rejection_reason %}

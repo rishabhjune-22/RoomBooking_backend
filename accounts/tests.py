@@ -68,7 +68,9 @@ class AuthApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("admin_code", response.json()["errors"])
+        body = response.json()
+        self.assertEqual(body["message"], "Admin invite code: Invalid admin invite code.")
+        self.assertIn("admin_code", body["errors"])
 
     def test_requester_signup_success(self):
         response = self.client.post(
@@ -114,8 +116,29 @@ class AuthApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.json()["success"])
-        self.assertIn("email", response.json()["errors"])
+        body = response.json()
+        self.assertFalse(body["success"])
+        self.assertEqual(body["message"], "Email: An account with this email already exists.")
+        self.assertIn("email", body["errors"])
+
+    def test_signup_weak_password_message_explains_reason(self):
+        response = self.client.post(
+            reverse("auth-requester-signup"),
+            data={
+                "name": "Requester One",
+                "email": "weak-password@example.com",
+                "password": "short",
+                "confirm_password": "short",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        body = response.json()
+        self.assertFalse(body["success"])
+        self.assertTrue(body["message"].startswith("Password: "))
+        self.assertIn("too short", body["message"])
+        self.assertIn("password", body["errors"])
 
     def test_admin_signup_with_rejected_existing_account_is_rejected_as_duplicate(self):
         legacy = User.objects.create_user(
