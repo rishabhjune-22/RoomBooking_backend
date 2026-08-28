@@ -50,6 +50,7 @@ def booking_charge_sheet_defaults(booking):
         "requestor_name": booking.requestor_name or "",
         "guest_name": booking.visitor_name or "",
         "purpose_event": booking.purpose_of_visit or "",
+        "remarks": booking.remarks or "",
         "room_charges_amount": booking.room_charges_amount or 0,
         "attender_charges_amount": booking.attender_charges_amount or 0,
         "budget_head_name": (
@@ -71,6 +72,7 @@ def ensure_booking_charge_sheet_rows():
             "requestor_name",
             "visitor_name",
             "purpose_of_visit",
+            "remarks",
             "room_charges_amount",
             "attender_charges_amount",
             "budget_head_name",
@@ -159,6 +161,7 @@ def charge_sheet_ordering(ordering):
         "requestor_name": "requestor_name",
         "guest_name": "guest_name",
         "purpose_event": "purpose_event",
+        "remarks": "remarks",
         "delta": "booking__room__number",
         "gamma": "booking__room__number",
         "beta": "booking__room__number",
@@ -273,10 +276,12 @@ def shared_charge_sheet_context(share):
             Q(requestor_name__icontains=search)
             | Q(guest_name__icontains=search)
             | Q(purpose_event__icontains=search)
+            | Q(remarks__icontains=search)
             | Q(budget_head_name__icontains=search)
             | Q(booking__requestor_name__icontains=search)
             | Q(booking__visitor_name__icontains=search)
             | Q(booking__purpose_of_visit__icontains=search)
+            | Q(booking__remarks__icontains=search)
             | Q(booking__room__prefix__icontains=search)
             | Q(booking__room__number__icontains=search)
         )

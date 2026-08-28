@@ -46,6 +46,7 @@
                             <th>Requestor Name</th>
                             <th>Name of Guest</th>
                             <th>Purpose(Event)</th>
+                            <th>Remarks</th>
                             <th>Delta</th>
                             <th>Gamma</th>
                             <th>Beta</th>
@@ -66,6 +67,7 @@
                                 <td>{{ row.requestor_name|default:"-" }}</td>
                                 <td>{{ row.guest_name|default:"-" }}</td>
                                 <td>{{ row.purpose_event|default:"-" }}</td>
+                                <td>{{ row.remarks|default:"-" }}</td>
                                 <td>{% if row.booking.room.prefix == "Delta" %}{{ row.booking.room }}{% endif %}</td>
                                 <td>{% if row.booking.room.prefix == "Gamma" %}{{ row.booking.room }}{% endif %}</td>
                                 <td>{% if row.booking.room.prefix == "Beta" %}{{ row.booking.room }}{% endif %}</td>
@@ -77,7 +79,7 @@
                             </tr>
                         {% empty %}
                             <tr>
-                                <td colspan="15">No charge sheet rows match this shared view.</td>
+                                <td colspan="16">No charge sheet rows match this shared view.</td>
                             </tr>
                         {% endfor %}
                     </tbody>

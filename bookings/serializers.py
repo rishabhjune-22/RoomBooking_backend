@@ -33,6 +33,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_mobile",
             "visitor_email",
             "purpose_of_visit",
+            "remarks",
             "visitor_category",
             "budget_head_type",
             "budget_head_value",
@@ -102,6 +103,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_mobile": {"required": False, "allow_blank": True},
             "visitor_email": {"required": False, "allow_blank": True},
             "purpose_of_visit": {"required": False, "allow_blank": True},
+            "remarks": {"required": False, "allow_blank": True},
             "requestor_name": {"required": False, "allow_blank": True},
             "requestor_designation": {"required": False, "allow_blank": True},
             "requestor_department": {"required": False, "allow_blank": True},
@@ -260,6 +262,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_mobile",
             "visitor_email",
             "purpose_of_visit",
+            "remarks",
             "budget_head_type",
             "budget_head_value",
             "budget_head_name",
@@ -451,6 +454,7 @@ class BookingChargeSheetQuerySerializer(serializers.Serializer):
         "requestor_name",
         "guest_name",
         "purpose_event",
+        "remarks",
         "delta",
         "gamma",
         "beta",
@@ -498,6 +502,7 @@ class BookingChargeSheetSerializer(serializers.ModelSerializer):
             "requestor_name",
             "guest_name",
             "purpose_event",
+            "remarks",
             "delta",
             "gamma",
             "beta",
@@ -527,6 +532,7 @@ class BookingChargeSheetSerializer(serializers.ModelSerializer):
             "requestor_name": {"required": False, "allow_blank": True},
             "guest_name": {"required": False, "allow_blank": True},
             "purpose_event": {"required": False, "allow_blank": True},
+            "remarks": {"required": False, "allow_blank": True},
             "room_charges_amount": {"required": False, "min_value": 0},
             "attender_charges_amount": {"required": False, "min_value": 0},
             "payment_received_date": {"required": False, "allow_null": True},
@@ -926,6 +932,7 @@ class AdminBookingRequestSerializer(BookingRequestBaseSerializer):
 class BookingRequestApproveSerializer(serializers.Serializer):
     room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.filter(is_active=True))
     remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    booking_remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
 
 
 class BookingRequestRejectSerializer(serializers.Serializer):

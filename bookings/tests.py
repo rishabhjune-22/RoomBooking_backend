@@ -449,6 +449,7 @@ class BookingApiBusinessRuleTests(TestCase):
                 room=self.room,
                 arrival_at=utc_dt(2026, 7, 1, 10, 0),
                 departure_at=utc_dt(2026, 7, 1, 12, 0),
+                remarks="Needs wheelchair access.",
             ),
             content_type="application/json",
         )
@@ -457,6 +458,8 @@ class BookingApiBusinessRuleTests(TestCase):
         booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
         self.assertEqual(booking.created_by, self.user)
         self.assertEqual(booking.created_by_name, "Rishabh Kumar")
+        self.assertEqual(booking.remarks, "Needs wheelchair access.")
+        self.assertEqual(response.json()["data"]["remarks"], "Needs wheelchair access.")
 
     def test_old_created_by_name_from_request_is_ignored(self):
         response = self.client.post(
@@ -1760,6 +1763,7 @@ class BookingRequestWorkflowTests(TestCase):
             data={
                 "room": self.room.id,
                 "remarks": "Approved from form.",
+                "booking_remarks": "Guest will arrive late.",
                 "visitor_name": "Edited Visitor",
                 "purpose_of_visit": "Edited purpose",
                 "requestor_name": "Edited Requestor",
@@ -1774,8 +1778,10 @@ class BookingRequestWorkflowTests(TestCase):
         booking_request.refresh_from_db()
         booking = booking_request.approved_booking
         self.assertIsNotNone(booking)
+        self.assertEqual(booking_request.admin_remarks, "Approved from form.")
         self.assertEqual(booking.visitor_name, "Edited Visitor")
         self.assertEqual(booking.purpose_of_visit, "Edited purpose")
+        self.assertEqual(booking.remarks, "Guest will arrive late.")
         self.assertEqual(booking.requestor_name, "Edited Requestor")
         self.assertEqual(booking.requestor_department, "Edited Department")
         self.assertEqual(booking.room_charges_status, Booking.CHARGE_STATUS_YES)
@@ -2667,6 +2673,7 @@ class BookingChargeSheetApiTests(TestCase):
             visitor_name="Guest One",
             requestor_name="Requestor One",
             purpose_of_visit="Annual event",
+            remarks="Needs projector setup.",
             room_charges_amount=1500,
             attender_charges_amount=500,
             budget_head_name="Budget A",
@@ -2684,6 +2691,7 @@ class BookingChargeSheetApiTests(TestCase):
         self.assertEqual(row["requestor_name"], "Requestor One")
         self.assertEqual(row["guest_name"], "Guest One")
         self.assertEqual(row["purpose_event"], "Annual event")
+        self.assertEqual(row["remarks"], "Needs projector setup.")
         self.assertEqual(row["delta"], "Delta 101A")
         self.assertEqual(row["gamma"], "")
         self.assertEqual(row["beta"], "")
@@ -2698,6 +2706,7 @@ class BookingChargeSheetApiTests(TestCase):
             data={
                 "guest_name": "Edited Guest",
                 "purpose_event": "Edited event",
+                "remarks": "Edited remarks",
                 "room_charges_amount": "2500.00",
                 "attender_charges_amount": "750.00",
                 "payment_received_date": "2026-07-10",
@@ -2710,9 +2719,11 @@ class BookingChargeSheetApiTests(TestCase):
         sheet_row.refresh_from_db()
         booking.refresh_from_db()
         self.assertEqual(sheet_row.guest_name, "Edited Guest")
+        self.assertEqual(sheet_row.remarks, "Edited remarks")
         self.assertEqual(sheet_row.total_charges, 3250)
         self.assertEqual(booking.visitor_name, "Edited Guest")
         self.assertEqual(booking.purpose_of_visit, "Edited event")
+        self.assertEqual(booking.remarks, "Edited remarks")
         self.assertEqual(booking.room_charges_amount, 2500)
         self.assertEqual(booking.attender_charges_amount, 750)
         self.assertEqual(booking.room_charges_status, Booking.CHARGE_STATUS_YES)
@@ -2724,6 +2735,13 @@ class BookingChargeSheetApiTests(TestCase):
                 field_name="visitor_name",
                 old_value="Original Guest",
                 new_value="Edited Guest",
+            ).exists()
+        )
+        self.assertTrue(
+            BookingEditHistory.objects.filter(
+                booking=booking,
+                field_name="remarks",
+                new_value="Edited remarks",
             ).exists()
         )
 
@@ -2779,6 +2797,7 @@ class BookingChargeSheetApiTests(TestCase):
             visitor_name="Beta Guest",
             requestor_name="Finance Office",
             purpose_of_visit="Workshop",
+            remarks="Receipt remarks",
             room_charges_amount=900,
             attender_charges_amount=100,
         )
@@ -2787,7 +2806,7 @@ class BookingChargeSheetApiTests(TestCase):
 
         response = self.client.get(
             reverse("booking-charge-sheet-list"),
-            {"prefix": "Gamma", "payment": "received", "search": "Finance", "ordering": "-total_charges"},
+            {"prefix": "Gamma", "payment": "received", "search": "Receipt remarks", "ordering": "-total_charges"},
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)

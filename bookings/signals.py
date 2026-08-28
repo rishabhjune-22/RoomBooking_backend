@@ -21,6 +21,7 @@ def booking_saved(sender, instance, **kwargs):
         "requestor_name": instance.requestor_name or "",
         "guest_name": instance.visitor_name or "",
         "purpose_event": instance.purpose_of_visit or "",
+        "remarks": instance.remarks or "",
         "room_charges_amount": instance.room_charges_amount or 0,
         "attender_charges_amount": instance.attender_charges_amount or 0,
         "budget_head_name": (

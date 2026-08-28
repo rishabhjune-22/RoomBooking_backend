@@ -63,6 +63,7 @@ AUDITED_BOOKING_FIELDS = [
     ("visitor_email", "Visitor Email"),
     ("visitor_category", "Visitor Category"),
     ("purpose_of_visit", "Purpose of Visit"),
+    ("remarks", "Remarks"),
     ("budget_head_type", "Budget Head Type"),
     ("budget_head_value", "Budget Head Value"),
     ("budget_head_name", "Budget Head Name"),
@@ -103,6 +104,7 @@ def action_response_body(message, booking):
             "budget_head_name": booking.budget_head_name,
             "budget_head_department_name": booking.budget_head_department_name,
             "budget_head_project_code": booking.budget_head_project_code,
+            "remarks": booking.remarks,
         },
     }
 
@@ -122,6 +124,7 @@ def booking_charge_sheet_defaults(booking):
         "requestor_name": booking.requestor_name or "",
         "guest_name": booking.visitor_name or "",
         "purpose_event": booking.purpose_of_visit or "",
+        "remarks": booking.remarks or "",
         "room_charges_amount": booking.room_charges_amount or 0,
         "attender_charges_amount": booking.attender_charges_amount or 0,
         "budget_head_name": (
@@ -143,6 +146,7 @@ def apply_charge_sheet_values_to_booking(sheet_row, validated_data, user):
         "requestor_name": "requestor_name",
         "guest_name": "visitor_name",
         "purpose_event": "purpose_of_visit",
+        "remarks": "remarks",
         "budget_head_name": "budget_head_name",
     }
     for sheet_field, booking_field in field_mapping.items():
@@ -182,6 +186,7 @@ def ensure_booking_charge_sheet_rows():
             "requestor_name",
             "visitor_name",
             "purpose_of_visit",
+            "remarks",
             "room_charges_amount",
             "attender_charges_amount",
             "budget_head_name",
@@ -560,6 +565,8 @@ def apply_booking_request_approval_overrides(payload, data):
     for field_name in APPROVAL_BOOKING_OVERRIDE_FIELDS:
         if field_name in data:
             payload[field_name] = data.get(field_name)
+    if "booking_remarks" in data:
+        payload["remarks"] = data.get("booking_remarks") or ""
     return payload
 
 
@@ -722,10 +729,12 @@ class BookingChargeSheetListView(ListAPIView):
                 Q(requestor_name__icontains=search)
                 | Q(guest_name__icontains=search)
                 | Q(purpose_event__icontains=search)
+                | Q(remarks__icontains=search)
                 | Q(budget_head_name__icontains=search)
                 | Q(booking__requestor_name__icontains=search)
                 | Q(booking__visitor_name__icontains=search)
                 | Q(booking__purpose_of_visit__icontains=search)
+                | Q(booking__remarks__icontains=search)
                 | Q(booking__room__prefix__icontains=search)
                 | Q(booking__room__number__icontains=search)
             )
@@ -742,6 +751,7 @@ class BookingChargeSheetListView(ListAPIView):
             "requestor_name": "requestor_name",
             "guest_name": "guest_name",
             "purpose_event": "purpose_event",
+            "remarks": "remarks",
             "delta": "booking__room__number",
             "gamma": "booking__room__number",
             "beta": "booking__room__number",
@@ -1517,6 +1527,7 @@ class AdminBookingRequestApproveView(APIView):
         serializer = BookingRequestApproveSerializer(data={
             "room": request.data.get("room"),
             "remarks": request.data.get("remarks", ""),
+            "booking_remarks": request.data.get("booking_remarks", ""),
         })
         if not serializer.is_valid():
             return serializer_error_response(serializer, "Booking request could not be approved.")

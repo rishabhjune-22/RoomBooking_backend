@@ -72,6 +72,7 @@ class Booking(models.Model):
     visitor_mobile = models.CharField(max_length=20, blank=True, default="")
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")
+    remarks = models.TextField(blank=True, default="")
 
     budget_head_type = models.CharField(
         max_length=30,
@@ -186,6 +187,7 @@ class BookingChargeSheet(models.Model):
     requestor_name = models.CharField(max_length=100, blank=True, default="")
     guest_name = models.CharField(max_length=100, blank=True, default="")
     purpose_event = models.TextField(blank=True, default="")
+    remarks = models.TextField(blank=True, default="")
     room_charges_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     attender_charges_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     payment_received_date = models.DateField(null=True, blank=True)

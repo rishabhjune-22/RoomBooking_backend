@@ -2060,7 +2060,7 @@ function renderBookingsView() {
                 <div class="filter-grid charge-filter-grid">
                     <div class="field-row">
                         <label for="charge-sheet-search">Search</label>
-                        <input id="charge-sheet-search" type="search" placeholder="Reference, requestor, guest, purpose, budget..." value="${htmlValue(state.chargeSheetSearch)}">
+                        <input id="charge-sheet-search" type="search" placeholder="Reference, requestor, guest, purpose, remarks, budget..." value="${htmlValue(state.chargeSheetSearch)}">
                     </div>
                     <div class="field-row">
                         <label for="charge-sheet-prefix">Building</label>
@@ -2223,6 +2223,7 @@ function chargeSheetSortOptions() {
         ["requestor_name", "Requestor name"],
         ["guest_name", "Guest name"],
         ["purpose_event", "Purpose/Event"],
+        ["remarks", "Remarks"],
         ["room_charges_amount", "Room charges"],
         ["attender_charges_amount", "Attender charges"],
         ["total_charges", "Total charges"],
@@ -2310,7 +2311,7 @@ function chargeSheetEditableCell(row, field, type = "text") {
     if (String(state.chargeSheetEditingId) !== String(row.id)) {
         return escapeHtml(valueOrDash(row[field]));
     }
-    if (field === "purpose_event") {
+    if (field === "purpose_event" || field === "remarks") {
         return chargeSheetTextarea(field, row[field]);
     }
     return chargeSheetInput(field, row[field] || "", type);
@@ -2333,6 +2334,7 @@ function chargeSheetRowHtml(row) {
             <td>${chargeSheetEditableCell(row, "requestor_name")}</td>
             <td>${chargeSheetEditableCell(row, "guest_name")}</td>
             <td>${chargeSheetEditableCell(row, "purpose_event")}</td>
+            <td>${chargeSheetEditableCell(row, "remarks")}</td>
             <td>${escapeHtml(buildingRoomValue(row.delta, "Delta"))}</td>
             <td>${escapeHtml(buildingRoomValue(row.gamma, "Gamma"))}</td>
             <td>${escapeHtml(buildingRoomValue(row.beta, "Beta"))}</td>
@@ -2402,6 +2404,7 @@ function renderChargeSheetRows(shell) {
                         ${chargeSheetHeader("requestor_name", "Requestor Name")}
                         ${chargeSheetHeader("guest_name", "Name of Guest")}
                         ${chargeSheetHeader("purpose_event", "Purpose(Event)")}
+                        ${chargeSheetHeader("remarks", "Remarks")}
                         ${chargeSheetHeader("delta", "Delta")}
                         ${chargeSheetHeader("gamma", "Gamma")}
                         ${chargeSheetHeader("beta", "Beta")}
@@ -2498,6 +2501,7 @@ async function saveChargeSheetRow(rowId, shell) {
         requestor_name: fieldValue("requestor_name"),
         guest_name: fieldValue("guest_name"),
         purpose_event: fieldValue("purpose_event"),
+        remarks: fieldValue("remarks"),
         room_charges_amount: Number(fieldValue("room_charges_amount") || 0),
         attender_charges_amount: Number(fieldValue("attender_charges_amount") || 0),
         payment_received_date: fieldValue("payment_received_date") || null,
@@ -2885,6 +2889,7 @@ async function openBookingDetails(bookingId) {
             ["Email", booking.visitor_email],
             ["Category", titleCase(booking.visitor_category)],
             ["Purpose", booking.purpose_of_visit],
+            ["Remarks", booking.remarks],
             { section: "Budget Head" },
             ["Individual", budgetHead.individual],
             ["Institute Head", budgetHead.instituteHead],
@@ -2993,6 +2998,7 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 <div class="field-row"><label for="admin-visitor-email">Visitor email</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
             </div>
             <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
+            <div class="field-row"><label for="admin-remarks">Remarks</label><textarea id="admin-remarks">${htmlValue(source.remarks)}</textarea></div>
 
             <div class="form-section-title">Visitor Category</div>
             <div class="radio-list">
@@ -3207,6 +3213,7 @@ function readAdminBookingPayload() {
         visitor_email: val("admin-visitor-email"),
         visitor_category: document.querySelector('input[name="admin-visitor-category"]:checked')?.value || "",
         purpose_of_visit: val("admin-purpose"),
+        remarks: val("admin-remarks"),
         requestor_name: val("admin-requestor-name"),
         requestor_designation: val("admin-requestor-designation"),
         requestor_department: val("admin-requestor-department"),
@@ -3403,7 +3410,8 @@ async function runBookingRequestReviewAction(button, request) {
     button.disabled = true;
     try {
         if (action === "approve") {
-            const payload = { ...readAdminBookingPayload(), remarks };
+            const { remarks: bookingRemarks, ...bookingPayload } = readAdminBookingPayload();
+            const payload = { ...bookingPayload, booking_remarks: bookingRemarks, remarks };
             await apiFetch(`/api/admin/booking-requests/${request.id}/approve/`, { method: "POST", body: payload });
             toast("Booking request approved and booking created.");
         } else if (action === "reject") {

@@ -32,6 +32,7 @@ class BookingAdmin(admin.ModelAdmin):
         "visitor_name",
         "visitor_mobile",
         "visitor_email",
+        "remarks",
         "budget_head_value",
         "budget_head_name",
         "budget_head_department_name",
@@ -75,6 +76,7 @@ class BookingChargeSheetAdmin(admin.ModelAdmin):
         "booking",
         "requestor_name",
         "guest_name",
+        "remarks",
         "room_charges_amount",
         "attender_charges_amount",
         "payment_received_date",
@@ -89,12 +91,14 @@ class BookingChargeSheetAdmin(admin.ModelAdmin):
     search_fields = (
         "booking__id",
         "booking__visitor_name",
+        "booking__remarks",
         "booking__requestor_name",
         "booking__room__prefix",
         "booking__room__number",
         "requestor_name",
         "guest_name",
         "purpose_event",
+        "remarks",
         "budget_head_name",
     )
     readonly_fields = ("booking", "created_at", "updated_at")
