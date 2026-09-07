@@ -2272,68 +2272,92 @@ function bookingCardHtml(booking) {
     const status = booking.status || "active";
     const guestName = booking.visitor_name || "Visitor";
     const roomName = booking.room_name || "Room not assigned";
-    const isExpired = status === "expired";
+    const departure = new Date(booking.departure_at);
+    const isPastDeparture = !Number.isNaN(departure.getTime()) && departure <= new Date();
+    const isExpired = status === "expired" || isPastDeparture;
     const org = booking.visitor_organisation || "";
     const gender = genderLabel(booking.visitor_gender);
     const purpose = booking.purpose_of_visit || "";
     const reqName = booking.requestor_name || "";
     const inParts = stayDateParts(booking.arrival_at);
     const outParts = stayDateParts(booking.departure_at);
+    const displayId = bookingDisplayId(booking);
+    const initials = escapeHtml(initialsOf(guestName));
+    const safeGuestName = escapeHtml(guestName);
+    const safeRoomName = escapeHtml(roomName);
+    const safeOrg = escapeHtml(org);
+    const safeGender = escapeHtml(gender);
+    const safeReqName = escapeHtml(reqName);
+    const safePurpose = escapeHtml(purpose);
+    const safeInDay = escapeHtml(inParts.day);
+    const safeInDate = escapeHtml(inParts.date.split(" ")[0]);
+    const safeInRest = escapeHtml(inParts.rest);
+    const safeInTime = escapeHtml(inParts.time);
+    const safeOutDay = escapeHtml(outParts.day);
+    const safeOutDate = escapeHtml(outParts.date.split(" ")[0]);
+    const safeOutRest = escapeHtml(outParts.rest);
+    const safeOutTime = escapeHtml(outParts.time);
+    const safeDisplayId = escapeHtml(displayId);
+    const displayStatus = isExpired ? "expired" : status;
+    const statusLabel = isExpired ? "Expired" : titleCase(status);
+
     return `
-        <article class="item-card booking-card ${isExpired ? "booking-card-expired" : ""}" data-booking-id="${booking.id}">
-            <div class="booking-card-top">
+        <article class="item-card booking-card ${isExpired ? "booking-card-expired" : "booking-card-active"}" data-booking-id="${booking.id}">
+            <div class="booking-card-header">
                 <div class="booking-identity">
-                    <div class="booking-avatar">${escapeHtml(initialsOf(guestName))}</div>
+                    <div class="booking-avatar ${isExpired ? "avatar-expired" : "avatar-active"}">
+                        ${initials}
+                        <span class="avatar-status-ring"></span>
+                    </div>
                     <div class="booking-identity-text">
-                        <h3 class="booking-guest">${escapeHtml(guestName)}</h3>
-                        ${org ? `<p class="booking-org">${escapeHtml(org)}</p>` : `<p class="booking-ref">Booking <span class="mono">#${escapeHtml(bookingDisplayId(booking))}</span></p>`}
+                        <h3 class="booking-guest">${safeGuestName}</h3>
+                        ${safeOrg ? `<p class="booking-org">${safeOrg}</p>` : `<p class="booking-ref">Booking <span class="mono">#${safeDisplayId}</span></p>`}
                     </div>
                 </div>
-                <span class="status-chip ${status} status-dot">${titleCase(status)}</span>
+                <span class="status-chip ${displayStatus} status-pill">${statusLabel}</span>
             </div>
 
             <div class="booking-timeline">
-                <div class="tl-node">
-                    <span class="tl-chip tl-chip-in">In</span>
-                    <div class="tl-text">
+                <div class="tl-node tl-node-in">
+                    <div class="tl-badge">In</div>
+                    <div class="tl-content">
                         <span class="tl-label">Check-in</span>
-                        <span class="tl-day">${escapeHtml(inParts.day)}</span>
-                        <span class="tl-date"><strong>${escapeHtml(inParts.date.split(" ")[0])}</strong> ${escapeHtml(inParts.rest)}</span>
-                        <span class="tl-time">${escapeHtml(inParts.time)}</span>
+                        <span class="tl-day">${safeInDay}</span>
+                        <span class="tl-date"><strong>${safeInDate}</strong> ${safeInRest}</span>
+                        <span class="tl-time">${safeInTime}</span>
                     </div>
                 </div>
-                <div class="tl-connector">
-                    <span class="tl-dot"></span>
-                    <span class="tl-rule"></span>
-                    <span class="tl-dot"></span>
-                </div>
-                <div class="tl-node tl-out">
-                    <span class="tl-chip tl-chip-out">Out</span>
-                    <div class="tl-text">
+                <div class="tl-node tl-node-out">
+                    <div class="tl-badge">Out</div>
+                    <div class="tl-content">
                         <span class="tl-label">Check-out</span>
-                        <span class="tl-day">${escapeHtml(outParts.day)}</span>
-                        <span class="tl-date"><strong>${escapeHtml(outParts.date.split(" ")[0])}</strong> ${escapeHtml(outParts.rest)}</span>
-                        <span class="tl-time">${escapeHtml(outParts.time)}</span>
+                        <span class="tl-day">${safeOutDay}</span>
+                        <span class="tl-date"><strong>${safeOutDate}</strong> ${safeOutRest}</span>
+                        <span class="tl-time">${safeOutTime}</span>
                     </div>
                 </div>
             </div>
 
-            <div class="booking-chips">
-                <span class="book-chip">${hotelIconSvg()}<span class="book-chip-label">${escapeHtml(roomName)}</span></span>
-                ${gender ? `<span class="book-chip">${userIconSvg()}<span class="book-chip-label">${escapeHtml(gender)}</span></span>` : ""}
-                ${reqName ? `<span class="book-chip">${clipboardIconSvg()}<span class="book-chip-label">${escapeHtml(reqName)}</span></span>` : ""}
-            </div>
-
-            ${purpose ? `
-                <div class="booking-purpose">
-                    <span class="booking-purpose-label">Purpose</span>
-                    <p>${escapeHtml(purpose)}</p>
+            <div class="booking-meta">
+                <div class="meta-chips">
+                    <span class="book-chip">${hotelIconSvg()}<span class="book-chip-label">${safeRoomName}</span></span>
+                    ${safeGender ? `<span class="book-chip">${userIconSvg()}<span class="book-chip-label">${safeGender}</span></span>` : ""}
+                    ${safeReqName ? `<span class="book-chip">${clipboardIconSvg()}<span class="book-chip-label">${safeReqName}</span></span>` : ""}
                 </div>
-            ` : ""}
+                ${safePurpose ? `
+                    <div class="booking-purpose">
+                        <span class="booking-purpose-label">Purpose</span>
+                        <p>${safePurpose}</p>
+                    </div>
+                ` : ""}
+            </div>
 
             <div class="booking-card-foot">
-                <span class="booking-ref mono">#${escapeHtml(bookingDisplayId(booking))}</span>
-                <span class="booking-foot-chip"><span class="foot-dot"></span>${isExpired ? "Expired stay" : "Active stay"}</span>
+                <span class="booking-ref mono">#${safeDisplayId}</span>
+                <span class="booking-status-indicator">
+                    <span class="status-dot ${isExpired ? "dot-expired" : "dot-active"}"></span>
+                    <span class="status-text">${isExpired ? "Expired stay" : "Active stay"}</span>
+                </span>
             </div>
         </article>
     `;
