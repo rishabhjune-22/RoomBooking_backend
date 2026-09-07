@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
     refresh: "roomBookingWebRefresh",
     user: "roomBookingWebUser",
     workflowNotificationReadPrefix: "roomBookingWorkflowNotificationRead",
+    theme: "roomBookingWebTheme",
 };
 
 const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
@@ -22,37 +23,6 @@ const BUILDINGS = ["Delta", "Gamma", "Beta"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHEET_COOLING_HOURS = 1;
 const SHEET_DAY_END_MINUTES = 18 * 60;
-const DISPLAY_LOCALE = "en-IN";
-const DISPLAY_TIME_ZONE = "Asia/Kolkata";
-const DISPLAY_DATETIME_OPTIONS = {
-    timeZone: DISPLAY_TIME_ZONE,
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-};
-const DISPLAY_DATE_OPTIONS = {
-    timeZone: DISPLAY_TIME_ZONE,
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-};
-const DISPLAY_TIME_OPTIONS = {
-    timeZone: DISPLAY_TIME_ZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-};
-const DISPLAY_MONTH_YEAR_OPTIONS = {
-    timeZone: DISPLAY_TIME_ZONE,
-    month: "long",
-    year: "numeric",
-};
-const API_DATE_TIME_IN_TEXT =
-    /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})/g;
-const initialCalendarDateParts = todayIso().split("-").map(Number);
 
 const state = {
     authRole: "admin",
@@ -62,12 +32,13 @@ const state = {
     refresh: localStorage.getItem(STORAGE_KEYS.refresh) || "",
     view: "calendar",
     prefix: "Delta",
-    calendarMonth: initialCalendarDateParts[1],
-    calendarYear: initialCalendarDateParts[0],
+    calendarMonth: new Date().getMonth() + 1,
+    calendarYear: new Date().getFullYear(),
     availability: null,
     selectedDate: "",
     rangeStart: "",
     rangeEnd: "",
+    pendingRoomLabel: "",
     bookingStatusFilter: "all",
     bookingPrefixFilter: "all",
     bookingArrivalFrom: "",
@@ -114,31 +85,6 @@ const state = {
     },
 };
 
-function emptyWorkflowNotificationCounts() {
-    return {
-        total: 0,
-        booking_requests: 0,
-        requester_accounts: 0,
-        admin_accounts: 0,
-        my_requests: 0,
-    };
-}
-
-function emptyWorkflowNotificationItems() {
-    return {
-        booking_requests: [],
-        requester_accounts: [],
-        admin_accounts: [],
-        my_requests: [],
-    };
-}
-
-function resetWorkflowNotificationState() {
-    state.workflowNotificationCounts = emptyWorkflowNotificationCounts();
-    state.workflowNotificationRawCounts = emptyWorkflowNotificationCounts();
-    state.workflowNotificationItems = emptyWorkflowNotificationItems();
-}
-
 function escapeHtml(value) {
     return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -161,14 +107,17 @@ function isoDate(year, month, day) {
 }
 
 function todayIso() {
-    return indiaParts(new Date()).date;
+    const now = new Date();
+    return isoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
 }
 
 function currentMonthRange() {
-    const [year, month] = todayIso().split("-").map(Number);
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
     return {
         start: isoDate(year, month, 1),
-        end: isoDate(year, month, new Date(Date.UTC(year, month, 0)).getUTCDate()),
+        end: isoDate(year, month, new Date(year, month, 0).getDate()),
     };
 }
 
@@ -210,23 +159,29 @@ function formatSheetTime(value) {
     if (!value) {
         return "";
     }
-    return normalizeDisplayPeriod(
-        new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_TIME_OPTIONS)
-            .format(new Date(value)),
-    );
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+    }).format(new Date(value));
 }
 
 function formatSheetDate(value) {
     if (!value) {
         return "-";
     }
-    return new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_DATE_OPTIONS)
-        .format(new Date(`${value}T00:00:00+05:30`));
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    }).format(new Date(`${value}T00:00:00+05:30`));
 }
 
 function monthName(year, month) {
-    return new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_MONTH_YEAR_OPTIONS)
-        .format(new Date(`${isoDate(year, month, 1)}T00:00:00+05:30`));
+    return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(
+        new Date(year, month - 1, 1),
+    );
 }
 
 function indiaParts(value) {
@@ -234,13 +189,13 @@ function indiaParts(value) {
         return { date: "", time: "" };
     }
     const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: DISPLAY_TIME_ZONE,
+        timeZone: "Asia/Kolkata",
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
-        hourCycle: "h23",
+        hour12: false,
     }).formatToParts(new Date(value));
     const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
     return {
@@ -253,33 +208,39 @@ function formatDateTime(value) {
     if (!value) {
         return "-";
     }
-    return normalizeDisplayPeriod(
-        new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_DATETIME_OPTIONS)
-            .format(new Date(value)),
-    );
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    }).format(new Date(value));
 }
 
 function formatDateOnly(value) {
     if (!value) {
         return "-";
     }
-    return new Intl.DateTimeFormat(DISPLAY_LOCALE, DISPLAY_DATE_OPTIONS)
-        .format(new Date(`${value}T00:00:00+05:30`));
-}
-
-function formatDateTimesInText(text) {
-    if (!text) {
-        return text;
-    }
-    return String(text).replace(API_DATE_TIME_IN_TEXT, (value) => formatDateTime(value));
-}
-
-function normalizeDisplayPeriod(value) {
-    return String(value || "").replace(/\b(am|pm)\b/gi, (period) => period.toUpperCase());
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    }).format(new Date(`${value}T00:00:00+05:30`));
 }
 
 function formatDateRange(item) {
     return `${formatDateTime(item.arrival_at)} to ${formatDateTime(item.departure_at)}`;
+}
+
+function calcNights(arrivalDate, departureDate) {
+    if (!arrivalDate || !departureDate) return 1;
+    const start = new Date(`${arrivalDate}T00:00:00+05:30`);
+    const end = new Date(`${departureDate}T00:00:00+05:30`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1;
+    const diff = Math.round((end - start) / 86400000);
+    return diff > 0 ? diff : 1;
 }
 
 function isPastDateTime(value) {
@@ -459,7 +420,6 @@ function htmlValue(value) {
 }
 
 function setTokens(payload) {
-    resetWorkflowNotificationState();
     state.access = payload.access || "";
     state.refresh = payload.refresh || "";
     state.user = payload.user || null;
@@ -472,7 +432,6 @@ function clearSession() {
     state.access = "";
     state.refresh = "";
     state.user = null;
-    resetWorkflowNotificationState();
     localStorage.removeItem(STORAGE_KEYS.access);
     localStorage.removeItem(STORAGE_KEYS.refresh);
     localStorage.removeItem(STORAGE_KEYS.user);
@@ -482,56 +441,16 @@ function messageFromErrors(payload) {
     if (!payload) {
         return "Request failed.";
     }
-
-    const errorMessage = firstFieldErrorMessage(payload.errors || {});
-    if (errorMessage) {
-        return formatDateTimesInText(errorMessage);
+    if (payload.message) {
+        return payload.message;
     }
-
-    return formatDateTimesInText(payload.message || "Request failed.");
-}
-
-function firstFieldErrorMessage(errors) {
-    for (const [field, value] of Object.entries(errors)) {
-        const message = firstErrorValue(value);
-        if (!message) {
-            continue;
-        }
-        const label = errorFieldLabel(field);
-        const readableMessage = formatDateTimesInText(message);
-        return label ? `${label}: ${readableMessage}` : readableMessage;
+    const errors = payload.errors || {};
+    const firstKey = Object.keys(errors)[0];
+    if (!firstKey) {
+        return "Request failed.";
     }
-    return "";
-}
-
-function firstErrorValue(value) {
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            const message = firstErrorValue(item);
-            if (message) {
-                return message;
-            }
-        }
-        return "";
-    }
-    if (value && typeof value === "object") {
-        return firstFieldErrorMessage(value);
-    }
-    return String(value || "").trim();
-}
-
-function errorFieldLabel(field) {
-    const labels = {
-        admin_code: "Admin invite code",
-        confirm_password: "Confirm password",
-        email: "Email",
-        name: "Name",
-        password: "Password",
-    };
-    if (field === "detail" || field === "non_field_errors") {
-        return "";
-    }
-    return labels[field] || titleCase(field);
+    const value = errors[firstKey];
+    return Array.isArray(value) ? value[0] : String(value);
 }
 
 async function apiFetch(path, options = {}, retry = true) {
@@ -603,77 +522,102 @@ function toast(message, type = "success") {
 
 function renderAuth(message = "", isError = false) {
     const isSignup = state.authMode === "signup";
+    const isAdmin = state.authRole === "admin";
     appRoot.innerHTML = `
         <main class="login-shell">
-            <section class="login-card">
-                <div class="brand-row">
-                    <div class="brand-mark">${brandLogoHtml()}</div>
-                    <div>
-                        <h1 class="brand-title">Room Booking</h1>
-                    </div>
-                </div>
-                <div class="segmented" role="tablist" aria-label="Role">
-                    <button class="segment-btn ${state.authRole === "admin" ? "active" : ""}" data-auth-role="admin" aria-label="Use admin role" aria-pressed="${state.authRole === "admin"}">Admin</button>
-                    <button class="segment-btn ${state.authRole === "requester" ? "active" : ""}" data-auth-role="requester" aria-label="Use requester role" aria-pressed="${state.authRole === "requester"}">Requester</button>
-                </div>
-                <div class="segmented" role="tablist" aria-label="Mode">
-                    <button class="segment-btn ${!isSignup ? "active" : ""}" data-auth-mode="login" aria-label="Use login mode" aria-pressed="${!isSignup}">Login</button>
-                    <button class="segment-btn ${isSignup ? "active" : ""}" data-auth-mode="signup" aria-label="Use signup mode" aria-pressed="${isSignup}">Signup</button>
-                </div>
-                <form id="auth-form" class="field-grid">
-                    ${isSignup ? `
-                        <div class="field-row">
-                            <label for="name">Full name</label>
-                            <input id="name" name="name" autocomplete="name" required>
+            <aside class="login-hero">
+                <div class="hero-content">
+                    <div class="hero-brand-mark">${brandLogoHtml()}</div>
+                    <h1 class="hero-title">Room Booking System</h1>
+                    <p class="hero-desc">Streamline your room reservations with our intelligent booking platform.</p>
+                    <div class="hero-features">
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x1F4C5;</div>
+                            <span>Real-time availability calendar</span>
                         </div>
-                    ` : ""}
-                    <div class="field-row">
-                        <label for="email">Email</label>
-                        <input id="email" name="email" type="email" autocomplete="email" required>
-                    </div>
-                    <div class="field-row">
-                        <label for="password">Password</label>
-                        <div class="password-wrap">
-                            <input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required>
-                            <button class="outline-btn" type="button" data-toggle-password="password">Show</button>
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x2699;</div>
+                            <span>Multi-building hostel management</span>
+                        </div>
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x1F512;</div>
+                            <span>Secure role-based access control</span>
+                        </div>
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x1F4CA;</div>
+                            <span>Charge sheet &amp; expense tracking</span>
                         </div>
                     </div>
-                    ${isSignup ? `
+                </div>
+            </aside>
+            <section class="login-form-side">
+                <button class="floating-theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode"></button>
+                <div class="login-card">
+                    <h2 class="auth-welcome">${isSignup ? "Create Account" : "Welcome Back"}</h2>
+                    <p class="auth-welcome-sub">${isSignup ? "Register as Admin or Requester to get started." : "Sign in to manage your bookings."}</p>
+                    <div class="segmented auth-role-tabs" role="tablist" aria-label="Role">
+                        <button class="segment-btn ${isAdmin ? "active" : ""}" data-auth-role="admin">Admin</button>
+                        <button class="segment-btn ${!isAdmin ? "active" : ""}" data-auth-role="requester">Requester</button>
+                    </div>
+                    <div class="segmented auth-mode-tabs" role="tablist" aria-label="Mode">
+                        <button class="segment-btn ${!isSignup ? "active" : ""}" data-auth-mode="login">Login</button>
+                        <button class="segment-btn ${isSignup ? "active" : ""}" data-auth-mode="signup">Signup</button>
+                    </div>
+                    <form id="auth-form" class="field-grid">
+                        ${isSignup ? `
+                            <div class="field-row">
+                                <label for="name">Full Name</label>
+                                <input id="name" name="name" autocomplete="name" placeholder="Enter your full name" required>
+                            </div>
+                        ` : ""}
                         <div class="field-row">
-                            <label for="confirm_password">Confirm password</label>
+                            <label for="email">Email Address</label>
+                            <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+                        </div>
+                        <div class="field-row">
+                            <label for="password">Password</label>
                             <div class="password-wrap">
-                                <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
-                                <button class="outline-btn" type="button" data-toggle-password="confirm_password">Show</button>
+                                <input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" placeholder="Enter your password" required>
+                                <button class="show-pw-btn" type="button" data-toggle-password="password" aria-label="Toggle password visibility"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                             </div>
                         </div>
-                        ${state.authRole === "admin" ? `
+                        ${isSignup ? `
                             <div class="field-row">
-                                <label for="admin_code">Admin invite code</label>
-                                <input id="admin_code" name="admin_code" autocomplete="off" required>
-                            </div>
-                        ` : `
-                            <div class="two-col">
-                                <div class="field-row">
-                                    <label for="department">Department</label>
-                                    <input id="department" name="department">
-                                </div>
-                                <div class="field-row">
-                                    <label for="designation">Designation</label>
-                                    <input id="designation" name="designation">
+                                <label for="confirm_password">Confirm Password</label>
+                                <div class="password-wrap">
+                                    <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" placeholder="Re-enter your password" required>
+                                    <button class="show-pw-btn" type="button" data-toggle-password="confirm_password" aria-label="Toggle password visibility"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                 </div>
                             </div>
-                            <div class="field-row">
-                                <label for="mobile">Mobile</label>
-                                <input id="mobile" name="mobile" inputmode="tel">
-                            </div>
-                        `}
-                    ` : ""}
-                    <div class="form-actions">
-                        <button class="primary-btn" type="submit">${isSignup ? "Create Account" : "Login"}</button>
-                        <span class="brand-subtitle">${state.authRole === "admin" ? "Using Admin tab" : "Using Requester tab"}</span>
-                    </div>
-                </form>
-                ${message ? `<div class="status-message ${isError ? "error" : "success"}">${escapeHtml(message)}</div>` : ""}
+                            ${isAdmin ? `
+                                <div class="field-row">
+                                    <label for="admin_code">Admin Invite Code</label>
+                                    <input id="admin_code" name="admin_code" autocomplete="off" placeholder="Enter your invite code" required>
+                                </div>
+                            ` : `
+                                <div class="two-col">
+                                    <div class="field-row">
+                                        <label for="department">Department</label>
+                                        <input id="department" name="department" placeholder="e.g. CS">
+                                    </div>
+                                    <div class="field-row">
+                                        <label for="designation">Designation</label>
+                                        <input id="designation" name="designation" placeholder="e.g. Student">
+                                    </div>
+                                </div>
+                                <div class="field-row">
+                                    <label for="mobile">Mobile Number</label>
+                                    <input id="mobile" name="mobile" inputmode="tel" placeholder="+91 XXXXX XXXXX">
+                                </div>
+                            `}
+                        ` : ""}
+                        <div class="form-actions">
+                            <button class="primary-btn" type="submit">${isSignup ? "Create Account" : "Sign In"}</button>
+                        </div>
+                    </form>
+                    ${message ? `<div class="status-message ${isError ? "error" : "success"}">${escapeHtml(message)}</div>` : ""}
+                    <p class="auth-footer-text"><span>${isAdmin ? "Admin accounts require an invite code and approval." : "Requester accounts need admin approval before access."}</span></p>
+                </div>
             </section>
         </main>
     `;
@@ -690,14 +634,20 @@ function renderAuth(message = "", isError = false) {
             renderAuth();
         });
     });
+    const EYE_OPEN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    const EYE_CLOSED = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
     appRoot.querySelectorAll("[data-toggle-password]").forEach((button) => {
         button.addEventListener("click", () => {
             const input = document.getElementById(button.dataset.togglePassword);
             input.type = input.type === "password" ? "text" : "password";
-            button.textContent = input.type === "password" ? "Show" : "Hide";
+            button.innerHTML = input.type === "password" ? EYE_OPEN : EYE_CLOSED;
         });
     });
     document.getElementById("auth-form").addEventListener("submit", submitAuthForm);
+    appRoot.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+        button.addEventListener("click", toggleTheme);
+    });
+    updateThemeToggleIcon(currentTheme());
 }
 
 async function submitAuthForm(event) {
@@ -821,7 +771,7 @@ function workflowNotificationCountForView(viewId) {
         return counts.requester_accounts || 0;
     }
     if (viewId === "accounts") {
-        return counts.admin_accounts || 0;
+        return (counts.admin_accounts || 0) + (counts.requester_accounts || 0);
     }
     if (viewId === "myRequests") {
         return counts.my_requests || 0;
@@ -837,7 +787,7 @@ function workflowNotificationCategoriesForView(viewId) {
         return ["requester_accounts"];
     }
     if (viewId === "accounts") {
-        return ["admin_accounts"];
+        return ["admin_accounts", "requester_accounts"];
     }
     if (viewId === "myRequests") {
         return ["my_requests"];
@@ -963,8 +913,247 @@ function bellIconSvg() {
     `;
 }
 
+function buildingsIconSvg() {
+    return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="4" y="3" width="6" height="18" rx="1"></rect>
+            <rect x="14" y="7" width="6" height="14" rx="1"></rect>
+        </svg>
+    `;
+}
+
+function roomsIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+        </svg>
+    `;
+}
+
+function checkIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+    `;
+}
+
+function lockIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+    `;
+}
+
+function calendarIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+    `;
+}
+
+function chevronLeftSvg() {
+    return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+    `;
+}
+
+function chevronRightSvg() {
+    return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+    `;
+}
+
+function roomIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M3 21h18"></path>
+            <path d="M5 21V7l7-4 7 4v14"></path>
+            <path d="M9 21v-4h6v4"></path>
+            <line x1="9" y1="10" x2="9" y2="10"></line>
+            <line x1="15" y1="10" x2="15" y2="10"></line>
+        </svg>
+    `;
+}
+
+function hotelIconSvg() {
+    return `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M2 21h20"></path>
+            <path d="M4 21V10a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v11"></path>
+            <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="9" y1="14" x2="9" y2="14.01"></line>
+            <line x1="15" y1="14" x2="15" y2="14.01"></line>
+        </svg>
+    `;
+}
+
+function calendarCheckIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+            <path d="m9 16 2 2 4-4"></path>
+        </svg>
+    `;
+}
+
+function userIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+    `;
+}
+
+function tagIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M20.59 13.41 12 22l-9-9V3h10l7.59 8.41a2 2 0 0 1 0 2.82Z"></path>
+            <line x1="7" y1="7" x2="7.01" y2="7"></line>
+        </svg>
+    `;
+}
+
+function walletIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"></path>
+            <path d="M3 5v14a2 2 0 0 0 2 2h16v-5"></path>
+            <path d="M18 12a2 2 0 0 0 0 4h4v-4Z"></path>
+        </svg>
+    `;
+}
+
+function clipboardIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+            <rect x="8" y="2" width="8" height="4" rx="1"></rect>
+        </svg>
+    `;
+}
+
+function truckIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M1 3h15v13H1z"></path>
+            <path d="M16 8h4l3 3v5h-7V8Z"></path>
+            <circle cx="5.5" cy="18.5" r="2.5"></circle>
+            <circle cx="18.5" cy="18.5" r="2.5"></circle>
+        </svg>
+    `;
+}
+
+function userCheckIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="8.5" cy="7" r="4"></circle>
+            <polyline points="17 11 19 13 23 9"></polyline>
+        </svg>
+    `;
+}
+
+function receiptIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M6 2h12a1 1 0 0 1 1 1v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21V3a1 1 0 0 1 1-1Z"></path>
+            <line x1="9" y1="7" x2="15" y2="7"></line>
+            <line x1="9" y1="11" x2="15" y2="11"></line>
+            <line x1="9" y1="15" x2="13" y2="15"></line>
+        </svg>
+    `;
+}
+
 function brandLogoHtml() {
     return `<img class="brand-logo" src="/static/webapp/mainlogo.jpeg" alt="Room Booking logo">`;
+}
+
+function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") || "light";
+}
+
+function applyTheme(theme) {
+    const root = document.documentElement;
+    if (theme === "dark") {
+        root.setAttribute("data-theme", "dark");
+    } else {
+        root.removeAttribute("data-theme");
+    }
+    try {
+        localStorage.setItem(STORAGE_KEYS.theme, theme);
+    } catch (error) {
+        /* ignore storage errors */
+    }
+    document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
+        btn.setAttribute("aria-pressed", String(theme === "dark"));
+        btn.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    });
+    updateThemeToggleIcon(theme);
+}
+
+function toggleTheme() {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    applyTheme(next);
+}
+
+function updateThemeToggleIcon(theme) {
+    const dark = theme === "dark";
+    document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
+        btn.innerHTML = dark ? sunIconSvg() : moonIconSvg();
+    });
+}
+
+function moonIconSvg() {
+    return `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+    `;
+}
+
+function sunIconSvg() {
+    return `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+    `;
+}
+
+function initTheme() {
+    let theme = "light";
+    try {
+        theme = localStorage.getItem(STORAGE_KEYS.theme) || "light";
+    } catch (error) {
+        theme = "light";
+    }
+    applyTheme(theme);
 }
 
 function renderDashboard() {
@@ -987,6 +1176,7 @@ function renderDashboard() {
                             ${countBadgeHtml(workflowNotificationCountForView(id))}
                         </button>
                     `).join("")}
+                    <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode"></button>
                     <button class="notification-bell" type="button" data-notification-bell aria-label="Workflow notifications">
                         ${bellIconSvg()}
                         <span id="workflow-notification-badge" class="notification-badge" hidden>0</span>
@@ -1004,21 +1194,23 @@ function renderDashboard() {
     });
     appRoot.querySelector("[data-notification-bell]").addEventListener("click", openWorkflowNotificationSummary);
     appRoot.querySelector("[data-logout]").addEventListener("click", logout);
+    appRoot.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+        button.addEventListener("click", toggleTheme);
+    });
+    updateThemeToggleIcon(currentTheme());
     updateWorkflowNotificationBell();
     loadWorkflowNotificationCounts();
     renderCurrentView();
 }
 
-async function loadWorkflowNotificationCounts({ markCurrentViewRead = true, viewId = state.view } = {}) {
+async function loadWorkflowNotificationCounts() {
     if (!state.access || !state.user) {
         return;
     }
     try {
         const counts = await apiFetch("/api/workflow-notification-counts/");
         applyWorkflowNotificationPayload(counts);
-        if (markCurrentViewRead && state.view === viewId) {
-            markWorkflowNotificationViewRead(viewId);
-        }
+        markWorkflowNotificationViewRead(state.view);
         updateWorkflowNotificationBell();
         updateVisibleMenuBadges();
     } catch (error) {
@@ -1057,7 +1249,6 @@ function workflowNotificationRows() {
             count: counts.booking_requests || 0,
             rawCount: rawCounts.booking_requests || 0,
             description: "Pending booking requests waiting for review.",
-            details: workflowNotificationDetailsForView("bookingRequests").slice(0, 3),
         });
         rows.push({
             view: "requesters",
@@ -1065,7 +1256,6 @@ function workflowNotificationRows() {
             count: counts.requester_accounts || 0,
             rawCount: rawCounts.requester_accounts || 0,
             description: "Pending requester accounts waiting for approval.",
-            details: workflowNotificationDetailsForView("requesters").slice(0, 3),
         });
     }
     if (isSuperadmin()) {
@@ -1075,7 +1265,6 @@ function workflowNotificationRows() {
             count: counts.admin_accounts || 0,
             rawCount: rawCounts.admin_accounts || 0,
             description: "Pending admin accounts waiting for superadmin approval.",
-            details: workflowNotificationDetailsForView("accounts").slice(0, 3),
         });
     }
     if (state.user?.role === "requester") {
@@ -1093,12 +1282,6 @@ function workflowNotificationRows() {
     return rows;
 }
 
-function workflowNotificationDetailsForView(viewId) {
-    return workflowNotificationCategoriesForView(viewId)
-        .flatMap((category) => state.workflowNotificationItems?.[category] || [])
-        .filter((item) => typeof item === "object" && (item.title || item.message));
-}
-
 function workflowNotificationDetailHtml(details = []) {
     if (!details.length) {
         return "";
@@ -1113,35 +1296,6 @@ function workflowNotificationDetailHtml(details = []) {
             `).join("")}
         </span>
     `;
-}
-
-function openWorkflowNotificationDetails(viewId) {
-    const details = workflowNotificationDetailsForView(viewId);
-    const title = menuItems().find(([id]) => id === viewId)?.[1] || "Notification Details";
-    markWorkflowNotificationViewRead(viewId);
-    openActionModal({
-        title: `${title} Notifications`,
-        body: details.length ? `
-            <div class="notification-detail-panel">
-                ${details.map((item) => `
-                    <article class="notification-detail-card">
-                        ${item.title ? `<h4>${escapeHtml(item.title)}</h4>` : ""}
-                        ${item.message ? `<p>${escapeHtml(item.message)}</p>` : ""}
-                    </article>
-                `).join("")}
-            </div>
-        ` : `<div class="empty-state">No notification details available.</div>`,
-        footerHtml: `
-            <button class="outline-btn" type="button" data-close-modal>Close</button>
-            <button class="primary-btn" type="button" id="open-notification-view">Open ${escapeHtml(title)}</button>
-        `,
-        onBind: () => {
-            document.getElementById("open-notification-view")?.addEventListener("click", () => {
-                closeModal();
-                navigateToView(viewId);
-            });
-        },
-    });
 }
 
 function openWorkflowNotificationSummary() {
@@ -1174,14 +1328,9 @@ function openWorkflowNotificationSummary() {
         onBind: () => {
             document.querySelectorAll("[data-notification-view]").forEach((button) => {
                 button.addEventListener("click", () => {
-                    const viewId = button.dataset.notificationView;
-                    if (workflowNotificationDetailsForView(viewId).length) {
-                        openWorkflowNotificationDetails(viewId);
-                        return;
-                    }
-                    markWorkflowNotificationViewRead(viewId);
+                    markWorkflowNotificationViewRead(button.dataset.notificationView);
                     closeModal();
-                    navigateToView(viewId);
+                    navigateToView(button.dataset.notificationView);
                 });
             });
         },
@@ -1220,22 +1369,62 @@ function renderCurrentView() {
 }
 
 function renderCalendarView() {
+    const firstName = (state.user?.name || "").split(" ")[0];
     viewRoot().innerHTML = `
         <div class="section-header">
             <div>
-                <h2>Calendar</h2>
-                <p>${isAdminLike() ? "Full room availability and booking details." : "Requester-safe availability with no private booking details."}</p>
+                <div class="welcome-line">
+                    <span class="welcome-emoji">&#128075;</span>
+                    <h2>${firstName ? `Welcome, ${escapeHtml(firstName)}` : "Room Availability Calendar"}</h2>
+                </div>
+                <p>${isAdminLike() ? "Manage availability and bookings across all buildings." : "Browse availability and place your booking requests."}</p>
             </div>
             ${isAdminLike()
-                ? `<button class="primary-btn" id="calendar-create-booking">Create Booking</button>`
-                : `<button class="primary-btn" id="request-booking-btn" disabled>Request Booking</button>`}
+                ? `<button class="primary-btn" id="calendar-create-booking"><span style="font-size:16px;margin-right:6px;">+</span>New Booking</button>`
+                : `<button class="primary-btn" id="request-booking-btn" disabled><span style="font-size:16px;margin-right:6px;">+</span>Request Booking</button>`}
+        </div>
+        <div class="stats-strip" id="stats-strip">
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(15,111,191,0.12);color:var(--blue);">${roomsIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-total">-</span>
+                    <span class="stat-label">Total Rooms</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(34,197,94,0.15);color:#16a34a;">${checkIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-available">-</span>
+                    <span class="stat-label">Available</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(239,68,68,0.12);color:#dc2626;">${lockIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-booked">-</span>
+                    <span class="stat-label">Booked</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(250,204,21,0.15);color:#ca8a04;">${calendarIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-prefix">-</span>
+                    <span class="stat-label">Building</span>
+                </div>
+            </div>
         </div>
         <div class="calendar-layout">
             <section class="surface calendar-panel">
+                <div class="panel-head">
+                    <div class="panel-head-title">
+                        <span class="panel-head-icon">${buildingsIconSvg()}</span>
+                        <span>Building Calendar</span>
+                    </div>
+                </div>
                 <div class="calendar-controls">
-                    <button class="outline-btn" id="prev-month">Previous</button>
+                    <button class="month-nav-btn" id="prev-month" aria-label="Previous month">${chevronLeftSvg()}</button>
                     <div class="month-title" id="month-title"></div>
-                    <button class="outline-btn" id="next-month">Next</button>
+                    <button class="month-nav-btn" id="next-month" aria-label="Next month">${chevronRightSvg()}</button>
                 </div>
                 <div class="building-tabs" id="building-tabs"></div>
                 <div class="calendar-grid" id="calendar-grid"></div>
@@ -1262,6 +1451,29 @@ function renderCalendarView() {
     loadCalendar();
 }
 
+function renderStatsStrip() {
+    const strip = document.getElementById("stats-strip");
+    const group = currentCalendarGroup();
+    if (!strip) {
+        return;
+    }
+    if (!group) {
+        strip.querySelector("#stat-total").textContent = "0";
+        strip.querySelector("#stat-available").textContent = "0";
+        strip.querySelector("#stat-booked").textContent = "0";
+        strip.querySelector("#stat-prefix").textContent = state.prefix;
+        return;
+    }
+    const days = group.calendar || [];
+    const sample = days.find((d) => !isPastCalendarDate(d.date)) || days[0];
+    const total = sample ? Math.max(0, Number(sample.total_rooms || 0)) : 0;
+    const avail = sample ? Math.max(0, Number(sample.available_rooms || 0)) : 0;
+    strip.querySelector("#stat-total").textContent = total;
+    strip.querySelector("#stat-available").textContent = avail;
+    strip.querySelector("#stat-booked").textContent = Math.max(0, total - avail);
+    strip.querySelector("#stat-prefix").textContent = state.prefix;
+}
+
 function drawBuildingTabs() {
     const node = document.getElementById("building-tabs");
     node.innerHTML = BUILDINGS.map((prefix) => `
@@ -1276,6 +1488,7 @@ function drawBuildingTabs() {
             drawBuildingTabs();
             drawCalendar();
             renderCalendarSide();
+            renderStatsStrip();
         });
     });
 }
@@ -1289,6 +1502,9 @@ function changeMonth(delta) {
         state.calendarMonth = 1;
         state.calendarYear += 1;
     }
+    state.selectedDate = "";
+    state.rangeStart = "";
+    state.rangeEnd = "";
     loadCalendar();
 }
 
@@ -1302,6 +1518,7 @@ async function loadCalendar() {
         state.availability = await apiFetch(endpoint);
         drawCalendar();
         renderCalendarSide();
+        renderStatsStrip();
     } catch (error) {
         document.getElementById("calendar-grid").innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
     }
@@ -1336,6 +1553,10 @@ function isInSelectedRange(dateValue) {
     return dateValue >= state.rangeStart && dateValue <= state.rangeEnd;
 }
 
+function isPastCalendarDate(dateValue) {
+    return Boolean(dateValue) && dateValue < todayIso();
+}
+
 function drawCalendar() {
     const grid = document.getElementById("calendar-grid");
     const group = currentCalendarGroup();
@@ -1356,11 +1577,18 @@ function drawCalendar() {
     for (let day = 1; day <= daysInMonth; day += 1) {
         const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
         const item = daysByDate[dateValue];
-        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        const isPast = isPastCalendarDate(dateValue);
+        const selectedClass = !isPast && isInSelectedRange(dateValue) ? "in-range" : "";
+        const todayClass = dateValue === todayIso() ? "is-today" : "";
+        const disabledAttrs = isPast ? `disabled aria-disabled="true" title="Past dates are not selectable"` : "";
+        const total = Math.max(0, Number(item?.total_rooms || 0));
+        const avail = Math.max(0, Number(item?.available_rooms || 0));
+        const pct = total > 0 ? Math.round((avail / total) * 100) : 0;
         cells.push(`
-            <button class="day-cell ${availabilityClass(item)} ${selectedClass}" type="button" data-date="${dateValue}">
-                <span class="day-number">${day}</span>
-                <span class="availability-note">${item ? `${item.available_rooms}/${item.total_rooms} rooms` : "No rooms"}</span>
+            <button class="day-cell ${availabilityClass(item)} ${selectedClass} ${todayClass} ${isPast ? "past-date" : ""}" type="button" data-date="${dateValue}" ${disabledAttrs}>
+                <span class="day-number">${day}${todayClass ? `<em class="today-badge">Today</em>` : ""}</span>
+                <span class="availability-note">${item ? `<b class="avail-count">${avail}</b><span class="avail-sep">/</span>${total}` : "No rooms"}</span>
+                ${item ? `<span class="avail-pct">${pct}% free</span>` : ""}
             </button>
         `);
     }
@@ -1371,6 +1599,10 @@ function drawCalendar() {
 }
 
 function handleDateClick(dateValue) {
+    if (isPastCalendarDate(dateValue)) {
+        return;
+    }
+
     if (isAdminLike()) {
         state.selectedDate = dateValue;
         if (!state.rangeStart || (state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd)) {
@@ -1410,11 +1642,27 @@ function renderCalendarSide(content = "") {
         return;
     }
     if (isAdminLike()) {
+        const total = Math.max(0, Number(group.total_rooms || 0));
+        const day = (group.calendar || [])[0];
+        const avail = Math.max(0, Number(day?.available_rooms || 0));
+        const pct = total > 0 ? Math.round((avail / total) * 100) : 0;
         side.innerHTML = content || `
             <div class="details-list">
-                <div>
-                    <h3 style="margin:0 0 6px">${escapeHtml(state.prefix)} Availability</h3>
-                    <p class="item-meta">Select one date for same-day booking or select a second date for a booking range.</p>
+                <div class="side-head">
+                    <span class="side-head-icon">${buildingsIconSvg()}</span>
+                    <div>
+                        <h3 style="margin:0 0 4px">${escapeHtml(state.prefix)} Availability</h3>
+                        <p class="item-meta">Select one date for same-day booking or select a second date for a booking range.</p>
+                    </div>
+                </div>
+                <div class="avail-meter">
+                    <div class="avail-meter-head">
+                        <span>Current availability</span>
+                        <strong>${pct}%</strong>
+                    </div>
+                    <div class="avail-meter-track">
+                        <div class="avail-meter-fill" style="width:${pct}%"></div>
+                    </div>
                 </div>
                 <div class="detail-row"><span class="detail-label">Total rooms</span><span class="detail-value">${group.total_rooms}</span></div>
                 <div class="detail-row"><span class="detail-label">Month</span><span class="detail-value">${monthName(state.calendarYear, state.calendarMonth)}</span></div>
@@ -1423,14 +1671,31 @@ function renderCalendarSide(content = "") {
         `;
         return;
     }
+    const reqDay = (group.calendar || [])[0];
+    const reqTotal = Math.max(0, Number(group.total_rooms || 0));
+    const reqAvail = Math.max(0, Number(reqDay?.available_rooms || 0));
+    const reqPct = reqTotal > 0 ? Math.round((reqAvail / reqTotal) * 100) : 0;
     side.innerHTML = `
         <div class="details-list">
-            <div>
-                <h3 style="margin:0 0 6px">Request Schedule</h3>
-                <p class="item-meta">Select one date for same-day request or select another date for a range.</p>
+            <div class="side-head">
+                <span class="side-head-icon">${buildingsIconSvg()}</span>
+                <div>
+                    <h3 style="margin:0 0 4px">Request Schedule</h3>
+                    <p class="item-meta">Select one date for same-day request or select another date for a range.</p>
+                </div>
+            </div>
+            <div class="avail-meter">
+                <div class="avail-meter-head">
+                    <span>Current availability</span>
+                    <strong>${reqPct}%</strong>
+                </div>
+                <div class="avail-meter-track">
+                    <div class="avail-meter-fill" style="width:${reqPct}%"></div>
+                </div>
             </div>
             <div class="detail-row"><span class="detail-label">Building</span><span class="detail-value">${escapeHtml(state.prefix)}</span></div>
             <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
+            <div class="detail-row"><span class="detail-label">Privacy</span><span class="detail-value">Only availability is shown. Booking names and details are hidden.</span></div>
         </div>
     `;
     const requestButton = document.getElementById("request-booking-btn");
@@ -1547,6 +1812,34 @@ function bookingDisplayId(booking) {
     return id ? id.padStart(6, "0") : "-";
 }
 
+function initialsOf(name) {
+    const text = String(name || "").trim();
+    if (!text) return "-";
+    const parts = text.split(/\s+/).filter(Boolean);
+    const first = parts[0]?.[0] || "";
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+    return (first + last).toUpperCase();
+}
+
+function stayDateParts(value) {
+    if (!value) return { date: "-", day: "", rest: "", time: "" };
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return { date: "-", day: "", rest: "", time: "" };
+    const date = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" }).format(d);
+    const day = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short" }).format(d);
+    const time = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }).format(d);
+    const rest = date.split(" ").slice(1).join(" ");
+    return { date, day, rest, time };
+}
+
+function genderLabel(gender) {
+    if (!gender) return null;
+    const g = String(gender).toLowerCase();
+    if (g === "male") return "Male";
+    if (g === "female") return "Female";
+    return "Other";
+}
+
 function sheetExportButtons(sheetName) {
     return `
         <button class="outline-btn compact-btn" type="button" data-sheet-export="${sheetName}-excel">Download Excel</button>
@@ -1573,14 +1866,14 @@ function bookingSheetLegendHtml() {
         { className: "available", label: "Available for create" },
         { className: "booked", label: "Booked" },
         { className: "partial", label: "Available after cooling" },
-        { className: "expired", label: "Expired" },
+        { className: "expired", label: "Expired - delete only" },
     ]);
 }
 
 function chargeSheetLegendHtml() {
     return sheetLegend([
         { className: "normal-row", label: "Editable booking" },
-        { className: "expired", label: "Expired" },
+        { className: "expired", label: "Expired - delete only" },
         { className: "selected", label: "Selected row" },
     ]);
 }
@@ -1976,16 +2269,95 @@ async function createBookingShareLink(sheetName = "booking") {
 }
 
 function bookingCardHtml(booking) {
+    const status = booking.status || "active";
+    const guestName = booking.visitor_name || "Visitor";
+    const roomName = booking.room_name || "Room not assigned";
+    const departure = new Date(booking.departure_at);
+    const isPastDeparture = !Number.isNaN(departure.getTime()) && departure <= new Date();
+    const isExpired = status === "expired" || isPastDeparture;
+    const org = booking.visitor_organisation || "";
+    const gender = genderLabel(booking.visitor_gender);
+    const purpose = booking.purpose_of_visit || "";
+    const reqName = booking.requestor_name || "";
+    const inParts = stayDateParts(booking.arrival_at);
+    const outParts = stayDateParts(booking.departure_at);
+    const displayId = bookingDisplayId(booking);
+    const initials = escapeHtml(initialsOf(guestName));
+    const safeGuestName = escapeHtml(guestName);
+    const safeRoomName = escapeHtml(roomName);
+    const safeOrg = escapeHtml(org);
+    const safeGender = escapeHtml(gender);
+    const safeReqName = escapeHtml(reqName);
+    const safePurpose = escapeHtml(purpose);
+    const safeInDay = escapeHtml(inParts.day);
+    const safeInDate = escapeHtml(inParts.date.split(" ")[0]);
+    const safeInRest = escapeHtml(inParts.rest);
+    const safeInTime = escapeHtml(inParts.time);
+    const safeOutDay = escapeHtml(outParts.day);
+    const safeOutDate = escapeHtml(outParts.date.split(" ")[0]);
+    const safeOutRest = escapeHtml(outParts.rest);
+    const safeOutTime = escapeHtml(outParts.time);
+    const safeDisplayId = escapeHtml(displayId);
+    const displayStatus = isExpired ? "expired" : status;
+    const statusLabel = isExpired ? "Expired" : titleCase(status);
+
     return `
-        <article class="item-card" data-booking-id="${booking.id}">
-            <div class="item-main">
-                <div>
-                    <h3 class="item-title">${escapeHtml(booking.visitor_name || "Visitor")}</h3>
-                    <p class="item-meta">Booking ID: ${escapeHtml(bookingDisplayId(booking))}</p>
-                    <p class="item-meta">${escapeHtml(booking.room_name)} - ${formatDateRange(booking)}</p>
-                    <p class="item-meta">Requestor: ${escapeHtml(booking.requestor_name || "-")} - Created by: ${escapeHtml(booking.created_by_name || "-")}</p>
+        <article class="item-card booking-card ${isExpired ? "booking-card-expired" : "booking-card-active"}" data-booking-id="${booking.id}">
+            <div class="booking-card-header">
+                <div class="booking-identity">
+                    <div class="booking-avatar ${isExpired ? "avatar-expired" : "avatar-active"}">
+                        ${initials}
+                        <span class="avatar-status-ring"></span>
+                    </div>
+                    <div class="booking-identity-text">
+                        <h3 class="booking-guest">${safeGuestName}</h3>
+                        ${safeOrg ? `<p class="booking-org">${safeOrg}</p>` : `<p class="booking-ref">Booking <span class="mono">#${safeDisplayId}</span></p>`}
+                    </div>
                 </div>
-                <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
+                <span class="status-chip ${displayStatus} status-pill">${statusLabel}</span>
+            </div>
+
+            <div class="booking-timeline">
+                <div class="tl-node tl-node-in">
+                    <div class="tl-badge">In</div>
+                    <div class="tl-content">
+                        <span class="tl-label">Check-in</span>
+                        <span class="tl-day">${safeInDay}</span>
+                        <span class="tl-date"><strong>${safeInDate}</strong> ${safeInRest}</span>
+                        <span class="tl-time">${safeInTime}</span>
+                    </div>
+                </div>
+                <div class="tl-node tl-node-out">
+                    <div class="tl-badge">Out</div>
+                    <div class="tl-content">
+                        <span class="tl-label">Check-out</span>
+                        <span class="tl-day">${safeOutDay}</span>
+                        <span class="tl-date"><strong>${safeOutDate}</strong> ${safeOutRest}</span>
+                        <span class="tl-time">${safeOutTime}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="booking-meta">
+                <div class="meta-chips">
+                    <span class="book-chip">${hotelIconSvg()}<span class="book-chip-label">${safeRoomName}</span></span>
+                    ${safeGender ? `<span class="book-chip">${userIconSvg()}<span class="book-chip-label">${safeGender}</span></span>` : ""}
+                    ${safeReqName ? `<span class="book-chip">${clipboardIconSvg()}<span class="book-chip-label">${safeReqName}</span></span>` : ""}
+                </div>
+                ${safePurpose ? `
+                    <div class="booking-purpose">
+                        <span class="booking-purpose-label">Purpose</span>
+                        <p>${safePurpose}</p>
+                    </div>
+                ` : ""}
+            </div>
+
+            <div class="booking-card-foot">
+                <span class="booking-ref mono">#${safeDisplayId}</span>
+                <span class="booking-status-indicator">
+                    <span class="status-dot ${isExpired ? "dot-expired" : "dot-active"}"></span>
+                    <span class="status-text">${isExpired ? "Expired stay" : "Active stay"}</span>
+                </span>
             </div>
         </article>
     `;
@@ -2040,10 +2412,14 @@ function renderBookingsView() {
     const isChargeSheet = state.bookingViewMode === "charge_sheet";
     viewRoot().classList.toggle("wide-dashboard", state.bookingViewMode === "sheet" || isChargeSheet);
     viewRoot().innerHTML = `
-        <div class="section-header">
-            <div>
-                <h2>Bookings</h2>
-                <p>Create and inspect direct room bookings.</p>
+        <div class="section-header page-header">
+            <div class="page-header-main">
+                <span class="page-header-icon">${hotelIconSvg()}</span>
+                <div>
+                    <p class="page-header-eyebrow">Room Booking Console</p>
+                    <h2>Bookings</h2>
+                    <p>Create and inspect direct room bookings.</p>
+                </div>
             </div>
             <div class="header-actions">
                 <button class="primary-btn" id="create-booking">Create Booking</button>
@@ -2060,7 +2436,7 @@ function renderBookingsView() {
                 <div class="filter-grid charge-filter-grid">
                     <div class="field-row">
                         <label for="charge-sheet-search">Search</label>
-                        <input id="charge-sheet-search" type="search" placeholder="Reference, requestor, guest, purpose, remarks, budget..." value="${htmlValue(state.chargeSheetSearch)}">
+                        <input id="charge-sheet-search" type="search" placeholder="Reference, requestor, guest, purpose, budget..." value="${htmlValue(state.chargeSheetSearch)}">
                     </div>
                     <div class="field-row">
                         <label for="charge-sheet-prefix">Building</label>
@@ -2223,7 +2599,6 @@ function chargeSheetSortOptions() {
         ["requestor_name", "Requestor name"],
         ["guest_name", "Guest name"],
         ["purpose_event", "Purpose/Event"],
-        ["remarks", "Remarks"],
         ["room_charges_amount", "Room charges"],
         ["attender_charges_amount", "Attender charges"],
         ["total_charges", "Total charges"],
@@ -2308,10 +2683,10 @@ function chargeSheetTextarea(field, value) {
 }
 
 function chargeSheetEditableCell(row, field, type = "text") {
-    if (String(state.chargeSheetEditingId) !== String(row.id)) {
+    if (isChargeSheetRowExpired(row) || String(state.chargeSheetEditingId) !== String(row.id)) {
         return escapeHtml(valueOrDash(row[field]));
     }
-    if (field === "purpose_event" || field === "remarks") {
+    if (field === "purpose_event") {
         return chargeSheetTextarea(field, row[field]);
     }
     return chargeSheetInput(field, row[field] || "", type);
@@ -2323,7 +2698,7 @@ function isChargeSheetRowExpired(row) {
 
 function chargeSheetRowHtml(row) {
     const expired = isChargeSheetRowExpired(row);
-    const editing = String(state.chargeSheetEditingId) === String(row.id);
+    const editing = !expired && String(state.chargeSheetEditingId) === String(row.id);
     const selected = String(state.chargeSheetSelectedId) === String(row.id);
     return `
         <tr class="${[selected ? "selected-row" : "", expired ? "expired-row" : ""].filter(Boolean).join(" ")}" data-charge-row-id="${row.id}" aria-selected="${selected ? "true" : "false"}">
@@ -2334,7 +2709,6 @@ function chargeSheetRowHtml(row) {
             <td>${chargeSheetEditableCell(row, "requestor_name")}</td>
             <td>${chargeSheetEditableCell(row, "guest_name")}</td>
             <td>${chargeSheetEditableCell(row, "purpose_event")}</td>
-            <td>${chargeSheetEditableCell(row, "remarks")}</td>
             <td>${escapeHtml(buildingRoomValue(row.delta, "Delta"))}</td>
             <td>${escapeHtml(buildingRoomValue(row.gamma, "Gamma"))}</td>
             <td>${escapeHtml(buildingRoomValue(row.beta, "Beta"))}</td>
@@ -2348,7 +2722,7 @@ function chargeSheetRowHtml(row) {
                     <button class="sheet-action-btn" type="button" data-charge-action="save" data-id="${row.id}">Save</button>
                     <button class="sheet-action-btn" type="button" data-charge-action="cancel" data-id="${row.id}">Cancel</button>
                 ` : `
-                    <button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>
+                    ${expired ? "" : `<button class="sheet-action-btn" type="button" data-charge-action="edit" data-id="${row.id}">Edit</button>`}
                     <button class="sheet-action-btn danger" type="button" data-charge-action="delete" data-id="${row.id}" data-booking-id="${row.booking}">Delete</button>
                 `}
             </td>
@@ -2404,7 +2778,6 @@ function renderChargeSheetRows(shell) {
                         ${chargeSheetHeader("requestor_name", "Requestor Name")}
                         ${chargeSheetHeader("guest_name", "Name of Guest")}
                         ${chargeSheetHeader("purpose_event", "Purpose(Event)")}
-                        ${chargeSheetHeader("remarks", "Remarks")}
                         ${chargeSheetHeader("delta", "Delta")}
                         ${chargeSheetHeader("gamma", "Gamma")}
                         ${chargeSheetHeader("beta", "Beta")}
@@ -2461,6 +2834,11 @@ function bindChargeSheetTable(shell) {
         const rowId = actionButton.dataset.id;
         const action = actionButton.dataset.chargeAction;
         if (action === "edit") {
+            const row = state.chargeSheetRows.find((item) => String(item.id) === String(rowId));
+            if (isChargeSheetRowExpired(row)) {
+                toast("Expired bookings can only be deleted.", "error");
+                return;
+            }
             state.chargeSheetEditingId = rowId;
             renderChargeSheetRows(shell);
             bindChargeSheetTable(shell);
@@ -2491,6 +2869,14 @@ function bindChargeSheetTable(shell) {
 }
 
 async function saveChargeSheetRow(rowId, shell) {
+    const rowData = state.chargeSheetRows.find((item) => String(item.id) === String(rowId));
+    if (isChargeSheetRowExpired(rowData)) {
+        state.chargeSheetEditingId = "";
+        toast("Expired bookings can only be deleted.", "error");
+        renderChargeSheetRows(shell);
+        bindChargeSheetTable(shell);
+        return;
+    }
     const safeRowId = String(rowId).replaceAll('"', '\\"');
     const row = shell.querySelector(`[data-charge-row-id="${safeRowId}"]`);
     if (!row) {
@@ -2501,7 +2887,6 @@ async function saveChargeSheetRow(rowId, shell) {
         requestor_name: fieldValue("requestor_name"),
         guest_name: fieldValue("guest_name"),
         purpose_event: fieldValue("purpose_event"),
-        remarks: fieldValue("remarks"),
         room_charges_amount: Number(fieldValue("room_charges_amount") || 0),
         attender_charges_amount: Number(fieldValue("attender_charges_amount") || 0),
         payment_received_date: fieldValue("payment_received_date") || null,
@@ -2695,7 +3080,7 @@ function sheetCellHtml(entries = [], dateValue = "", room = null) {
         <div class="sheet-booking-entry">
             <button class="sheet-booking-pill ${entry.availabilityStatus === "partial" ? "partial" : ""} ${entry.isExpired ? "expired" : ""}" type="button" data-sheet-booking-id="${id}">${escapeHtml(entry.text)}</button>
             <div class="sheet-inline-actions">
-                <button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>
+                ${entry.isExpired ? "" : `<button class="sheet-action-btn" type="button" data-booking-action="edit" data-id="${id}">Edit</button>`}
                 <button class="sheet-action-btn danger" type="button" data-booking-action="delete" data-id="${id}">Delete</button>
             </div>
         </div>
@@ -2800,6 +3185,10 @@ function handleBookingInlineAction(action, bookingId, dataset = {}) {
         return;
     }
     if (action === "edit") {
+        if (dataset.expired === "true") {
+            toast("Expired bookings can only be deleted.", "error");
+            return;
+        }
         openAdminBookingEditForm(bookingId);
     } else if (action === "delete") {
         openDeleteBookingModal(bookingId);
@@ -2856,11 +3245,11 @@ function normalizedBudgetHeadFields(source = {}) {
     };
 }
 
-function adminReviewRemarksHtml() {
+function adminReviewRemarksHtml(source = {}) {
     return `
         <div class="field-row review-remarks-field">
             <label for="admin-review-remarks">Remarks</label>
-            <textarea id="admin-review-remarks" placeholder="Approval, rejection, send-back, or delete remarks"></textarea>
+            <textarea id="admin-review-remarks" placeholder="Approval, rejection, or send-back remarks">${htmlValue(source.admin_remarks || source.remarks || "")}</textarea>
         </div>
     `;
 }
@@ -2889,7 +3278,6 @@ async function openBookingDetails(bookingId) {
             ["Email", booking.visitor_email],
             ["Category", titleCase(booking.visitor_category)],
             ["Purpose", booking.purpose_of_visit],
-            ["Remarks", booking.remarks],
             { section: "Budget Head" },
             ["Individual", budgetHead.individual],
             ["Institute Head", budgetHead.instituteHead],
@@ -2905,6 +3293,7 @@ async function openBookingDetails(bookingId) {
             ["Mobile", booking.logistics_mobile],
             { section: "Attender Requirement" },
             ["Attender required", yesNo(booking.attender_required)],
+            ["Attender count", booking.attender_count_per_day],
             ["Shifts", shiftsText(booking)],
             { section: "Charges" },
             ["Room charges", titleCase(booking.room_charges_status)],
@@ -2926,18 +3315,10 @@ async function openBookingDetails(bookingId) {
             wide: true,
             footerHtml: `
                 <button class="outline-btn" type="button" data-close-modal>Close</button>
-                <button class="outline-btn" type="button" id="booking-detail-print">Print</button>
-                <button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>
+                ${expired ? "" : `<button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>`}
                 <button class="danger-btn" type="button" id="booking-detail-delete">Delete Booking</button>
             `,
             onBind: () => {
-                document.getElementById("booking-detail-print")?.addEventListener("click", () => {
-                    printDetailsDocument(
-                        `Booking Details - ${bookingDisplayId(booking)}`,
-                        rows,
-                        `${valueOrDash(booking.room_name)} | ${formatDateRange(booking)}`
-                    );
-                });
                 document.getElementById("booking-detail-edit")?.addEventListener("click", () => {
                     closeModal();
                     openAdminBookingEditForm(booking.id);
@@ -2960,103 +3341,205 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     const departure = source.departure_at ? indiaParts(source.departure_at) : { date: selectedEnd, time: "18:00" };
     const prefix = source.preferred_prefix || source.prefix || state.prefix || BUILDINGS[0];
     const budgetHead = normalizedBudgetHeadFields(source);
+
+    const nights = calcNights(arrival.date, departure.date);
+    const selectedRoomLabel = source.room
+        ? (source.room_label || source.room_name || "Selected room")
+        : state.pendingRoomLabel || (prefix ? `${prefix} room` : "Select room");
+
     const requestMeta = source.id && context === "request" ? `
-        <div class="form-section-title">Request Review</div>
-        <div class="two-col">
-            <div class="field-row"><label>Request ID</label><input value="${htmlValue(source.id)}" readonly></div>
-            <div class="field-row"><label>Status</label><input value="${htmlValue(titleCase(source.status))}" readonly></div>
-            <div class="field-row"><label>Requester account</label><input value="${htmlValue(source.requester_name || source.requester_email)}" readonly></div>
-            <div class="field-row"><label>Requester email</label><input value="${htmlValue(source.requester_email)}" readonly></div>
-            <div class="field-row"><label>Requested at</label><input value="${htmlValue(formatDateTime(source.requested_at))}" readonly></div>
-            <div class="field-row"><label>Reviewed by</label><input value="${htmlValue(source.reviewed_by_name)}" readonly></div>
-            <div class="field-row"><label>Reviewed at</label><input value="${htmlValue(formatDateTime(source.reviewed_at))}" readonly></div>
-            <div class="field-row"><label>Assigned booking</label><input value="${htmlValue(source.assigned_room_name || source.approved_booking_id || "")}" readonly></div>
+        <div class="form-card">
+            <div class="form-card-head">
+                <span class="form-card-icon">${clipboardIconSvg()}</span>
+                <div class="form-card-title-wrap">
+                    <h4>Request Review</h4>
+                    <small>Original booking request details</small>
+                </div>
+            </div>
+            <div class="two-col">
+                <div class="field-row"><label>Request ID</label><input value="${htmlValue(source.id)}" readonly></div>
+                <div class="field-row"><label>Status</label><input value="${htmlValue(titleCase(source.status))}" readonly></div>
+                <div class="field-row"><label>Requester account</label><input value="${htmlValue(source.requester_name || source.requester_email)}" readonly></div>
+                <div class="field-row"><label>Requester email</label><input value="${htmlValue(source.requester_email)}" readonly></div>
+                <div class="field-row"><label>Requested at</label><input value="${htmlValue(formatDateTime(source.requested_at))}" readonly></div>
+                <div class="field-row"><label>Reviewed by</label><input value="${htmlValue(source.reviewed_by_name)}" readonly></div>
+                <div class="field-row"><label>Reviewed at</label><input value="${htmlValue(formatDateTime(source.reviewed_at))}" readonly></div>
+                <div class="field-row"><label>Assigned booking</label><input value="${htmlValue(source.assigned_room_name || source.approved_booking_id || "")}" readonly></div>
+            </div>
         </div>
     ` : "";
     return `
         <form id="admin-booking-form" class="field-grid booking-form" novalidate>
+            <div class="booking-summary-bar">
+                <div class="booking-summary-main">
+                    <span class="booking-summary-icon">${calendarCheckIconSvg()}</span>
+                    <div class="booking-summary-text">
+                        <div class="booking-summary-label">Booking Window</div>
+                        <div class="booking-summary-route">
+                            <span class="bs-date">${escapeHtml(formatDateOnly(arrival.date))}</span>
+                            <span class="bs-arrow">${chevronRightSvg()}</span>
+                            <span class="bs-date">${escapeHtml(formatDateOnly(departure.date))}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="booking-summary-meta">
+                    <span class="bs-chip">${nights} night${nights === 1 ? "" : "s"}</span>
+                    <span class="bs-chip bs-chip-room">${escapeHtml(selectedRoomLabel)}</span>
+                </div>
+            </div>
+
             ${requestMeta}
-            <div class="form-section-title">Visitor Details</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-prefix">Building</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
-                <div class="field-row"><label for="admin-room">Room No</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
-                <div class="field-row"><label for="admin-arrival-date">Check-In date</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
-                <div class="field-row"><label for="admin-arrival-time">Check-In time</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                <div class="field-row"><label for="admin-departure-date">Check-Out date</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
-                <div class="field-row"><label for="admin-departure-time">Check-Out time</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
-                <div class="field-row"><label for="admin-room-note">Room preference note</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
-                <div class="field-row"><label for="admin-visitor-name">Visitor name</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
-                <div class="field-row"><label for="admin-visitor-designation">Visitor designation</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
-                <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
-                <div class="field-row"><label for="admin-visitor-gender">Gender</label><select id="admin-visitor-gender">
-                    <option value="" ${!source.visitor_gender ? "selected" : ""}>Select Gender</option>
-                    <option value="Male" ${source.visitor_gender === "Male" ? "selected" : ""}>Male</option>
-                    <option value="Female" ${source.visitor_gender === "Female" ? "selected" : ""}>Female</option>
-                    <option value="Other" ${source.visitor_gender === "Other" ? "selected" : ""}>Other</option>
-                </select></div>
-                <div class="field-row"><label for="admin-visitor-mobile">Visitor mobile</label><input id="admin-visitor-mobile" inputmode="tel" value="${htmlValue(source.visitor_mobile)}"></div>
-                <div class="field-row"><label for="admin-visitor-email">Visitor email</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
-            </div>
-            <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
-            <div class="field-row"><label for="admin-remarks">Remarks</label><textarea id="admin-remarks">${htmlValue(source.remarks)}</textarea></div>
 
-            <div class="form-section-title">Visitor Category</div>
-            <div class="radio-list">
-                <label class="check-row"><input name="admin-visitor-category" type="radio" value="institute_guest" ${source.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
-                <label class="check-row"><input name="admin-visitor-category" type="radio" value="conference_workshop_guest" ${source.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
-                <label class="check-row"><input name="admin-visitor-category" type="radio" value="other_guest" ${source.visitor_category === "other_guest" ? "checked" : ""}> Other Guest</label>
-                <button class="outline-btn compact-btn" id="admin-clear-visitor-category" type="button">Clear Selection</button>
-            </div>
-
-            <div class="form-section-title">Budget Head</div>
-            <div class="budget-head-group">
-                <label class="check-row"><input id="admin-budget-individual" data-budget-head-field="admin-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
-                <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="admin-budget-name">Name</label><input id="admin-budget-name" placeholder="Name" value="${htmlValue(budgetHead.individual)}"></div>
-                <label class="check-row"><input id="admin-budget-institute-head" data-budget-head-field="admin-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
-                <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="admin-budget-department">Department Name</label><input id="admin-budget-department" placeholder="Department Name" value="${htmlValue(budgetHead.instituteHead)}"></div>
-                <label class="check-row"><input id="admin-budget-project-head" data-budget-head-field="admin-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
-                <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="admin-budget-project-code">Project code</label><input id="admin-budget-project-code" placeholder="Project code" value="${htmlValue(budgetHead.projectHead)}"></div>
-                <button class="outline-btn compact-btn budget-clear-btn" id="admin-clear-budget-head" type="button">Clear Budget Head</button>
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${userIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Visitor Details</h4>
+                        <small>Who is staying in the room</small>
+                    </div>
+                </div>
+                <div class="two-col">
+                    <div class="field-row"><label for="admin-prefix">Building</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+                    <div class="field-row"><label for="admin-room">Room No</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
+                    <div class="field-row"><label for="admin-arrival-date">Check-In date</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
+                    <div class="field-row"><label for="admin-arrival-time">Check-In time</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
+                    <div class="field-row"><label for="admin-departure-date">Check-Out date</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
+                    <div class="field-row"><label for="admin-departure-time">Check-Out time</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+                    <div class="field-row"><label for="admin-room-note">Room preference note</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
+                    <div class="field-row field-row-wide"><label for="admin-visitor-name">Visitor name</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
+                    <div class="field-row"><label for="admin-visitor-designation">Visitor designation</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
+                    <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
+                    <div class="field-row"><label for="admin-visitor-gender">Gender</label><select id="admin-visitor-gender">
+                        <option value="" ${!source.visitor_gender ? "selected" : ""}>Select Gender</option>
+                        <option value="Male" ${source.visitor_gender === "Male" ? "selected" : ""}>Male</option>
+                        <option value="Female" ${source.visitor_gender === "Female" ? "selected" : ""}>Female</option>
+                        <option value="Other" ${source.visitor_gender === "Other" ? "selected" : ""}>Other</option>
+                    </select></div>
+                    <div class="field-row"><label for="admin-visitor-mobile">Visitor mobile</label><input id="admin-visitor-mobile" inputmode="tel" value="${htmlValue(source.visitor_mobile)}"></div>
+                    <div class="field-row"><label for="admin-visitor-email">Visitor email</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
+                </div>
+                <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
             </div>
 
-            <div class="form-section-title">Requestor Details</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-requestor-name">Requestor name</label><input id="admin-requestor-name" value="${htmlValue(source.requestor_name || source.requester_name)}"></div>
-                <div class="field-row"><label for="admin-requestor-designation">Requestor designation</label><input id="admin-requestor-designation" value="${htmlValue(source.requestor_designation)}"></div>
-                <div class="field-row"><label for="admin-requestor-department">Requestor department</label><input id="admin-requestor-department" value="${htmlValue(source.requestor_department)}"></div>
-                <div class="field-row"><label for="admin-requestor-mobile">Requestor mobile</label><input id="admin-requestor-mobile" inputmode="tel" value="${htmlValue(source.requestor_mobile)}"></div>
-                ${source.requestor_email || source.requester_email ? `<div class="field-row"><label>Requestor email</label><input value="${htmlValue(source.requestor_email || source.requester_email)}" readonly></div>` : ""}
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${tagIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Visitor Category</h4>
+                        <small>Type of guest for this stay</small>
+                    </div>
+                </div>
+                <div class="radio-list">
+                    <label class="check-row"><input name="admin-visitor-category" type="radio" value="institute_guest" ${source.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
+                    <label class="check-row"><input name="admin-visitor-category" type="radio" value="conference_workshop_guest" ${source.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
+                    <label class="check-row"><input name="admin-visitor-category" type="radio" value="other_guest" ${source.visitor_category === "other_guest" ? "checked" : ""}> Other Guest</label>
+                    <button class="outline-btn compact-btn" id="admin-clear-visitor-category" type="button">Clear Selection</button>
+                </div>
             </div>
 
-            <div class="form-section-title">Logistics(Food/Cab) will be looked after by</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-logistics-name">Logistics Name</label><input id="admin-logistics-name" value="${htmlValue(source.logistics_name)}"></div>
-                <div class="field-row"><label for="admin-logistics-designation">Designation</label><input id="admin-logistics-designation" value="${htmlValue(source.logistics_designation)}"></div>
-                <div class="field-row"><label for="admin-logistics-mobile">Mobile Number</label><input id="admin-logistics-mobile" inputmode="tel" value="${htmlValue(source.logistics_mobile)}"></div>
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${walletIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Budget Head</h4>
+                        <small>Funding source for the stay</small>
+                    </div>
+                </div>
+                <div class="budget-head-group">
+                    <div class="budget-option">
+                        <label class="check-row"><input id="admin-budget-individual" data-budget-head-field="admin-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
+                        <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="admin-budget-name">Name</label><input id="admin-budget-name" placeholder="Name" value="${htmlValue(budgetHead.individual)}"></div>
+                    </div>
+                    <div class="budget-option">
+                        <label class="check-row"><input id="admin-budget-institute-head" data-budget-head-field="admin-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
+                        <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="admin-budget-department">Department Name</label><input id="admin-budget-department" placeholder="Department Name" value="${htmlValue(budgetHead.instituteHead)}"></div>
+                    </div>
+                    <div class="budget-option">
+                        <label class="check-row"><input id="admin-budget-project-head" data-budget-head-field="admin-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
+                        <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="admin-budget-project-code">Project code</label><input id="admin-budget-project-code" placeholder="Project code" value="${htmlValue(budgetHead.projectHead)}"></div>
+                    </div>
+                    <button class="outline-btn compact-btn budget-clear-btn" id="admin-clear-budget-head" type="button">Clear Budget Head</button>
+                </div>
             </div>
 
-            <div class="form-section-title">Attender Requirement</div>
-            <label class="check-row"><input id="admin-attender" type="checkbox" ${source.attender_required ? "checked" : ""}> Attender required</label>
-            <div class="two-col">
-                <label class="check-row"><input id="admin-general" type="checkbox" ${source.attender_general_shift ? "checked" : ""}> General shift</label>
-                <label class="check-row"><input id="admin-morning" type="checkbox" ${source.attender_morning_shift ? "checked" : ""}> Morning shift</label>
-                <label class="check-row"><input id="admin-day" type="checkbox" ${source.attender_day_shift ? "checked" : ""}> Day shift</label>
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${clipboardIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Requestor Details</h4>
+                        <small>Who raised this booking</small>
+                    </div>
+                </div>
+                <div class="two-col">
+                    <div class="field-row"><label for="admin-requestor-name">Requestor name</label><input id="admin-requestor-name" value="${htmlValue(source.requestor_name || source.requester_name)}"></div>
+                    <div class="field-row"><label for="admin-requestor-designation">Requestor designation</label><input id="admin-requestor-designation" value="${htmlValue(source.requestor_designation)}"></div>
+                    <div class="field-row"><label for="admin-requestor-department">Requestor department</label><input id="admin-requestor-department" value="${htmlValue(source.requestor_department)}"></div>
+                    <div class="field-row"><label for="admin-requestor-mobile">Requestor mobile</label><input id="admin-requestor-mobile" inputmode="tel" value="${htmlValue(source.requestor_mobile)}"></div>
+                    ${source.requestor_email || source.requester_email ? `<div class="field-row"><label>Requestor email</label><input value="${htmlValue(source.requestor_email || source.requester_email)}" readonly></div>` : ""}
+                </div>
             </div>
 
-            <div class="form-section-title">Charges</div>
-            <div class="two-col">
-                <div class="field-row"><label for="admin-room-charge-status">Room charges</label><select id="admin-room-charge-status">
-                    <option value="no" ${(source.room_charges_status || "no") === "no" ? "selected" : ""}>No</option>
-                    <option value="yes" ${source.room_charges_status === "yes" ? "selected" : ""}>Yes</option>
-                    <option value="waived_off" ${source.room_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
-                </select></div>
-                <div class="field-row"><label for="admin-room-charge-amount">Room charges amount</label><input id="admin-room-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.room_charges_amount || 0)}"></div>
-                <div class="field-row"><label for="admin-attender-charge-status">Attender charges</label><select id="admin-attender-charge-status">
-                    <option value="no" ${(source.attender_charges_status || "no") === "no" ? "selected" : ""}>No</option>
-                    <option value="yes" ${source.attender_charges_status === "yes" ? "selected" : ""}>Yes</option>
-                    <option value="waived_off" ${source.attender_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
-                </select></div>
-                <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${truckIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Logistics</h4>
+                        <small>Food / cab will be looked after by</small>
+                    </div>
+                </div>
+                <div class="two-col">
+                    <div class="field-row"><label for="admin-logistics-name">Logistics Name</label><input id="admin-logistics-name" value="${htmlValue(source.logistics_name)}"></div>
+                    <div class="field-row"><label for="admin-logistics-designation">Designation</label><input id="admin-logistics-designation" value="${htmlValue(source.logistics_designation)}"></div>
+                    <div class="field-row"><label for="admin-logistics-mobile">Mobile Number</label><input id="admin-logistics-mobile" inputmode="tel" value="${htmlValue(source.logistics_mobile)}"></div>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${userCheckIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Attender Requirement</h4>
+                        <small>Additional staff during the stay</small>
+                    </div>
+                </div>
+                <div class="attender-stack">
+                    <div class="attender-toggle-row">
+                        <label class="check-row"><input id="admin-attender" type="checkbox" ${source.attender_required ? "checked" : ""}> Attender required</label>
+                    </div>
+                    <div class="two-col">
+                        <div class="field-row"><label for="admin-attender-count">No. of attenders</label><input id="admin-attender-count" type="number" min="0" value="${htmlValue(source.attender_count_per_day || 0)}"></div>
+                    </div>
+                    <div class="shift-title">Select shifts</div>
+                    <div class="shift-pills">
+                        <label class="check-row"><input id="admin-general" type="checkbox" ${source.attender_general_shift ? "checked" : ""}> General shift</label>
+                        <label class="check-row"><input id="admin-morning" type="checkbox" ${source.attender_morning_shift ? "checked" : ""}> Morning shift</label>
+                        <label class="check-row"><input id="admin-day" type="checkbox" ${source.attender_day_shift ? "checked" : ""}> Day shift</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <div class="form-card-head">
+                    <span class="form-card-icon">${receiptIconSvg()}</span>
+                    <div class="form-card-title-wrap">
+                        <h4>Charges</h4>
+                        <small>Billing for room and attenders</small>
+                    </div>
+                </div>
+                <div class="two-col">
+                    <div class="field-row"><label for="admin-room-charge-status">Room charges</label><select id="admin-room-charge-status">
+                        <option value="no" ${(source.room_charges_status || "no") === "no" ? "selected" : ""}>No</option>
+                        <option value="yes" ${source.room_charges_status === "yes" ? "selected" : ""}>Yes</option>
+                        <option value="waived_off" ${source.room_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
+                    </select></div>
+                    <div class="field-row"><label for="admin-room-charge-amount">Room charges amount</label><input id="admin-room-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.room_charges_amount || 0)}"></div>
+                    <div class="field-row"><label for="admin-attender-charge-status">Attender charges</label><select id="admin-attender-charge-status">
+                        <option value="no" ${(source.attender_charges_status || "no") === "no" ? "selected" : ""}>No</option>
+                        <option value="yes" ${source.attender_charges_status === "yes" ? "selected" : ""}>Yes</option>
+                        <option value="waived_off" ${source.attender_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
+                    </select></div>
+                    <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
+                </div>
             </div>
         </form>
     `;
@@ -3066,6 +3549,7 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     const prefixSelect = document.getElementById("admin-prefix");
     const roomSelect = document.getElementById("admin-room");
     const attender = document.getElementById("admin-attender");
+    const attenderCount = document.getElementById("admin-attender-count");
     const shiftInputs = ["admin-general", "admin-morning", "admin-day"].map((id) => document.getElementById(id));
     const budgetOptions = Array.from(document.querySelectorAll("[data-budget-head-field]"));
     if (!prefixSelect || !roomSelect) {
@@ -3091,6 +3575,10 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
 
     const syncAttender = () => {
         const enabled = attender?.checked;
+        if (attenderCount) {
+            attenderCount.disabled = !enabled;
+            if (!enabled) attenderCount.value = "0";
+        }
         shiftInputs.forEach((input) => {
             if (!input) return;
             input.disabled = !enabled;
@@ -3131,9 +3619,16 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
 
 function bindRequesterAttenderRequirement() {
     const attender = document.getElementById("req-attender");
+    const attenderCount = document.getElementById("req-attender-count");
     const shiftInputs = ["req-general", "req-morning", "req-day"].map((id) => document.getElementById(id));
     const syncAttender = () => {
         const enabled = Boolean(attender?.checked);
+        if (attenderCount) {
+            attenderCount.disabled = !enabled;
+            if (!enabled) {
+                attenderCount.value = "0";
+            }
+        }
         shiftInputs.forEach((input) => {
             if (!input) return;
             input.disabled = !enabled;
@@ -3213,12 +3708,12 @@ function readAdminBookingPayload() {
         visitor_email: val("admin-visitor-email"),
         visitor_category: document.querySelector('input[name="admin-visitor-category"]:checked')?.value || "",
         purpose_of_visit: val("admin-purpose"),
-        remarks: val("admin-remarks"),
         requestor_name: val("admin-requestor-name"),
         requestor_designation: val("admin-requestor-designation"),
         requestor_department: val("admin-requestor-department"),
         requestor_mobile: val("admin-requestor-mobile"),
         attender_required: attenderRequired,
+        attender_count_per_day: attenderRequired ? Number(val("admin-attender-count") || 0) : 0,
         attender_general_shift: attenderRequired && checked("admin-general"),
         attender_morning_shift: attenderRequired && checked("admin-morning"),
         attender_day_shift: attenderRequired && checked("admin-day"),
@@ -3243,6 +3738,8 @@ async function openAdminBookingForm(prefill = null, context = "booking") {
         const selectedRoomId = prefill?.room || prefill?.preferred_room || "";
         openActionModal({
             title: context === "request" ? "Create Booking From Request" : "Create Booking",
+            subtitle: "New Guest Booking",
+            icon: hotelIconSvg(),
             body: adminBookingFormHtml(prefill || {}, context),
             confirmText: "Create Booking",
             confirmClass: "primary-btn",
@@ -3357,13 +3854,15 @@ async function openAdminBookingRequestDetails(request) {
         const isPending = detail.status === "pending";
         openActionModal({
             title: "Create Booking From Request",
+            subtitle: "Review & Convert Request",
+            icon: hotelIconSvg(),
             body: adminBookingFormHtml(detail, "request"),
             wide: true,
             footerHtml: `
                 <div class="review-footer-stack">
                     <div>
                         <div class="form-section-title">Review Remarks</div>
-                        ${adminReviewRemarksHtml()}
+                        ${adminReviewRemarksHtml(detail)}
                     </div>
                     <div class="review-action-row">
                         ${isPending ? `
@@ -3401,23 +3900,20 @@ async function openAdminBookingRequestDetails(request) {
 
 async function runBookingRequestReviewAction(button, request) {
     const action = button.dataset.reviewAction;
-    const remarks = document.getElementById("admin-review-remarks")?.value?.trim() || "";
-    if ((action === "reject" || action === "sendBack") && !remarks) {
-        toast("Remarks are required.", "error");
-        document.getElementById("admin-review-remarks")?.focus();
-        return;
-    }
     button.disabled = true;
+    const remarks = document.getElementById("admin-review-remarks")?.value?.trim() || "";
     try {
         if (action === "approve") {
-            const { remarks: bookingRemarks, ...bookingPayload } = readAdminBookingPayload();
-            const payload = { ...bookingPayload, booking_remarks: bookingRemarks, remarks };
+            const payload = { ...readAdminBookingPayload(), remarks };
             await apiFetch(`/api/admin/booking-requests/${request.id}/approve/`, { method: "POST", body: payload });
             toast("Booking request approved and booking created.");
         } else if (action === "reject") {
             await apiFetch(`/api/admin/booking-requests/${request.id}/reject/`, { method: "POST", body: { remarks } });
             toast("Booking request rejected.");
         } else if (action === "sendBack") {
+            if (!remarks) {
+                throw new Error("Remarks are required.");
+            }
             await apiFetch(`/api/admin/booking-requests/${request.id}/send-back/`, { method: "POST", body: { remarks } });
             toast("Request sent back for correction.");
         }
@@ -3489,6 +3985,7 @@ function bookingRequestDetailRows(request) {
         ["Requestor email", request.requestor_email],
         { section: "Attender Requirement" },
         ["Attender required", yesNo(request.attender_required)],
+        ["Attender count", request.attender_count_per_day],
         ["Shifts", shiftsText(request)],
         { section: "Deletion Audit" },
         ["Deleted", yesNo(request.is_deleted)],
@@ -4024,7 +4521,6 @@ async function openAdminAvailableRoomsChooser() {
     openActionModal({
         title: "Available Rooms",
         body: `<div class="loading-state">Loading available rooms...</div>`,
-        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
     });
 
     try {
@@ -4035,36 +4531,71 @@ async function openAdminAvailableRoomsChooser() {
             return;
         }
         if (!rooms.length) {
-            body.innerHTML = `<div class="empty-state">No rooms are available for the selected range.</div>`;
+            body.innerHTML = `
+                <div class="available-room-empty">
+                    <div class="available-room-empty-emoji">&#129300;</div>
+                    <h4>No rooms available</h4>
+                    <p>No rooms are free for ${escapeHtml(selectedRangeDisplayText())}.</p>
+                </div>
+            `;
             return;
         }
         body.innerHTML = `
-            <p class="item-meta">Select a room to create a booking for ${escapeHtml(selectedRangeDisplayText())}.</p>
-            <div class="available-room-list">
-                ${rooms.map((room, index) => {
-                    const roomName = roomLabel({
-                        id: room.room_id || room.id,
-                        prefix: room.prefix || data?.prefix || state.prefix,
-                        selection_label: room.selection_label,
-                        room_name: room.room_name,
-                        number: room.room_number || room.number,
-                    });
-                    return `
-                        <button class="available-room-card" type="button" data-room-index="${index}">
-                            <span class="available-room-title">${escapeHtml(roomName)}</span>
-                            <span class="available-room-status ${room.availability_status === "partial" ? "partial" : "available"}">${escapeHtml(availableRoomStatusText(room))}</span>
-                        </button>
-                    `;
-                }).join("")}
+            <div class="rooms-chooser">
+                <div class="rooms-range-banner">
+                    <span class="rooms-range-icon">${calendarIconSvg()}</span>
+                    <div class="rooms-range-info">
+                        <div class="banner-eyebrow">Booking Window</div>
+                        <h4>${escapeHtml(selectedRangeDisplayText())}</h4>
+                        <p>Select a room below to create a new booking.</p>
+                    </div>
+                    <span class="rooms-count-chip"><span class="count-dot"></span>${rooms.length} room${rooms.length === 1 ? "" : "s"}</span>
+                </div>
+                <div class="rooms-section-label">
+                    <span class="label-bar"></span>
+                    <span>Available Rooms<small>Tap a room to continue</small></span>
+                </div>
+                <div class="available-room-list">
+                    ${rooms.map((room, index) => {
+                        const roomName = roomLabel({
+                            id: room.room_id || room.id,
+                            prefix: room.prefix || data?.prefix || state.prefix,
+                            selection_label: room.selection_label,
+                            room_name: room.room_name,
+                            number: room.room_number || room.number,
+                        });
+                        const isPartial = room.availability_status === "partial";
+                        return `
+                            <button class="available-room-card" type="button" data-room-index="${index}">
+                                <span class="available-room-icon">${roomIconSvg()}</span>
+                                <span class="available-room-body">
+                                    <span class="available-room-title-row">
+                                        <span class="available-room-title">${escapeHtml(roomName)}</span>
+                                        <span class="room-prefix-chip">${escapeHtml(room.prefix || data?.prefix || state.prefix)}</span>
+                                    </span>
+                                    <span class="available-room-status ${isPartial ? "partial" : ""}">${escapeHtml(availableRoomStatusText(room))}</span>
+                                </span>
+                            </button>
+                        `;
+                    }).join("")}
+                </div>
             </div>
         `;
         body.querySelectorAll("[data-room-index]").forEach((button) => {
             button.addEventListener("click", () => {
                 const room = rooms[Number(button.dataset.roomIndex)];
                 const arrivalTime = availableRoomPrefillArrivalTime(room, arrivalDate, "10:00");
+                state.pendingRoomLabel = roomLabel({
+                    id: room.room_id || room.id,
+                    prefix: room?.prefix || data?.prefix || state.prefix,
+                    selection_label: room.selection_label,
+                    room_name: room.room_name,
+                    number: room.room_number || room.number,
+                });
                 closeModal();
                 openAdminBookingForm({
                     room: room?.room_id || room?.id || "",
+                    room_label: state.pendingRoomLabel,
                     prefix: room?.prefix || data?.prefix || state.prefix,
                     arrival_at: buildIsoDateTime(arrivalDate, arrivalTime),
                     departure_at: buildIsoDateTime(departureDate, "18:00"),
@@ -4074,7 +4605,7 @@ async function openAdminAvailableRoomsChooser() {
     } catch (error) {
         const body = document.querySelector(".modal-body");
         if (body) {
-            body.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</div>`;
+            body.innerHTML = `<div class="available-room-empty"><div class="available-room-empty-emoji">&#9888;&#65039;</div><h4>Something went wrong</h4><p>${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</p></div>`;
         }
     }
 }
@@ -4096,7 +4627,6 @@ async function openRequesterAvailableRoomsChooser() {
     openActionModal({
         title: "Available Rooms",
         body: `<div class="loading-state">Loading available rooms...</div>`,
-        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
     });
 
     try {
@@ -4107,21 +4637,48 @@ async function openRequesterAvailableRoomsChooser() {
             return;
         }
         if (!rooms.length) {
-            body.innerHTML = `<div class="empty-state">No rooms are available for the selected range.</div>`;
+            body.innerHTML = `
+                <div class="available-room-empty">
+                    <div class="available-room-empty-emoji">&#129300;</div>
+                    <h4>No rooms available</h4>
+                    <p>No rooms are free for ${escapeHtml(selectedRangeDisplayText())}.</p>
+                </div>
+            `;
             return;
         }
         body.innerHTML = `
-            <p class="item-meta">Select a preferred room for your booking request.</p>
-            <div class="available-room-list">
-                ${rooms.map((room, index) => {
-                    const selection = requesterRoomSelection(room, data?.prefix || state.prefix);
-                    return `
-                        <button class="available-room-card" type="button" data-room-index="${index}">
-                            <span class="available-room-title">${escapeHtml(selection.roomName)}</span>
-                            <span class="available-room-status ${room.availability_status === "partial" ? "partial" : "available"}">${escapeHtml(availableRoomStatusText(room))}</span>
-                        </button>
-                    `;
-                }).join("")}
+            <div class="rooms-chooser">
+                <div class="rooms-range-banner">
+                    <span class="rooms-range-icon">${calendarIconSvg()}</span>
+                    <div class="rooms-range-info">
+                        <div class="banner-eyebrow">Booking Window</div>
+                        <h4>${escapeHtml(selectedRangeDisplayText())}</h4>
+                        <p>Select a preferred room for your booking request.</p>
+                    </div>
+                    <span class="rooms-count-chip"><span class="count-dot"></span>${rooms.length} room${rooms.length === 1 ? "" : "s"}</span>
+                </div>
+                <div class="rooms-section-label">
+                    <span class="label-bar"></span>
+                    <span>Available Rooms<small>Tap a room to continue</small></span>
+                </div>
+                <div class="available-room-list">
+                    ${rooms.map((room, index) => {
+                        const selection = requesterRoomSelection(room, data?.prefix || state.prefix);
+                        const isPartial = room.availability_status === "partial";
+                        return `
+                            <button class="available-room-card" type="button" data-room-index="${index}">
+                                <span class="available-room-icon">${roomIconSvg()}</span>
+                                <span class="available-room-body">
+                                    <span class="available-room-title-row">
+                                        <span class="available-room-title">${escapeHtml(selection.roomName)}</span>
+                                        <span class="room-prefix-chip">${escapeHtml(room.prefix || data?.prefix || state.prefix)}</span>
+                                    </span>
+                                    <span class="available-room-status ${isPartial ? "partial" : ""}">${escapeHtml(availableRoomStatusText(room))}</span>
+                                </span>
+                            </button>
+                        `;
+                    }).join("")}
+                </div>
             </div>
         `;
         body.querySelectorAll("[data-room-index]").forEach((button) => {
@@ -4134,7 +4691,7 @@ async function openRequesterAvailableRoomsChooser() {
     } catch (error) {
         const body = document.querySelector(".modal-body");
         if (body) {
-            body.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</div>`;
+            body.innerHTML = `<div class="available-room-empty"><div class="available-room-empty-emoji">&#9888;&#65039;</div><h4>Something went wrong</h4><p>${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</p></div>`;
         }
     }
 }
@@ -4222,6 +4779,7 @@ async function openRequestForm(existing = null, selectedRoom = null) {
                 <div class="form-section-title">Attender Requirement</div>
                 <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required</label>
                 <div class="two-col">
+                    <div class="field-row"><label>No. of attenders</label><input id="req-attender-count" type="number" min="0" value="${existing?.attender_count_per_day || 0}"></div>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-general" type="checkbox" ${existing?.attender_general_shift ? "checked" : ""}> General shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}> Morning shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-day" type="checkbox" ${existing?.attender_day_shift ? "checked" : ""}> Day shift</label>
@@ -4287,6 +4845,7 @@ async function submitRequesterRequest(existing = null) {
         requestor_mobile: document.getElementById("req-requestor-mobile").value.trim(),
         requestor_email: document.getElementById("req-requestor-email").value.trim() || state.user?.email || "",
         attender_required: attenderRequired,
+        attender_count_per_day: attenderRequired ? Number(document.getElementById("req-attender-count").value || 0) : 0,
         attender_general_shift: attenderRequired && document.getElementById("req-general").checked,
         attender_morning_shift: attenderRequired && document.getElementById("req-morning").checked,
         attender_day_shift: attenderRequired && document.getElementById("req-day").checked,
@@ -4332,67 +4891,20 @@ function detailsRowsHtml(rows) {
     }).join("")}</div>`;
 }
 
-function printDetailsDocument(title, rows, subtitle = "") {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) {
-        toast("Allow pop-ups to print booking details.", "error");
-        return;
-    }
-    printWindow.document.write(`
-        <!doctype html>
-        <html>
-            <head>
-                <meta charset="utf-8">
-                <title>${escapeHtml(title)}</title>
-                <style>
-                    @page { size: A4 portrait; margin: 14mm; }
-                    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                    body { margin: 0; font-family: Arial, sans-serif; color: #172033; }
-                    h1 { margin: 0 0 6px; font-size: 22px; }
-                    .subtitle { margin: 0 0 18px; color: #667085; font-size: 12px; }
-                    .section { margin: 16px 0 8px; padding: 7px 9px; background: #dbeeff; color: #0a4f8d; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-                    .row { display: grid; grid-template-columns: 42mm 1fr; gap: 8px; border-bottom: 1px solid #d8e0ea; padding: 6px 0; page-break-inside: avoid; }
-                    .label { color: #667085; font-size: 11px; font-weight: 700; }
-                    .value { font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
-                </style>
-            </head>
-            <body>
-                <h1>${escapeHtml(title)}</h1>
-                ${subtitle ? `<p class="subtitle">${escapeHtml(subtitle)}</p>` : ""}
-                ${printableDetailsRowsHtml(rows)}
-            </body>
-        </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    window.setTimeout(() => {
-        printWindow.print();
-    }, 250);
-}
-
-function printableDetailsRowsHtml(rows) {
-    return rows.map((row) => {
-        if (!Array.isArray(row)) {
-            return `<div class="section">${escapeHtml(row.section || "Details")}</div>`;
-        }
-        const [label, value] = row;
-        return `
-            <div class="row">
-                <div class="label">${escapeHtml(label)}</div>
-                <div class="value">${escapeHtml(valueOrDash(value))}</div>
-            </div>
-        `;
-    }).join("");
-}
-
-function openActionModal({ title, body, confirmText, confirmClass, onConfirm, onBind, wide = false, footerHtml = "" }) {
+function openActionModal({ title, subtitle = "", icon = "", body, confirmText, confirmClass, onConfirm, onBind, wide = false, footerHtml = "" }) {
     closeModal();
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
     backdrop.innerHTML = `
         <section class="modal-card ${wide ? "wide" : ""}" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
             <header class="modal-header">
-                <h3>${escapeHtml(title)}</h3>
+                <div class="modal-heading">
+                    ${icon ? `<span class="modal-head-icon">${icon}</span>` : ""}
+                    <div>
+                        ${subtitle ? `<div class="modal-eyebrow">${escapeHtml(subtitle)}</div>` : ""}
+                        <h3>${escapeHtml(title)}</h3>
+                    </div>
+                </div>
                 <button class="ghost-btn" type="button" data-close-modal>Close</button>
             </header>
             <div class="modal-body">${body}</div>
@@ -4434,6 +4946,7 @@ function closeModal() {
 }
 
 async function boot() {
+    initTheme();
     const savedUser = localStorage.getItem(STORAGE_KEYS.user);
     if (savedUser) {
         try {
