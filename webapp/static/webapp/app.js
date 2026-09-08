@@ -1176,7 +1176,7 @@ function renderDashboard() {
             <div class="topbar-inner">
                 <div class="topbar-title">
                     <div class="brand-mark">${brandLogoHtml()}</div>
-                    <div>
+                    <div class="brand-text">
                         <h1>Room Booking</h1>
                         <p>${escapeHtml(state.user?.name || state.user?.email || "User")} - ${escapeHtml(roleLabel)}</p>
                     </div>

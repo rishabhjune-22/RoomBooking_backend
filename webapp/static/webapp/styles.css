@@ -542,7 +542,6 @@ button:disabled {
     background: var(--surface);
     border: 1px solid rgba(15, 111, 191, 0.18);
     box-shadow: 0 2px 8px rgba(24, 39, 75, 0.08);
-    overflow: hidden;
 }
 
 .brand-logo {
@@ -550,6 +549,7 @@ button:disabled {
     height: 100%;
     display: block;
     object-fit: contain;
+    padding: 2px;
 }
 
 .brand-title {
@@ -588,14 +588,31 @@ button:disabled {
 .topbar-title {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
     min-width: 0;
+    flex-shrink: 0;
 }
 
 .topbar-title .brand-mark {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.15);
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+    flex-shrink: 0;
+}
+
+.topbar-title .brand-mark .brand-logo {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+    padding: 3px;
+}
+
+.topbar-title .brand-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
 }
 
 .topbar-title h1 {
@@ -604,13 +621,19 @@ button:disabled {
     line-height: 1.2;
     font-weight: 800;
     letter-spacing: -0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .topbar-title p {
-    margin: 3px 0 0;
+    margin: 0;
     color: rgba(255, 255, 255, 0.6);
     font-size: 12.5px;
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .toolbar-menu {
@@ -971,9 +994,24 @@ button:disabled {
 }
 
 .day-cell .day-number {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    position: relative;
+}
+
+.is-today .day-number::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--blue);
+    border: 1.5px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transform: translate(40%, -40%);
 }
 
 .today-badge {
@@ -986,12 +1024,15 @@ button:disabled {
     color: #fff;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+    line-height: 1;
+    white-space: nowrap;
 }
 
 .day-cell .availability-note {
     display: flex;
     align-items: baseline;
     gap: 3px;
+    flex-wrap: wrap;
 }
 
 .avail-count {
@@ -1004,16 +1045,16 @@ button:disabled {
 }
 
 .avail-pct {
-    display: block;
-    font-size: 10.5px;
+    display: inline;
+    font-size: 10px;
     font-weight: 700;
     opacity: 0.85;
-    margin-top: 2px;
+    margin-left: 2px;
+    white-space: nowrap;
 }
 
 .day-cell.open .today-badge { background: #16a34a; }
 .day-cell.half .today-badge { background: #ca8a04; }
-.day-cell.low .today-badge { background: #ea580c; }
 .day-cell.full .today-badge { background: #dc2626; }
 
 .filter-panel {
@@ -1201,6 +1242,8 @@ button:disabled {
     color: var(--ink);
     cursor: pointer;
     transition: all 0.15s ease;
+    overflow: hidden;
+    text-align: center;
 }
 
 .day-cell:hover:not(.empty):not(.past-date) {
@@ -1280,6 +1323,12 @@ button:disabled {
     font-weight: 800;
     font-size: 15px;
     color: var(--text-heading);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 
 .availability-note {
@@ -3150,6 +3199,28 @@ button:disabled {
         padding: 12px 16px;
     }
 
+    .topbar-title {
+        gap: 12px;
+    }
+
+    .topbar-title .brand-mark {
+        width: 44px;
+        height: 44px;
+        flex: 0 0 44px;
+    }
+
+    .topbar-title .brand-mark .brand-logo {
+        padding: 3px;
+    }
+
+    .topbar-title h1 {
+        font-size: 18px;
+    }
+
+    .topbar-title p {
+        font-size: 12px;
+    }
+
     .toolbar-menu {
         width: 100%;
         justify-content: flex-start;
@@ -3182,6 +3253,8 @@ button:disabled {
     .day-cell {
         min-height: 74px;
         padding: 6px;
+        place-content: center;
+        text-align: center;
     }
 
     .availability-note {
@@ -3214,21 +3287,35 @@ button:disabled {
     .topbar-inner {
         flex-direction: column;
         align-items: stretch;
-        gap: 10px;
-        padding: 12px;
+        gap: 12px;
+        padding: 14px 12px;
         min-height: auto;
     }
 
     .topbar-title {
-        gap: 10px;
+        gap: 12px;
+    }
+
+    .topbar-title .brand-mark {
+        width: 40px;
+        height: 40px;
+        flex: 0 0 40px;
+        border-radius: 10px;
+    }
+
+    .topbar-title .brand-mark .brand-logo {
+        padding: 3px;
     }
 
     .topbar-title h1 {
         font-size: 17px;
+        line-height: 1.25;
     }
 
     .topbar-title p {
         font-size: 11px;
+        line-height: 1.4;
+        margin-top: 2px;
     }
 
     .toolbar-menu {
@@ -3237,9 +3324,10 @@ button:disabled {
         overflow-x: auto;
         flex-wrap: nowrap;
         gap: 6px;
-        padding-bottom: 6px;
+        padding-bottom: 10px;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
+        scroll-snap-type: x proximity;
     }
 
     .toolbar-menu::-webkit-scrollbar {
@@ -3249,9 +3337,10 @@ button:disabled {
     .menu-btn {
         flex: 0 0 auto;
         white-space: nowrap;
-        padding: 8px 12px;
+        padding: 8px 14px;
         font-size: 12px;
         border-radius: 8px;
+        scroll-snap-align: start;
     }
 
     .theme-toggle,
@@ -3305,10 +3394,18 @@ button:disabled {
         min-height: 64px;
         padding: 6px 4px;
         border-radius: 8px;
+        place-content: center;
+        text-align: center;
     }
 
     .day-number {
         font-size: 13px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        gap: 3px;
+        flex-wrap: wrap;
     }
 
     .availability-note {
@@ -3321,8 +3418,9 @@ button:disabled {
     }
 
     .today-badge {
-        font-size: 8px;
-        padding: 1px 4px;
+        font-size: 7px;
+        padding: 1px 3px;
+        line-height: 1;
     }
 
     .weekday {
@@ -3473,21 +3571,34 @@ button:disabled {
 
 @media (max-width: 480px) {
     .topbar-inner {
-        padding: 10px;
-        gap: 8px;
+        padding: 12px 10px;
+        gap: 10px;
+    }
+
+    .topbar-title {
+        gap: 10px;
     }
 
     .topbar-title .brand-mark {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
+        flex: 0 0 36px;
+        border-radius: 8px;
+    }
+
+    .topbar-title .brand-mark .brand-logo {
+        padding: 3px;
     }
 
     .topbar-title h1 {
         font-size: 15px;
+        line-height: 1.25;
     }
 
     .topbar-title p {
         font-size: 10px;
+        line-height: 1.4;
+        margin-top: 2px;
     }
 
     .menu-btn {
@@ -3522,23 +3633,50 @@ button:disabled {
         min-height: 52px;
         padding: 4px 2px;
         border-radius: 6px;
+        place-content: center;
+        text-align: center;
     }
 
     .day-number {
         font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        gap: 2px;
+        flex-wrap: wrap;
+    }
+
+    .today-badge {
+        display: none;
+    }
+
+    .is-today .day-number::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--blue);
+        border: 1.5px solid #fff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        transform: translate(40%, -40%);
     }
 
     .availability-note {
         font-size: 8px;
+        line-height: 1.2;
     }
 
     .avail-pct {
-        display: none;
-    }
-
-    .today-badge {
-        font-size: 7px;
-        padding: 1px 3px;
+        display: inline;
+        font-size: 8px;
+        font-weight: 700;
+        opacity: 0.85;
+        margin-left: 1px;
+        white-space: nowrap;
     }
 
     .weekday {
@@ -3702,21 +3840,34 @@ button:disabled {
 
 @media (max-width: 380px) {
     .topbar-inner {
-        padding: 8px;
-        gap: 6px;
+        padding: 10px 8px;
+        gap: 8px;
+    }
+
+    .topbar-title {
+        gap: 8px;
     }
 
     .topbar-title .brand-mark {
-        width: 28px;
-        height: 28px;
+        width: 32px;
+        height: 32px;
+        flex: 0 0 32px;
+        border-radius: 8px;
+    }
+
+    .topbar-title .brand-mark .brand-logo {
+        padding: 2px;
     }
 
     .topbar-title h1 {
         font-size: 14px;
+        line-height: 1.25;
     }
 
     .topbar-title p {
         font-size: 9px;
+        line-height: 1.4;
+        margin-top: 2px;
     }
 
     .menu-btn {
@@ -3750,14 +3901,50 @@ button:disabled {
         min-height: 44px;
         padding: 3px 2px;
         border-radius: 6px;
+        place-content: center;
+        text-align: center;
     }
 
     .day-number {
         font-size: 11px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        gap: 1px;
+        flex-wrap: wrap;
+    }
+
+    .today-badge {
+        display: none;
+    }
+
+    .is-today .day-number::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--blue);
+        border: 1.5px solid #fff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        transform: translate(40%, -40%);
     }
 
     .availability-note {
         font-size: 7px;
+        line-height: 1.2;
+    }
+
+    .avail-pct {
+        display: inline;
+        font-size: 7px;
+        font-weight: 700;
+        opacity: 0.85;
+        margin-left: 1px;
+        white-space: nowrap;
     }
 
     .weekday {
@@ -3786,6 +3973,20 @@ button:disabled {
     .building-tabs .chip {
         padding: 4px 10px;
         font-size: 10px;
+        border-radius: 6px;
+    }
+
+    .menu-btn {
+        padding: 5px 8px;
+        font-size: 10px;
+        gap: 3px;
+    }
+
+    .theme-toggle,
+    .notification-bell {
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
         border-radius: 6px;
     }
 
