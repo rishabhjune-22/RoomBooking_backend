@@ -1465,9 +1465,14 @@ function renderStatsStrip() {
         return;
     }
     const days = group.calendar || [];
-    const sample = days.find((d) => !isPastCalendarDate(d.date)) || days[0];
-    const total = sample ? Math.max(0, Number(sample.total_rooms || 0)) : 0;
-    const avail = sample ? Math.max(0, Number(sample.available_rooms || 0)) : 0;
+    const todayStr = todayIso();
+    const dayMap = Object.fromEntries(days.map((d) => [d.date, d]));
+    const selectedDay = state.rangeStart && dayMap[state.rangeStart] ? dayMap[state.rangeStart] : null;
+    const todayDay = dayMap[todayStr] || null;
+    const futureDay = days.find((d) => !isPastCalendarDate(d.date)) || null;
+    const sample = selectedDay || todayDay || futureDay || days[0];
+    const total = Math.max(0, Number(group.total_rooms || sample.total_rooms || 0));
+    const avail = Math.max(0, Number(sample.available_rooms || 0));
     strip.querySelector("#stat-total").textContent = total;
     strip.querySelector("#stat-available").textContent = avail;
     strip.querySelector("#stat-booked").textContent = Math.max(0, total - avail);
@@ -1641,11 +1646,17 @@ function renderCalendarSide(content = "") {
         side.innerHTML = `<div class="empty-state">No building data.</div>`;
         return;
     }
+    const days = group.calendar || [];
+    const todayStr = todayIso();
+    const dayMap = Object.fromEntries(days.map((d) => [d.date, d]));
+    const selectedDay = state.rangeStart && dayMap[state.rangeStart] ? dayMap[state.rangeStart] : null;
+    const todayDay = dayMap[todayStr] || null;
+    const futureDay = days.find((d) => !isPastCalendarDate(d.date)) || null;
+    const day = selectedDay || todayDay || futureDay || days[0];
+    const total = Math.max(0, Number(group.total_rooms || 0));
+    const avail = Math.max(0, Number(day?.available_rooms || 0));
+    const pct = total > 0 ? Math.round((avail / total) * 100) : 0;
     if (isAdminLike()) {
-        const total = Math.max(0, Number(group.total_rooms || 0));
-        const day = (group.calendar || [])[0];
-        const avail = Math.max(0, Number(day?.available_rooms || 0));
-        const pct = total > 0 ? Math.round((avail / total) * 100) : 0;
         side.innerHTML = content || `
             <div class="details-list">
                 <div class="side-head">
@@ -1671,7 +1682,7 @@ function renderCalendarSide(content = "") {
         `;
         return;
     }
-    const reqDay = (group.calendar || [])[0];
+    const reqDay = day;
     const reqTotal = Math.max(0, Number(group.total_rooms || 0));
     const reqAvail = Math.max(0, Number(reqDay?.available_rooms || 0));
     const reqPct = reqTotal > 0 ? Math.round((reqAvail / reqTotal) * 100) : 0;

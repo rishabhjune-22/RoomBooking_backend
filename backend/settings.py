@@ -60,7 +60,7 @@ SECRET_KEY = env_required("DJANGO_SECRET_KEY", "development-only-secret-key")
 ADMIN_SIGNUP_CODE = env_required("ADMIN_SIGNUP_CODE", "" if IS_DEPLOYED else "dev-admin-signup-code")
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
-    "" if IS_DEPLOYED else "127.0.0.1,localhost,192.168.1.19,10.10.3.189,10.50.48.251",
+    "" if IS_DEPLOYED else "127.0.0.1,localhost,192.168.1.19,10.10.3.189,10.50.48.251,10.50.27.89",
 )
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 DJANGO_ADMIN_ENABLED = env_bool("DJANGO_ADMIN_ENABLED", not IS_DEPLOYED)
