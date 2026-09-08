@@ -1007,12 +1007,12 @@ button:disabled {
     position: absolute;
     top: 0;
     right: 0;
-    width: 8px;
-    height: 8px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     background: var(--blue);
-    border: 1.5px solid #fff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    border: 1px solid #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
     transform: translate(40%, -40%);
 }
 
@@ -3662,12 +3662,12 @@ button:disabled {
         position: absolute;
         top: 0;
         right: 0;
-        width: 7px;
-        height: 7px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
         background: var(--blue);
-        border: 1.5px solid #fff;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        border: 1px solid #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         transform: translate(40%, -40%);
     }
 
@@ -3930,12 +3930,12 @@ button:disabled {
         position: absolute;
         top: 0;
         right: 0;
-        width: 6px;
-        height: 6px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
         background: var(--blue);
-        border: 1.5px solid #fff;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        border: 1px solid #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         transform: translate(40%, -40%);
     }
 
