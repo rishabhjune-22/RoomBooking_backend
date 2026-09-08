@@ -851,11 +851,6 @@ button:disabled {
     margin-bottom: 6px;
 }
 
-.welcome-emoji {
-    font-size: 30px;
-    line-height: 1;
-}
-
 .welcome-line h2 {
     margin: 0;
     font-size: 28px;
@@ -3129,7 +3124,7 @@ button:disabled {
     font-weight: 900;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
     .login-shell {
         grid-template-columns: 1fr;
     }
@@ -3149,19 +3144,39 @@ button:disabled {
         grid-template-columns: 1fr;
     }
 
-    .topbar-inner,
-    .section-header,
-    .item-main {
-        align-items: stretch;
-        flex-direction: column;
+    .topbar-inner {
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 12px 16px;
+    }
+
+    .toolbar-menu {
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .toolbar-menu::-webkit-scrollbar {
+        display: none;
+    }
+
+    .menu-btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
     }
 
     .stats-strip {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .toolbar-menu {
-        justify-content: flex-start;
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
     }
 
     .day-cell {
@@ -3189,31 +3204,70 @@ button:disabled {
     }
 }
 
-@media (max-width: 560px) {
-    .login-card,
-    .calendar-panel,
-    .side-panel {
-        padding: 14px;
+@media (max-width: 768px) {
+    .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
     }
 
-    .login-form-side {
-        padding: 32px 20px;
+    .topbar-inner {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        padding: 12px;
+        min-height: auto;
     }
 
-    .auth-welcome {
-        font-size: 22px;
+    .topbar-title {
+        gap: 10px;
+    }
+
+    .topbar-title h1 {
+        font-size: 17px;
+    }
+
+    .topbar-title p {
+        font-size: 11px;
+    }
+
+    .toolbar-menu {
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding-bottom: 6px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .toolbar-menu::-webkit-scrollbar {
+        display: none;
+    }
+
+    .menu-btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 8px 12px;
+        font-size: 12px;
+        border-radius: 8px;
+    }
+
+    .theme-toggle,
+    .notification-bell {
+        width: 36px;
+        height: 36px;
+        flex: 0 0 36px;
+        border-radius: 8px;
     }
 
     .dashboard {
-        padding: 14px 10px 32px;
-    }
-
-    .calendar-grid {
-        gap: 4px;
+        padding: 12px 10px 24px;
     }
 
     .stats-strip {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
     }
 
@@ -3221,99 +3275,546 @@ button:disabled {
         padding: 14px;
     }
 
-    .welcome-line h2 {
+    .stat-value {
         font-size: 22px;
     }
 
-    .available-room-card {
+    .calendar-panel,
+    .side-panel,
+    .sheet-panel {
+        padding: 14px;
+    }
+
+    .calendar-controls {
         flex-wrap: wrap;
+        gap: 10px;
     }
 
-    .rooms-range-banner {
-        flex-wrap: wrap;
+    .month-title {
+        font-size: 18px;
+        order: -1;
+        width: 100%;
+        text-align: center;
     }
 
-    .rooms-count-chip {
-        margin-left: 0;
+    .calendar-grid {
+        gap: 4px;
     }
 
-    .booking-summary-bar {
+    .day-cell {
+        min-height: 64px;
+        padding: 6px 4px;
+        border-radius: 8px;
+    }
+
+    .day-number {
+        font-size: 13px;
+    }
+
+    .availability-note {
+        font-size: 9px;
+        line-height: 1.2;
+    }
+
+    .avail-pct {
+        font-size: 9px;
+    }
+
+    .today-badge {
+        font-size: 8px;
+        padding: 1px 4px;
+    }
+
+    .weekday {
+        font-size: 10px;
+        padding: 6px 0;
+    }
+
+    .building-tabs .chip {
+        padding: 6px 14px;
+        font-size: 12px;
+    }
+
+    .filter-panel {
+        padding: 14px;
+    }
+
+    .filter-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .filter-actions {
+        justify-content: stretch;
+    }
+
+    .filter-actions button {
+        flex: 1;
+    }
+
+    .booking-card {
+        padding: 16px;
+    }
+
+    .booking-card-header {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .booking-identity {
+        gap: 10px;
+    }
+
+    .booking-avatar {
+        width: 42px;
+        height: 42px;
+        flex: 0 0 42px;
+        font-size: 15px;
+        border-radius: 12px;
+    }
+
+    .booking-guest {
+        font-size: 15px;
+    }
+
+    .status-chip {
+        align-self: flex-start;
+        font-size: 11px;
+        padding: 4px 10px;
+    }
+
+    .booking-timeline {
+        padding: 12px;
+        gap: 10px;
+    }
+
+    .tl-badge {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 28px;
+        font-size: 10px;
+        border-radius: 8px;
+    }
+
+    .tl-date {
+        font-size: 13px;
+    }
+
+    .tl-date strong {
+        font-size: 14px;
+    }
+
+    .tl-time {
+        font-size: 12px;
+    }
+
+    .booking-card-foot {
         flex-direction: column;
         align-items: flex-start;
-        gap: 12px;
+        gap: 8px;
     }
 
-    .booking-summary-meta {
-        width: 100%;
+    .card-list {
+        gap: 10px;
     }
 
-    .bs-chip-room {
-        max-width: 100%;
+    .item-card {
+        border-radius: 14px;
+    }
+
+    .sheet-scroll {
+        max-height: 50vh;
+    }
+
+    .excel-table th,
+    .excel-table td {
+        min-width: 120px;
+        max-width: 160px;
+        padding: 6px;
+        font-size: 11px;
+    }
+
+    .excel-table .date-col {
+        min-width: 100px;
+        max-width: 100px;
+    }
+
+    .modal-body {
+        padding: 16px;
     }
 
     .form-card {
         padding: 14px;
     }
 
-    .budget-option {
+    .action-modal {
+        padding: 16px;
+    }
+
+    .action-modal-head {
+        padding-bottom: 14px;
+    }
+
+    .action-modal-foot {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .action-modal-foot button {
+        width: 100%;
+    }
+
+    .primary-btn,
+    .outline-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .topbar-inner {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    .topbar-title .brand-mark {
+        width: 32px;
+        height: 32px;
+    }
+
+    .topbar-title h1 {
+        font-size: 15px;
+    }
+
+    .topbar-title p {
+        font-size: 10px;
+    }
+
+    .menu-btn {
+        padding: 7px 10px;
+        font-size: 11px;
+        gap: 4px;
+    }
+
+    .dashboard {
+        padding: 10px 8px 20px;
+    }
+
+    .stats-strip {
         grid-template-columns: 1fr;
         gap: 8px;
     }
 
-    .budget-option .check-row {
-        white-space: normal;
+    .stat-card {
+        padding: 12px;
     }
 
-    .shift-pills {
-        grid-template-columns: 1fr;
+    .stat-value {
+        font-size: 20px;
     }
 
-    .booking-card {
-        padding: 16px 16px 14px;
-    }
-
-    .booking-timeline {
-        grid-template-columns: 1fr;
-        gap: 10px;
-    }
-
-    .tl-node-out {
-        text-align: left;
-        grid-template-columns: auto 1fr;
-    }
-
-    .tl-node-out .tl-content {
-        order: 0;
-    }
-
-    .tl-node-out .tl-badge {
-        order: 0;
-    }
-
-    .tl-node-out .tl-badge {
-        order: 0;
+    .calendar-panel,
+    .side-panel {
+        padding: 10px;
     }
 
     .day-cell {
-        min-height: 64px;
+        min-height: 52px;
+        padding: 4px 2px;
+        border-radius: 6px;
     }
 
-    .detail-row {
-        grid-template-columns: 1fr;
-        gap: 4px;
-    }
-
-    .excel-table th,
-    .excel-table td {
-        min-width: 124px;
-        max-width: 160px;
-        padding: 7px;
+    .day-number {
         font-size: 12px;
     }
 
-    .excel-table .date-col {
-        min-width: 104px;
-        max-width: 104px;
+    .availability-note {
+        font-size: 8px;
+    }
+
+    .avail-pct {
+        display: none;
+    }
+
+    .today-badge {
+        font-size: 7px;
+        padding: 1px 3px;
+    }
+
+    .weekday {
+        font-size: 9px;
+    }
+
+    .calendar-controls {
+        gap: 8px;
+    }
+
+    .month-title {
+        font-size: 16px;
+    }
+
+    .month-nav-btn {
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        border-radius: 8px;
+    }
+
+    .building-tabs {
+        gap: 6px;
+    }
+
+    .building-tabs .chip {
+        padding: 5px 12px;
+        font-size: 11px;
+        border-radius: 8px;
+    }
+
+    .booking-card {
+        padding: 14px;
+        border-radius: 14px;
+    }
+
+    .booking-avatar {
+        width: 38px;
+        height: 38px;
+        flex: 0 0 38px;
+        font-size: 14px;
+        border-radius: 10px;
+    }
+
+    .booking-guest {
+        font-size: 14px;
+    }
+
+    .booking-org {
+        font-size: 12px;
+    }
+
+    .booking-timeline {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    .tl-badge {
+        width: 26px;
+        height: 26px;
+        flex: 0 0 26px;
+        font-size: 9px;
+        border-radius: 7px;
+    }
+
+    .tl-label {
+        font-size: 9px;
+    }
+
+    .tl-day {
+        font-size: 11px;
+    }
+
+    .tl-date {
+        font-size: 12px;
+    }
+
+    .tl-date strong {
+        font-size: 13px;
+    }
+
+    .tl-time {
+        font-size: 11px;
+    }
+
+    .book-chip {
+        padding: 5px 10px;
+        font-size: 11px;
+    }
+
+    .book-chip svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .booking-purpose {
+        padding: 8px 10px;
+    }
+
+    .booking-purpose p {
+        font-size: 12px;
+    }
+
+    .section-header h2 {
+        font-size: 20px;
+    }
+
+    .page-header-icon {
+        width: 36px;
+        height: 36px;
+        flex: 0 0 36px;
+    }
+
+    .page-header-icon svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .segmented {
+        gap: 3px;
+        padding: 3px;
+    }
+
+    .segment-btn {
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+
+    .filter-grid {
+        gap: 8px;
+    }
+
+    .field-row label {
+        font-size: 12px;
+    }
+
+    .field-row input,
+    .field-row select,
+    .field-row textarea {
+        padding: 10px 12px;
+        font-size: 14px;
+    }
+
+    .action-modal {
+        padding: 12px;
+        border-radius: 14px;
+    }
+
+    .action-modal-head {
+        padding: 14px;
+    }
+
+    .action-modal-body {
+        padding: 14px;
+    }
+
+    .action-modal-foot {
+        padding: 14px;
+    }
+}
+
+@media (max-width: 380px) {
+    .topbar-inner {
+        padding: 8px;
+        gap: 6px;
+    }
+
+    .topbar-title .brand-mark {
+        width: 28px;
+        height: 28px;
+    }
+
+    .topbar-title h1 {
+        font-size: 14px;
+    }
+
+    .topbar-title p {
+        font-size: 9px;
+    }
+
+    .menu-btn {
+        padding: 6px 8px;
+        font-size: 10px;
+    }
+
+    .dashboard {
+        padding: 8px 6px 16px;
+    }
+
+    .stats-strip {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .stat-card {
+        padding: 10px;
+    }
+
+    .stat-value {
+        font-size: 18px;
+    }
+
+    .calendar-panel,
+    .side-panel {
+        padding: 8px;
+    }
+
+    .day-cell {
+        min-height: 44px;
+        padding: 3px 2px;
+        border-radius: 6px;
+    }
+
+    .day-number {
+        font-size: 11px;
+    }
+
+    .availability-note {
+        font-size: 7px;
+    }
+
+    .weekday {
+        font-size: 8px;
+    }
+
+    .calendar-controls {
+        gap: 6px;
+    }
+
+    .month-title {
+        font-size: 15px;
+    }
+
+    .month-nav-btn {
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+        border-radius: 6px;
+    }
+
+    .building-tabs {
+        gap: 4px;
+    }
+
+    .building-tabs .chip {
+        padding: 4px 10px;
+        font-size: 10px;
+        border-radius: 6px;
+    }
+
+    .booking-card {
+        padding: 12px;
+    }
+
+    .booking-avatar {
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        font-size: 13px;
+        border-radius: 10px;
+    }
+
+    .booking-guest {
+        font-size: 13px;
+    }
+
+    .booking-timeline {
+        padding: 8px;
+    }
+
+    .tl-badge {
+        width: 24px;
+        height: 24px;
+        flex: 0 0 24px;
+        font-size: 9px;
+        border-radius: 6px;
     }
 }
 

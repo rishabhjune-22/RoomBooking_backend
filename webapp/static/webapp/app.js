@@ -230,6 +230,18 @@ function formatDateOnly(value) {
     }).format(new Date(`${value}T00:00:00+05:30`));
 }
 
+function greetingForNow() {
+    const hour = new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "numeric",
+        hour12: false,
+    }).format(new Date());
+    const h = Number(hour);
+    if (h >= 5 && h < 12) return "Good Morning";
+    if (h >= 12 && h < 17) return "Good Afternoon";
+    return "Good Evening";
+}
+
 function formatDateRange(item) {
     return `${formatDateTime(item.arrival_at)} to ${formatDateTime(item.departure_at)}`;
 }
@@ -1374,8 +1386,7 @@ function renderCalendarView() {
         <div class="section-header">
             <div>
                 <div class="welcome-line">
-                    <span class="welcome-emoji">&#128075;</span>
-                    <h2>${firstName ? `Welcome, ${escapeHtml(firstName)}` : "Room Availability Calendar"}</h2>
+                    <h2>${firstName ? `${greetingForNow()}, ${escapeHtml(firstName)}` : "Room Availability Calendar"}</h2>
                 </div>
                 <p>${isAdminLike() ? "Manage availability and bookings across all buildings." : "Browse availability and place your booking requests."}</p>
             </div>
