@@ -542,6 +542,7 @@ button:disabled {
     background: var(--surface);
     border: 1px solid rgba(15, 111, 191, 0.18);
     box-shadow: 0 2px 8px rgba(24, 39, 75, 0.08);
+    overflow: hidden;
 }
 
 .brand-logo {
@@ -549,7 +550,7 @@ button:disabled {
     height: 100%;
     display: block;
     object-fit: contain;
-    padding: 2px;
+    padding: 0;
 }
 
 .brand-title {
@@ -598,6 +599,7 @@ button:disabled {
     border: 1px solid rgba(255, 255, 255, 0.15);
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
     flex-shrink: 0;
+    overflow: hidden;
 }
 
 .topbar-title .brand-mark .brand-logo {
@@ -605,7 +607,7 @@ button:disabled {
     height: 100%;
     display: block;
     object-fit: contain;
-    padding: 3px;
+    padding: 0;
 }
 
 .topbar-title .brand-text {
@@ -3210,7 +3212,7 @@ button:disabled {
     }
 
     .topbar-title .brand-mark .brand-logo {
-        padding: 3px;
+        padding: 0;
     }
 
     .topbar-title h1 {
@@ -3304,7 +3306,7 @@ button:disabled {
     }
 
     .topbar-title .brand-mark .brand-logo {
-        padding: 3px;
+        padding: 0;
     }
 
     .topbar-title h1 {
@@ -3349,6 +3351,10 @@ button:disabled {
         height: 36px;
         flex: 0 0 36px;
         border-radius: 8px;
+    }
+
+    .avatar-status-ring {
+        display: none;
     }
 
     .dashboard {
@@ -3587,7 +3593,7 @@ button:disabled {
     }
 
     .topbar-title .brand-mark .brand-logo {
-        padding: 3px;
+        padding: 0;
     }
 
     .topbar-title h1 {
@@ -3856,7 +3862,7 @@ button:disabled {
     }
 
     .topbar-title .brand-mark .brand-logo {
-        padding: 2px;
+        padding: 0;
     }
 
     .topbar-title h1 {
