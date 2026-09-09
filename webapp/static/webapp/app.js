@@ -1528,9 +1528,10 @@ function changeMonth(delta) {
 async function loadCalendar() {
     document.getElementById("month-title").textContent = monthName(state.calendarYear, state.calendarMonth);
     document.getElementById("calendar-grid").innerHTML = `<div class="loading-state" style="grid-column:1 / -1">Loading availability...</div>`;
+    const cacheBuster = `_=${Date.now()}`;
     const endpoint = isAdminLike()
-        ? `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`
-        : `/api/requester/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
+        ? `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}&${cacheBuster}`
+        : `/api/requester/availability/?month=${state.calendarMonth}&year=${state.calendarYear}&${cacheBuster}`;
     try {
         state.availability = await apiFetch(endpoint);
         drawCalendar();
@@ -1731,11 +1732,12 @@ async function loadAdminDateDetails(dateValue) {
     renderCalendarSide(`<div class="loading-state">Loading details...</div>`);
     try {
         const isRange = state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd;
+        const cacheBuster = `_=${Date.now()}`;
         let url;
         if (isRange) {
-            url = `/api/bookings/availability/details/?start_date=${encodeURIComponent(state.rangeStart)}&end_date=${encodeURIComponent(state.rangeEnd)}&prefix=${encodeURIComponent(state.prefix)}`;
+            url = `/api/bookings/availability/details/?start_date=${encodeURIComponent(state.rangeStart)}&end_date=${encodeURIComponent(state.rangeEnd)}&prefix=${encodeURIComponent(state.prefix)}&${cacheBuster}`;
         } else {
-            url = `/api/bookings/availability/details/?date=${encodeURIComponent(dateValue)}&prefix=${encodeURIComponent(state.prefix)}`;
+            url = `/api/bookings/availability/details/?date=${encodeURIComponent(dateValue)}&prefix=${encodeURIComponent(state.prefix)}&${cacheBuster}`;
         }
         const data = await apiFetch(url);
         const rows = data.bookings || [];

@@ -967,6 +967,13 @@ class RoomAvailabilityCalendarView(APIView):
     throttle_scope = "availability"
 
     def get(self, request):
+        response = self._get_calendar_response(request)
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
+
+    def _get_calendar_response(self, request):
         today = timezone.localdate()
 
         query_serializer = RoomAvailabilityCalendarQuerySerializer(
@@ -1003,11 +1010,6 @@ class RoomAvailabilityCalendarView(APIView):
                 Booking.objects,
                 month_start,
                 month_end - timedelta(days=1),
-            )
-            .filter(
-                departure_at__gte=datetime.combine(
-                    today, time.min, tzinfo=timezone.get_current_timezone()
-                )
             )
             .only("id", "room_id", "arrival_at", "departure_at")
             .order_by("arrival_at", "id")
@@ -1077,6 +1079,13 @@ class RoomAvailabilityDetailsView(APIView):
     throttle_scope = "availability"
 
     def get(self, request):
+        response = self._get_details_response(request)
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
+
+    def _get_details_response(self, request):
         query_serializer = RoomAvailabilityDetailsQuerySerializer(
             data=request.query_params
         )
@@ -1217,6 +1226,13 @@ class AvailableRoomsByDateView(APIView):
     throttle_scope = "availability"
 
     def get(self, request):
+        response = self._get_rooms_response(request)
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
+
+    def _get_rooms_response(self, request):
         query_serializer = AvailableRoomsByDateQuerySerializer(
             data=request.query_params
         )
@@ -1287,6 +1303,13 @@ class AvailableRoomsByDateRangeView(APIView):
     throttle_scope = "availability"
 
     def get(self, request):
+        response = self._get_range_response(request)
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
+
+    def _get_range_response(self, request):
         query_serializer = AvailableRoomsByDateRangeQuerySerializer(
             data=request.query_params
         )
