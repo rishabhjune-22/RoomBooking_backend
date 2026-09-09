@@ -673,8 +673,19 @@ class RoomAvailabilityCalendarQuerySerializer(serializers.Serializer):
 
 
 class RoomAvailabilityDetailsQuerySerializer(serializers.Serializer):
-    date = serializers.DateField(required=True)
+    date = serializers.DateField(required=False)
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
     prefix = serializers.CharField(required=False, allow_blank=False)
+
+    def validate(self, attrs):
+        if not attrs.get("date") and not (attrs.get("start_date") and attrs.get("end_date")):
+            raise serializers.ValidationError("Either date or start_date and end_date are required.")
+        if attrs.get("date") and (attrs.get("start_date") or attrs.get("end_date")):
+            raise serializers.ValidationError("Provide either date or start_date/end_date, not both.")
+        if attrs.get("start_date") and attrs.get("end_date") and attrs["start_date"] > attrs["end_date"]:
+            attrs["start_date"], attrs["end_date"] = attrs["end_date"], attrs["start_date"]
+        return attrs
 
 
 class AvailableRoomsByDateQuerySerializer(serializers.Serializer):

@@ -1004,6 +1004,11 @@ class RoomAvailabilityCalendarView(APIView):
                 month_start,
                 month_end - timedelta(days=1),
             )
+            .filter(
+                departure_at__gte=datetime.combine(
+                    today, time.min, tzinfo=timezone.get_current_timezone()
+                )
+            )
             .only("id", "room_id", "arrival_at", "departure_at")
             .order_by("arrival_at", "id")
         )
@@ -1079,8 +1084,8 @@ class RoomAvailabilityDetailsView(APIView):
             return invalid_query_params_response(query_serializer)
 
         query_params = query_serializer.validated_data
-        selected_date = query_params["date"]
         prefix = query_params.get("prefix")
+        is_range = bool(query_params.get("start_date") and query_params.get("end_date"))
 
         if prefix:
             room_ids = list(
@@ -1092,7 +1097,9 @@ class RoomAvailabilityDetailsView(APIView):
                 return api_success(
                     "Availability details fetched successfully.",
                     {
-                        "date": selected_date,
+                        "date": query_params.get("date"),
+                        "start_date": query_params.get("start_date"),
+                        "end_date": query_params.get("end_date"),
                         "prefix": prefix,
                         "total_bookings": 0,
                         "bookings": [],
@@ -1101,24 +1108,48 @@ class RoomAvailabilityDetailsView(APIView):
         else:
             room_ids = None
 
-        bookings_query = filter_active_bookings_overlapping_date(
-            Booking.objects.select_related("room"),
-            selected_date,
-        ).only(
-            "id",
-            "room_id",
-            "visitor_name",
-            "visitor_gender",
-            "requestor_name",
-            "arrival_at",
-            "departure_at",
-            "status",
-            "room__id",
-            "room__prefix",
-            "room__number",
-            "room__room_type",
-            "room__has_attached_bath",
-        )
+        if is_range:
+            start_date = query_params["start_date"]
+            end_date = query_params["end_date"]
+            bookings_query = filter_active_bookings_overlapping_range(
+                Booking.objects.select_related("room"),
+                start_date,
+                end_date,
+            ).only(
+                "id",
+                "room_id",
+                "visitor_name",
+                "visitor_gender",
+                "requestor_name",
+                "arrival_at",
+                "departure_at",
+                "status",
+                "room__id",
+                "room__prefix",
+                "room__number",
+                "room__room_type",
+                "room__has_attached_bath",
+            )
+        else:
+            selected_date = query_params["date"]
+            bookings_query = filter_active_bookings_overlapping_date(
+                Booking.objects.select_related("room"),
+                selected_date,
+            ).only(
+                "id",
+                "room_id",
+                "visitor_name",
+                "visitor_gender",
+                "requestor_name",
+                "arrival_at",
+                "departure_at",
+                "status",
+                "room__id",
+                "room__prefix",
+                "room__number",
+                "room__room_type",
+                "room__has_attached_bath",
+            )
 
         if room_ids is not None:
             bookings_query = bookings_query.filter(room_id__in=room_ids)
@@ -1132,30 +1163,48 @@ class RoomAvailabilityDetailsView(APIView):
             arrival_date = local_arrival.date()
             departure_date = local_departure.date()
 
-            if arrival_date <= selected_date <= departure_date:
-                booking_details.append(
-                    {
-                        "booking_id": booking.id,
-                        "room_id": booking.room.id,
-                        "room_name": str(booking.room),
-                        "selection_label": booking.room.selection_label,
-
-                        "guest_name": booking.visitor_name,
-                        "guest_gender": booking.visitor_gender,
-
-                        "requestor_name": booking.requestor_name,
-
-                        "arrival_at": booking.arrival_at,
-                        "departure_at": booking.departure_at,
-
-                        "status": booking.status,
-                    }
-                )
+            if is_range:
+                start_date = query_params["start_date"]
+                end_date = query_params["end_date"]
+                if arrival_date <= end_date and departure_date >= start_date:
+                    booking_details.append(
+                        {
+                            "booking_id": booking.id,
+                            "room_id": booking.room.id,
+                            "room_name": str(booking.room),
+                            "selection_label": booking.room.selection_label,
+                            "guest_name": booking.visitor_name,
+                            "guest_gender": booking.visitor_gender,
+                            "requestor_name": booking.requestor_name,
+                            "arrival_at": booking.arrival_at,
+                            "departure_at": booking.departure_at,
+                            "status": booking.status,
+                        }
+                    )
+            else:
+                selected_date = query_params["date"]
+                if arrival_date <= selected_date <= departure_date:
+                    booking_details.append(
+                        {
+                            "booking_id": booking.id,
+                            "room_id": booking.room.id,
+                            "room_name": str(booking.room),
+                            "selection_label": booking.room.selection_label,
+                            "guest_name": booking.visitor_name,
+                            "guest_gender": booking.visitor_gender,
+                            "requestor_name": booking.requestor_name,
+                            "arrival_at": booking.arrival_at,
+                            "departure_at": booking.departure_at,
+                            "status": booking.status,
+                        }
+                    )
 
         return api_success(
             "Availability details fetched successfully.",
             {
-                "date": selected_date,
+                "date": query_params.get("date"),
+                "start_date": query_params.get("start_date"),
+                "end_date": query_params.get("end_date"),
                 "prefix": prefix,
                 "total_bookings": len(booking_details),
                 "bookings": booking_details,

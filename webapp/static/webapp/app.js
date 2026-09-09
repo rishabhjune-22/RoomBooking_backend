@@ -222,12 +222,13 @@ function formatDateOnly(value) {
     if (!value) {
         return "-";
     }
+    const datePart = String(value).split("T")[0];
     return new Intl.DateTimeFormat("en-IN", {
         timeZone: "Asia/Kolkata",
         day: "2-digit",
         month: "short",
         year: "numeric",
-    }).format(new Date(`${value}T00:00:00+05:30`));
+    }).format(new Date(`${datePart}T00:00:00+05:30`));
 }
 
 function greetingForNow() {
@@ -1729,15 +1730,23 @@ function renderCalendarSide(content = "") {
 async function loadAdminDateDetails(dateValue) {
     renderCalendarSide(`<div class="loading-state">Loading details...</div>`);
     try {
-        const data = await apiFetch(`/api/bookings/availability/details/?date=${dateValue}&prefix=${encodeURIComponent(state.prefix)}`);
+        const isRange = state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd;
+        let url;
+        if (isRange) {
+            url = `/api/bookings/availability/details/?start_date=${encodeURIComponent(state.rangeStart)}&end_date=${encodeURIComponent(state.rangeEnd)}&prefix=${encodeURIComponent(state.prefix)}`;
+        } else {
+            url = `/api/bookings/availability/details/?date=${encodeURIComponent(dateValue)}&prefix=${encodeURIComponent(state.prefix)}`;
+        }
+        const data = await apiFetch(url);
         const rows = data.bookings || [];
+        const rangeText = isRange ? `${formatDateOnly(state.rangeStart)} - ${formatDateOnly(state.rangeEnd)}` : formatDateOnly(dateValue);
         renderCalendarSide(`
             <div class="details-list">
                 <div>
                     <h3 style="margin:0 0 6px">${escapeHtml(state.prefix)} Availability</h3>
-                    <p class="item-meta">${rows.length} booking${rows.length === 1 ? "" : "s"} touching this date.</p>
+                    <p class="item-meta">${rows.length} booking${rows.length === 1 ? "" : "s"} in selected range.</p>
                 </div>
-                <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
+                <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(rangeText)}</span></div>
                 ${rows.length ? rows.map((booking) => `
                     <article class="item-card">
                         <div class="item-main">
@@ -1747,8 +1756,11 @@ async function loadAdminDateDetails(dateValue) {
                             </div>
                             <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
                         </div>
+                        <div class="item-meta" style="margin-top:8px">
+                            ${escapeHtml(formatDateOnly(booking.arrival_at))} - ${escapeHtml(formatDateOnly(booking.departure_at))}
+                        </div>
                     </article>
-                `).join("") : `<div class="empty-state">No bookings on this date.</div>`}
+                `).join("") : `<div class="empty-state">No bookings in selected range.</div>`}
             </div>
         `);
     } catch (error) {
