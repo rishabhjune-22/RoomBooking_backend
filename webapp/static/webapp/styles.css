@@ -1428,6 +1428,19 @@ button:disabled {
     margin-top: 0;
 }
 
+.previous-booking-fill {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.previous-booking-fill .check-row {
+    margin: 0;
+}
+
 .review-remarks-field textarea {
     min-height: 88px;
 }

@@ -112,6 +112,7 @@ const state = {
         admin_accounts: [],
         my_requests: [],
     },
+    latestRecentBooking: null,
 };
 
 function styleRequiredMarks(root = document) {
@@ -1587,6 +1588,10 @@ function buildCreatedBookingSummary(created = {}, payload = {}, rooms = []) {
         logistics_name: payload.logistics_name || created.logistics_name || "",
         logistics_designation: payload.logistics_designation || created.logistics_designation || "",
         logistics_mobile: payload.logistics_mobile || created.logistics_mobile || "",
+        room_charges_status: payload.room_charges_status || created.room_charges_status || "no",
+        room_charges_amount: payload.room_charges_amount ?? created.room_charges_amount ?? 0,
+        attender_charges_status: payload.attender_charges_status || created.attender_charges_status || "no",
+        attender_charges_amount: payload.attender_charges_amount ?? created.attender_charges_amount ?? 0,
         status: created.status || payload.status || "active",
     };
 }
@@ -1610,10 +1615,17 @@ function createMoreBookingPrefillFromSummary(booking = {}) {
         logistics_name: booking.logistics_name || "",
         logistics_designation: booking.logistics_designation || "",
         logistics_mobile: booking.logistics_mobile || "",
+        room_charges_status: booking.room_charges_status || "no",
+        room_charges_amount: booking.room_charges_amount ?? 0,
+        attender_charges_status: booking.attender_charges_status || "no",
+        attender_charges_amount: booking.attender_charges_amount ?? 0,
     };
 }
 
 async function showCreatedBookingInCalendarSide(booking) {
+    if (booking) {
+        state.latestRecentBooking = booking;
+    }
     if (state.view !== "calendar" || !booking) {
         await refreshVisibleBookingSurface();
         return;
@@ -1663,14 +1675,8 @@ function renderCreatedBookingSidePanel(booking) {
                 <p class="item-meta">${escapeHtml(formatDateRange(booking))}</p>
                 ${booking.booking_reference_number ? `<p class="item-meta">Reference #${escapeHtml(booking.booking_reference_number)}</p>` : ""}
             </article>
-            <button class="outline-btn" id="create-more-booking" type="button">Create More Booking</button>
         </div>
     `);
-    document.getElementById("create-more-booking")?.addEventListener("click", () => {
-        openAdminAvailableRoomsChooser({
-            prefill: createMoreBookingPrefillFromSummary(booking),
-        });
-    });
 }
 
 function unwrapList(data) {
@@ -3143,6 +3149,20 @@ function adminReviewRemarksHtml() {
     `;
 }
 
+function adminPreviousBookingAutofillHtml(source = {}, context = "booking") {
+    if (context !== "booking" || source.id) {
+        return "";
+    }
+    return `
+        <div class="previous-booking-fill">
+            <label class="check-row">
+                <input id="admin-fill-from-previous" type="checkbox">
+                Fill from previous booking
+            </label>
+        </div>
+    `;
+}
+
 async function openBookingDetails(bookingId) {
     try {
         const booking = await apiFetch(`/api/bookings/${bookingId}/`);
@@ -3262,6 +3282,7 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     ` : "";
     return `
         <form id="admin-booking-form" class="field-grid booking-form" novalidate>
+            ${adminPreviousBookingAutofillHtml(source, context)}
             ${requestMeta}
             <div class="form-section-title">Visitor Details</div>
             <div class="two-col">
@@ -3349,6 +3370,116 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             </div>
         </form>
     `;
+}
+
+function setFieldValue(id, value, shouldDispatchChange = false) {
+    const field = document.getElementById(id);
+    if (!field) {
+        return;
+    }
+    field.value = value ?? "";
+    if (shouldDispatchChange) {
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+}
+
+function setBudgetHeadValue(checkboxId, fieldId, value) {
+    const checkbox = document.getElementById(checkboxId);
+    const field = document.getElementById(fieldId);
+    if (!checkbox || !field) {
+        return;
+    }
+    const normalizedValue = value || "";
+    checkbox.checked = Boolean(normalizedValue);
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    if (normalizedValue) {
+        field.value = normalizedValue;
+    }
+}
+
+function setAdminVisitorCategory(value = "") {
+    document.querySelectorAll('input[name="admin-visitor-category"]').forEach((input) => {
+        input.checked = Boolean(value) && input.value === value;
+    });
+}
+
+async function latestRecentBookingForAutofill() {
+    if (state.latestRecentBooking) {
+        return state.latestRecentBooking;
+    }
+    const data = await apiFetch("/api/bookings/?page=1");
+    const latestBooking = unwrapList(data)[0];
+    if (!latestBooking) {
+        throw new Error("No previous booking is available yet.");
+    }
+    state.latestRecentBooking = latestBooking;
+    return latestBooking;
+}
+
+function syncAdminLogisticsFromPreviousBooking(booking = {}) {
+    const sameAsRequestor = document.getElementById("admin-logistics-same-as-requestor");
+    const requestorValues = {
+        name: booking.requestor_name || booking.requester_name || "",
+        designation: booking.requestor_designation || "",
+        mobile: booking.requestor_mobile || "",
+    };
+    const logisticsValues = {
+        name: booking.logistics_name || "",
+        designation: booking.logistics_designation || "",
+        mobile: booking.logistics_mobile || "",
+    };
+    const requestorHasValue = Object.values(requestorValues).some((value) => String(value || "").trim());
+    const logisticsMatchesRequestor = requestorHasValue
+        && logisticsValues.name === requestorValues.name
+        && logisticsValues.designation === requestorValues.designation
+        && logisticsValues.mobile === requestorValues.mobile;
+
+    if (sameAsRequestor && sameAsRequestor.checked && !logisticsMatchesRequestor) {
+        sameAsRequestor.checked = false;
+        sameAsRequestor.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    if (logisticsMatchesRequestor && sameAsRequestor) {
+        sameAsRequestor.checked = true;
+        sameAsRequestor.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+    }
+
+    setFieldValue("admin-logistics-name", logisticsValues.name);
+    setFieldValue("admin-logistics-designation", logisticsValues.designation);
+    setFieldValue("admin-logistics-mobile", logisticsValues.mobile);
+}
+
+async function fillAdminBookingFormFromPreviousBooking() {
+    const booking = await latestRecentBookingForAutofill();
+
+    const arrival = indiaParts(booking.arrival_at || "");
+    const departure = indiaParts(booking.departure_at || "");
+    if (arrival.date) setFieldValue("admin-arrival-date", arrival.date);
+    if (arrival.time) setFieldValue("admin-arrival-time", arrival.time);
+    if (departure.date) setFieldValue("admin-departure-date", departure.date);
+    if (departure.time) setFieldValue("admin-departure-time", departure.time);
+
+    setFieldValue("admin-purpose", booking.purpose_of_visit || "");
+    setAdminVisitorCategory(booking.visitor_category || "");
+
+    const budgetHead = normalizedBudgetHeadFields(booking);
+    setBudgetHeadValue("admin-budget-individual", "admin-budget-name", budgetHead.individual);
+    setBudgetHeadValue("admin-budget-institute-head", "admin-budget-department", budgetHead.instituteHead);
+    setBudgetHeadValue("admin-budget-project-head", "admin-budget-project-code", budgetHead.projectHead);
+
+    setFieldValue("admin-requestor-name", booking.requestor_name || booking.requester_name || "");
+    setFieldValue("admin-requestor-designation", booking.requestor_designation || "");
+    setFieldValue("admin-requestor-department", booking.requestor_department || "");
+    setFieldValue("admin-requestor-mobile", booking.requestor_mobile || "");
+    syncAdminLogisticsFromPreviousBooking(booking);
+
+    setFieldValue("admin-room-charge-status", booking.room_charges_status || "no", true);
+    setFieldValue("admin-room-charge-amount", booking.room_charges_amount ?? 0);
+    setFieldValue("admin-attender-charge-status", booking.attender_charges_status || "no", true);
+    setFieldValue("admin-attender-charge-amount", booking.attender_charges_amount ?? 0);
+
+    toast("Filled from previous booking.");
 }
 
 function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") {
@@ -3468,6 +3599,20 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
         document.querySelectorAll('input[name="admin-visitor-category"]').forEach((input) => {
             input.checked = false;
         });
+    });
+    document.getElementById("admin-fill-from-previous")?.addEventListener("change", async (event) => {
+        if (!event.target.checked) {
+            return;
+        }
+        event.target.disabled = true;
+        try {
+            await fillAdminBookingFormFromPreviousBooking();
+        } catch (error) {
+            event.target.checked = false;
+            toast(error.message, "error");
+        } finally {
+            event.target.disabled = false;
+        }
     });
 }
 
