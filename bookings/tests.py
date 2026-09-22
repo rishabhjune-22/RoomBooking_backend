@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone as datetime_timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from django.core import mail
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -340,6 +341,46 @@ class BookingApiBusinessRuleTests(TestCase):
         reference_number = response.json()["data"]["booking_reference_number"]
         self.assertRegex(reference_number, r"^\d{6}$")
         self.assertEqual(booking.booking_reference_number, reference_number)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_create_mail_template_creates_booking_without_sending_email(self):
+        response = self.client.post(
+            reverse("booking-create-mail-template"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 9, 11, 4, 0),
+                departure_at=utc_dt(2026, 9, 12, 5, 0),
+                visitor_name="Mr. Amit Chauhan",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Booking.objects.count(), 1)
+        data = response.json()["data"]
+        self.assertIn("mail_template", data)
+        self.assertIn("Accommodation details", data["mail_template"]["subject"])
+        self.assertIn("Dear CCPS Team", data["mail_template"]["body"])
+        self.assertIn("Mr. Amit Chauhan", data["mail_template"]["body"])
+        self.assertEqual(len(getattr(mail, "outbox", [])), 0)
+
+    def test_existing_booking_mail_template_returns_template_without_creating_booking(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 9, 11, 4, 0),
+            utc_dt(2026, 9, 12, 5, 0),
+            visitor_name="Mr. Amit Chauhan",
+        )
+
+        response = self.client.get(reverse("booking-mail-template", kwargs={"pk": booking.pk}))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Booking.objects.count(), 1)
+        data = response.json()["data"]
+        self.assertIn("Accommodation details", data["subject"])
+        self.assertIn("Dear CCPS Team", data["body"])
+        self.assertIn("Mr. Amit Chauhan", data["body"])
+        self.assertIn("<table", data["html"])
 
     def test_delete_is_idempotent_when_key_repeats(self):
         booking = self.create_booking(

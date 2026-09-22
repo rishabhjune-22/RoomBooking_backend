@@ -114,6 +114,65 @@ const state = {
     },
 };
 
+function styleRequiredMarks(root = document) {
+    if (!root || typeof root.querySelectorAll !== "function") {
+        return;
+    }
+
+    const labels = root.matches?.("label")
+        ? [root, ...root.querySelectorAll("label")]
+        : [...root.querySelectorAll("label")];
+    labels.forEach((label) => {
+        Array.from(label.childNodes).forEach((node) => styleRequiredMarkNode(node));
+    });
+}
+
+function styleRequiredMarkNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.nodeValue || "";
+        if (!text.includes("*")) {
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        text.split(/(\*)/).forEach((part) => {
+            if (!part) {
+                return;
+            }
+            if (part === "*") {
+                const mark = document.createElement("span");
+                mark.className = "required-mark";
+                mark.textContent = "*";
+                fragment.appendChild(mark);
+            } else {
+                fragment.appendChild(document.createTextNode(part));
+            }
+        });
+        node.replaceWith(fragment);
+        return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE || node.classList?.contains("required-mark")) {
+        return;
+    }
+
+    Array.from(node.childNodes).forEach((child) => styleRequiredMarkNode(child));
+}
+
+function observeRequiredMarks() {
+    styleRequiredMarks(document);
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    styleRequiredMarks(node);
+                }
+            });
+        });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+}
+
 function emptyWorkflowNotificationCounts() {
     return {
         total: 0,
@@ -310,6 +369,16 @@ function selectedRangeDisplayText() {
     return `${formatDateOnly(state.rangeStart)} to ${formatDateOnly(state.rangeEnd)}`;
 }
 
+function scheduleDisplayText(arrivalDate, departureDate = arrivalDate) {
+    if (!arrivalDate) {
+        return "No dates selected";
+    }
+    if (!departureDate || departureDate === arrivalDate) {
+        return formatDateOnly(arrivalDate);
+    }
+    return `${formatDateOnly(arrivalDate)} to ${formatDateOnly(departureDate)}`;
+}
+
 function buildIsoDateTime(dateValue, timeValue) {
     return `${dateValue}T${timeValue || "10:00"}:00+05:30`;
 }
@@ -450,7 +519,7 @@ function shiftsText(item) {
     const shifts = [];
     if (item?.attender_general_shift) shifts.push("General shift");
     if (item?.attender_morning_shift) shifts.push("Morning shift");
-    if (item?.attender_day_shift) shifts.push("Day shift");
+    if (item?.attender_day_shift) shifts.push("Evening shift");
     return shifts.length ? shifts.join(", ") : "-";
 }
 
@@ -623,16 +692,16 @@ function renderAuth(message = "", isError = false) {
                 <form id="auth-form" class="field-grid">
                     ${isSignup ? `
                         <div class="field-row">
-                            <label for="name">Full name</label>
+                            <label for="name">Full name *</label>
                             <input id="name" name="name" autocomplete="name" required>
                         </div>
                     ` : ""}
                     <div class="field-row">
-                        <label for="email">Email</label>
+                        <label for="email">Email *</label>
                         <input id="email" name="email" type="email" autocomplete="email" required>
                     </div>
                     <div class="field-row">
-                        <label for="password">Password</label>
+                        <label for="password">Password *</label>
                         <div class="password-wrap">
                             <input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required>
                             <button class="outline-btn" type="button" data-toggle-password="password">Show</button>
@@ -640,7 +709,7 @@ function renderAuth(message = "", isError = false) {
                     </div>
                     ${isSignup ? `
                         <div class="field-row">
-                            <label for="confirm_password">Confirm password</label>
+                            <label for="confirm_password">Confirm password *</label>
                             <div class="password-wrap">
                                 <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
                                 <button class="outline-btn" type="button" data-toggle-password="confirm_password">Show</button>
@@ -648,22 +717,22 @@ function renderAuth(message = "", isError = false) {
                         </div>
                         ${state.authRole === "admin" ? `
                             <div class="field-row">
-                                <label for="admin_code">Admin invite code</label>
+                                <label for="admin_code">Admin invite code *</label>
                                 <input id="admin_code" name="admin_code" autocomplete="off" required>
                             </div>
                         ` : `
                             <div class="two-col">
                                 <div class="field-row">
-                                    <label for="department">Department</label>
+                                    <label for="department">Department (Optional)</label>
                                     <input id="department" name="department">
                                 </div>
                                 <div class="field-row">
-                                    <label for="designation">Designation</label>
+                                    <label for="designation">Designation (Optional)</label>
                                     <input id="designation" name="designation">
                                 </div>
                             </div>
                             <div class="field-row">
-                                <label for="mobile">Mobile</label>
+                                <label for="mobile">Mobile (Optional)</label>
                                 <input id="mobile" name="mobile" inputmode="tel">
                             </div>
                         `}
@@ -1253,6 +1322,7 @@ function renderCalendarView() {
     `;
     document.getElementById("prev-month").addEventListener("click", () => changeMonth(-1));
     document.getElementById("next-month").addEventListener("click", () => changeMonth(1));
+    document.getElementById("calendar-grid").addEventListener("click", handleCalendarBlankClick);
     if (isAdminLike()) {
         document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminAvailableRoomsChooser());
     } else {
@@ -1399,6 +1469,22 @@ function handleDateClick(dateValue) {
     renderCalendarSide();
 }
 
+function handleCalendarBlankClick(event) {
+    const dayCell = event.target.closest(".day-cell");
+    if (dayCell?.dataset?.date) {
+        return;
+    }
+    clearCalendarSelection();
+}
+
+function clearCalendarSelection() {
+    state.selectedDate = "";
+    state.rangeStart = "";
+    state.rangeEnd = "";
+    drawCalendar();
+    renderCalendarSide();
+}
+
 function renderCalendarSide(content = "") {
     const side = document.getElementById("calendar-side");
     if (!side) {
@@ -1467,6 +1553,124 @@ async function loadAdminDateDetails(dateValue) {
     } catch (error) {
         renderCalendarSide(`<div class="empty-state">${escapeHtml(error.message)}</div>`);
     }
+}
+
+function bookingPrefixFromSummary(booking = {}) {
+    const roomName = String(booking.room_name || "");
+    return BUILDINGS.find((prefix) => roomName.toLowerCase().startsWith(prefix.toLowerCase())) || state.prefix;
+}
+
+function buildCreatedBookingSummary(created = {}, payload = {}, rooms = []) {
+    const roomId = created.room_id || created.room || payload.room || "";
+    const room = rooms.find((item) => String(item.id) === String(roomId));
+    const roomName = created.room_name || (room ? roomLabel(room) : "");
+    return {
+        id: created.id || created.booking_id || "",
+        booking_reference_number: created.booking_reference_number || "",
+        room: roomId,
+        room_name: roomName,
+        preferred_prefix: created.preferred_prefix || bookingPrefixFromSummary({ room_name: roomName }),
+        visitor_name: payload.visitor_name || created.visitor_name || "",
+        arrival_at: payload.arrival_at || created.arrival_at || "",
+        departure_at: payload.departure_at || created.departure_at || "",
+        purpose_of_visit: payload.purpose_of_visit || created.purpose_of_visit || "",
+        visitor_category: payload.visitor_category || created.visitor_category || "",
+        budget_head_type: payload.budget_head_type || created.budget_head_type || "",
+        budget_head_value: payload.budget_head_value || created.budget_head_value || "",
+        budget_head_name: payload.budget_head_name || created.budget_head_name || "",
+        budget_head_department_name: payload.budget_head_department_name || created.budget_head_department_name || "",
+        budget_head_project_code: payload.budget_head_project_code || created.budget_head_project_code || "",
+        requestor_name: payload.requestor_name || created.requestor_name || "",
+        requestor_designation: payload.requestor_designation || created.requestor_designation || "",
+        requestor_department: payload.requestor_department || created.requestor_department || "",
+        requestor_mobile: payload.requestor_mobile || created.requestor_mobile || "",
+        logistics_name: payload.logistics_name || created.logistics_name || "",
+        logistics_designation: payload.logistics_designation || created.logistics_designation || "",
+        logistics_mobile: payload.logistics_mobile || created.logistics_mobile || "",
+        status: created.status || payload.status || "active",
+    };
+}
+
+function createMoreBookingPrefillFromSummary(booking = {}) {
+    return {
+        preferred_prefix: booking.preferred_prefix || bookingPrefixFromSummary(booking),
+        arrival_at: booking.arrival_at || "",
+        departure_at: booking.departure_at || "",
+        purpose_of_visit: booking.purpose_of_visit || "",
+        visitor_category: booking.visitor_category || "",
+        budget_head_type: booking.budget_head_type || "",
+        budget_head_value: booking.budget_head_value || "",
+        budget_head_name: booking.budget_head_name || "",
+        budget_head_department_name: booking.budget_head_department_name || "",
+        budget_head_project_code: booking.budget_head_project_code || "",
+        requestor_name: booking.requestor_name || "",
+        requestor_designation: booking.requestor_designation || "",
+        requestor_department: booking.requestor_department || "",
+        requestor_mobile: booking.requestor_mobile || "",
+        logistics_name: booking.logistics_name || "",
+        logistics_designation: booking.logistics_designation || "",
+        logistics_mobile: booking.logistics_mobile || "",
+    };
+}
+
+async function showCreatedBookingInCalendarSide(booking) {
+    if (state.view !== "calendar" || !booking) {
+        await refreshVisibleBookingSurface();
+        return;
+    }
+
+    const arrivalDate = indiaParts(booking.arrival_at).date;
+    const departureDate = indiaParts(booking.departure_at).date || arrivalDate;
+    if (arrivalDate) {
+        const [year, month] = arrivalDate.split("-").map(Number);
+        if (year && month) {
+            state.calendarYear = year;
+            state.calendarMonth = month;
+        }
+        state.selectedDate = arrivalDate;
+        state.rangeStart = arrivalDate;
+        state.rangeEnd = departureDate || arrivalDate;
+    }
+    state.prefix = bookingPrefixFromSummary(booking);
+
+    if (document.getElementById("building-tabs")) {
+        drawBuildingTabs();
+    }
+    if (document.getElementById("calendar-grid")) {
+        await loadCalendar();
+        renderCreatedBookingSidePanel(booking);
+    } else {
+        await refreshVisibleBookingSurface();
+    }
+}
+
+function renderCreatedBookingSidePanel(booking) {
+    renderCalendarSide(`
+        <div class="details-list">
+            <div>
+                <h3 style="margin:0 0 6px">Recent booking created</h3>
+                <p class="item-meta">Compact summary of the booking just created.</p>
+            </div>
+            <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
+            <article class="item-card">
+                <div class="item-main">
+                    <div>
+                        <h4 class="item-title">${escapeHtml(booking.room_name || "Room")}</h4>
+                        <p class="item-meta">${escapeHtml(booking.visitor_name || "Guest")}</p>
+                    </div>
+                    <span class="status-chip ${escapeHtml(booking.status || "active")}">${titleCase(booking.status || "active")}</span>
+                </div>
+                <p class="item-meta">${escapeHtml(formatDateRange(booking))}</p>
+                ${booking.booking_reference_number ? `<p class="item-meta">Reference #${escapeHtml(booking.booking_reference_number)}</p>` : ""}
+            </article>
+            <button class="outline-btn" id="create-more-booking" type="button">Create More Booking</button>
+        </div>
+    `);
+    document.getElementById("create-more-booking")?.addEventListener("click", () => {
+        openAdminAvailableRoomsChooser({
+            prefill: createMoreBookingPrefillFromSummary(booking),
+        });
+    });
 }
 
 function unwrapList(data) {
@@ -1885,12 +2089,86 @@ async function copyTextToClipboard(value) {
         await navigator.clipboard.writeText(value);
         return;
     }
-    const input = document.createElement("input");
+    const input = document.createElement("textarea");
     input.value = value;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
     document.body.appendChild(input);
     input.select();
     document.execCommand("copy");
     input.remove();
+}
+
+async function copyHtmlToClipboard(html, textFallback = "") {
+    if (navigator.clipboard?.write && window.ClipboardItem) {
+        await navigator.clipboard.write([
+            new ClipboardItem({
+                "text/html": new Blob([html], { type: "text/html" }),
+                "text/plain": new Blob([textFallback || html], { type: "text/plain" }),
+            }),
+        ]);
+        return;
+    }
+
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    container.contentEditable = "true";
+    container.style.position = "fixed";
+    container.style.left = "-9999px";
+    container.style.top = "0";
+    document.body.appendChild(container);
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(container);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const copied = document.execCommand("copy");
+    selection.removeAllRanges();
+    container.remove();
+
+    if (!copied) {
+        await copyTextToClipboard(textFallback || html);
+    }
+}
+
+function openBookingMailTemplateModal(template = {}) {
+    const subject = template.subject || "";
+    const mailBody = template.body || "";
+    const mailHtml = template.html || `<div>${escapeHtml(mailBody).replace(/\n/g, "<br>")}</div>`;
+    openActionModal({
+        title: "Booking Mail Template",
+        body: `
+            <div class="details-list">
+                <p class="item-meta">Copy this subject and email content into your mail client.</p>
+                <div class="field-row">
+                    <label for="booking-mail-subject">Subject</label>
+                    <input id="booking-mail-subject" value="${htmlValue(subject)}" readonly>
+                </div>
+                <div class="field-row">
+                    <label>Email Content</label>
+                    <div class="mail-template-preview" id="booking-mail-preview">${mailHtml}</div>
+                </div>
+            </div>
+        `,
+        wide: true,
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            <button class="outline-btn" type="button" id="copy-mail-subject">Copy Subject</button>
+            <button class="primary-btn" type="button" id="copy-mail-body">Copy Email Content</button>
+        `,
+        onBind: () => {
+            document.getElementById("booking-mail-subject")?.select();
+            document.getElementById("copy-mail-subject")?.addEventListener("click", async () => {
+                await copyTextToClipboard(subject);
+                toast("Mail subject copied.");
+            });
+            document.getElementById("copy-mail-body")?.addEventListener("click", async () => {
+                await copyHtmlToClipboard(mailHtml, mailBody);
+                toast("Mail content copied.");
+            });
+        },
+    });
 }
 
 function openShareLinkModal(data, sheetName) {
@@ -2859,8 +3137,8 @@ function normalizedBudgetHeadFields(source = {}) {
 function adminReviewRemarksHtml() {
     return `
         <div class="field-row review-remarks-field">
-            <label for="admin-review-remarks">Remarks</label>
-            <textarea id="admin-review-remarks" placeholder="Approval, rejection, send-back, or delete remarks"></textarea>
+            <label for="admin-review-remarks">Remarks (Optional for approve; required for reject/send back/delete)</label>
+            <textarea id="admin-review-remarks" placeholder="Optional for approve; required for reject, send back, or delete"></textarea>
         </div>
     `;
 }
@@ -2927,6 +3205,7 @@ async function openBookingDetails(bookingId) {
             footerHtml: `
                 <button class="outline-btn" type="button" data-close-modal>Close</button>
                 <button class="outline-btn" type="button" id="booking-detail-print">Print</button>
+                <button class="outline-btn" type="button" id="booking-detail-mail-template">Generate Mail Template</button>
                 <button class="outline-btn" type="button" id="booking-detail-edit">Edit Booking</button>
                 <button class="danger-btn" type="button" id="booking-detail-delete">Delete Booking</button>
             `,
@@ -2937,6 +3216,14 @@ async function openBookingDetails(bookingId) {
                         rows,
                         `${valueOrDash(booking.room_name)} | ${formatDateRange(booking)}`
                     );
+                });
+                document.getElementById("booking-detail-mail-template")?.addEventListener("click", async () => {
+                    try {
+                        const template = await apiFetch(`/api/bookings/${booking.id}/mail-template/`);
+                        openBookingMailTemplateModal(template);
+                    } catch (error) {
+                        toast(error.message, "error");
+                    }
                 });
                 document.getElementById("booking-detail-edit")?.addEventListener("click", () => {
                     closeModal();
@@ -2978,29 +3265,29 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             ${requestMeta}
             <div class="form-section-title">Visitor Details</div>
             <div class="two-col">
-                <div class="field-row"><label for="admin-prefix">Building</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
-                <div class="field-row"><label for="admin-room">Room No</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
-                <div class="field-row"><label for="admin-arrival-date">Check-In date</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
-                <div class="field-row"><label for="admin-arrival-time">Check-In time</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                <div class="field-row"><label for="admin-departure-date">Check-Out date</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
-                <div class="field-row"><label for="admin-departure-time">Check-Out time</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
-                <div class="field-row"><label for="admin-room-note">Room preference note</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
-                <div class="field-row"><label for="admin-visitor-name">Visitor name</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
-                <div class="field-row"><label for="admin-visitor-designation">Visitor designation</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
-                <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
-                <div class="field-row"><label for="admin-visitor-gender">Gender</label><select id="admin-visitor-gender">
-                    <option value="" ${!source.visitor_gender ? "selected" : ""}>Select Gender</option>
+                <div class="field-row"><label for="admin-prefix">Building *</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+                <div class="field-row"><label for="admin-room">Room No *</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
+                <div class="field-row"><label for="admin-arrival-date">Check-In date *</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
+                <div class="field-row"><label for="admin-arrival-time">Check-In time *</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
+                <div class="field-row"><label for="admin-departure-date">Check-Out date *</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
+                <div class="field-row"><label for="admin-departure-time">Check-Out time *</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+                <div class="field-row"><label for="admin-room-note">Room preference note (Optional)</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
+                <div class="field-row"><label for="admin-visitor-name">Visitor name *</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
+                <div class="field-row"><label for="admin-visitor-designation">Visitor designation (Optional)</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
+                <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation (Optional)</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
+                <div class="field-row"><label for="admin-visitor-gender">Gender (Optional)</label><select id="admin-visitor-gender">
+                    <option value="" ${!source.visitor_gender ? "selected" : ""}>Select Gender (Optional)</option>
                     <option value="Male" ${source.visitor_gender === "Male" ? "selected" : ""}>Male</option>
                     <option value="Female" ${source.visitor_gender === "Female" ? "selected" : ""}>Female</option>
                     <option value="Other" ${source.visitor_gender === "Other" ? "selected" : ""}>Other</option>
                 </select></div>
-                <div class="field-row"><label for="admin-visitor-mobile">Visitor mobile</label><input id="admin-visitor-mobile" inputmode="tel" value="${htmlValue(source.visitor_mobile)}"></div>
-                <div class="field-row"><label for="admin-visitor-email">Visitor email</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
+                <div class="field-row"><label for="admin-visitor-mobile">Visitor mobile (Optional)</label><input id="admin-visitor-mobile" inputmode="tel" value="${htmlValue(source.visitor_mobile)}"></div>
+                <div class="field-row"><label for="admin-visitor-email">Visitor email (Optional)</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
             </div>
-            <div class="field-row"><label for="admin-purpose">Purpose of visit</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
-            <div class="field-row"><label for="admin-remarks">Remarks</label><textarea id="admin-remarks">${htmlValue(source.remarks)}</textarea></div>
+            <div class="field-row"><label for="admin-purpose">Purpose of visit (Optional)</label><textarea id="admin-purpose">${htmlValue(source.purpose_of_visit)}</textarea></div>
+            <div class="field-row"><label for="admin-remarks">Remarks (Optional)</label><textarea id="admin-remarks">${htmlValue(source.remarks)}</textarea></div>
 
-            <div class="form-section-title">Visitor Category</div>
+            <div class="form-section-title">Visitor Category (Optional)</div>
             <div class="radio-list">
                 <label class="check-row"><input name="admin-visitor-category" type="radio" value="institute_guest" ${source.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
                 <label class="check-row"><input name="admin-visitor-category" type="radio" value="conference_workshop_guest" ${source.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
@@ -3008,55 +3295,57 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 <button class="outline-btn compact-btn" id="admin-clear-visitor-category" type="button">Clear Selection</button>
             </div>
 
-            <div class="form-section-title">Budget Head</div>
+            <div class="form-section-title">Budget Head (Optional)</div>
             <div class="budget-head-group">
                 <label class="check-row"><input id="admin-budget-individual" data-budget-head-field="admin-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
-                <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="admin-budget-name">Name</label><input id="admin-budget-name" placeholder="Name" value="${htmlValue(budgetHead.individual)}"></div>
+                <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="admin-budget-name">Name (Optional)</label><input id="admin-budget-name" placeholder="Name (Optional)" value="${htmlValue(budgetHead.individual)}"></div>
                 <label class="check-row"><input id="admin-budget-institute-head" data-budget-head-field="admin-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
-                <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="admin-budget-department">Department Name</label><input id="admin-budget-department" placeholder="Department Name" value="${htmlValue(budgetHead.instituteHead)}"></div>
+                <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="admin-budget-department">Department Name (Optional)</label><input id="admin-budget-department" placeholder="Department Name (Optional)" value="${htmlValue(budgetHead.instituteHead)}"></div>
                 <label class="check-row"><input id="admin-budget-project-head" data-budget-head-field="admin-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
-                <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="admin-budget-project-code">Project code</label><input id="admin-budget-project-code" placeholder="Project code" value="${htmlValue(budgetHead.projectHead)}"></div>
+                <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="admin-budget-project-code">Project code (Optional)</label><input id="admin-budget-project-code" placeholder="Project code (Optional)" value="${htmlValue(budgetHead.projectHead)}"></div>
                 <button class="outline-btn compact-btn budget-clear-btn" id="admin-clear-budget-head" type="button">Clear Budget Head</button>
             </div>
 
-            <div class="form-section-title">Requestor Details</div>
+            <div class="form-section-title">Requestor Details (Optional)</div>
             <div class="two-col">
-                <div class="field-row"><label for="admin-requestor-name">Requestor name</label><input id="admin-requestor-name" value="${htmlValue(source.requestor_name || source.requester_name)}"></div>
-                <div class="field-row"><label for="admin-requestor-designation">Requestor designation</label><input id="admin-requestor-designation" value="${htmlValue(source.requestor_designation)}"></div>
-                <div class="field-row"><label for="admin-requestor-department">Requestor department</label><input id="admin-requestor-department" value="${htmlValue(source.requestor_department)}"></div>
-                <div class="field-row"><label for="admin-requestor-mobile">Requestor mobile</label><input id="admin-requestor-mobile" inputmode="tel" value="${htmlValue(source.requestor_mobile)}"></div>
+                <div class="field-row"><label for="admin-requestor-name">Requestor name (Optional)</label><input id="admin-requestor-name" value="${htmlValue(source.requestor_name || source.requester_name)}"></div>
+                <div class="field-row"><label for="admin-requestor-designation">Requestor designation (Optional)</label><input id="admin-requestor-designation" value="${htmlValue(source.requestor_designation)}"></div>
+                <div class="field-row"><label for="admin-requestor-department">Requestor department (Optional)</label><input id="admin-requestor-department" value="${htmlValue(source.requestor_department)}"></div>
+                <div class="field-row"><label for="admin-requestor-mobile">Requestor mobile (Optional)</label><input id="admin-requestor-mobile" inputmode="tel" value="${htmlValue(source.requestor_mobile)}"></div>
                 ${source.requestor_email || source.requester_email ? `<div class="field-row"><label>Requestor email</label><input value="${htmlValue(source.requestor_email || source.requester_email)}" readonly></div>` : ""}
             </div>
 
-            <div class="form-section-title">Logistics(Food/Cab) will be looked after by</div>
+            <div class="form-section-title">Logistics(Food/Cab) will be looked after by (Optional)</div>
+            <label class="check-row"><input id="admin-logistics-same-as-requestor" type="checkbox"> Same as requestor details</label>
             <div class="two-col">
-                <div class="field-row"><label for="admin-logistics-name">Logistics Name</label><input id="admin-logistics-name" value="${htmlValue(source.logistics_name)}"></div>
-                <div class="field-row"><label for="admin-logistics-designation">Designation</label><input id="admin-logistics-designation" value="${htmlValue(source.logistics_designation)}"></div>
-                <div class="field-row"><label for="admin-logistics-mobile">Mobile Number</label><input id="admin-logistics-mobile" inputmode="tel" value="${htmlValue(source.logistics_mobile)}"></div>
+                <div class="field-row"><label for="admin-logistics-name">Logistics Name (Optional)</label><input id="admin-logistics-name" value="${htmlValue(source.logistics_name)}"></div>
+                <div class="field-row"><label for="admin-logistics-designation">Designation (Optional)</label><input id="admin-logistics-designation" value="${htmlValue(source.logistics_designation)}"></div>
+                <div class="field-row"><label for="admin-logistics-mobile">Mobile Number (Optional)</label><input id="admin-logistics-mobile" inputmode="tel" value="${htmlValue(source.logistics_mobile)}"></div>
             </div>
 
-            <div class="form-section-title">Attender Requirement</div>
-            <label class="check-row"><input id="admin-attender" type="checkbox" ${source.attender_required ? "checked" : ""}> Attender required</label>
+            <div class="form-section-title">Attender Requirement (Optional)</div>
+            <label class="check-row"><input id="admin-attender" type="checkbox" ${source.attender_required ? "checked" : ""}> Attender required (Optional)</label>
+            <div class="field-row"><label>Shift(s) * (if attender required)</label></div>
             <div class="two-col">
                 <label class="check-row"><input id="admin-general" type="checkbox" ${source.attender_general_shift ? "checked" : ""}> General shift</label>
                 <label class="check-row"><input id="admin-morning" type="checkbox" ${source.attender_morning_shift ? "checked" : ""}> Morning shift</label>
-                <label class="check-row"><input id="admin-day" type="checkbox" ${source.attender_day_shift ? "checked" : ""}> Day shift</label>
+                <label class="check-row"><input id="admin-day" type="checkbox" ${source.attender_day_shift ? "checked" : ""}> Evening shift</label>
             </div>
 
             <div class="form-section-title">Charges</div>
             <div class="two-col">
-                <div class="field-row"><label for="admin-room-charge-status">Room charges</label><select id="admin-room-charge-status">
+                <div class="field-row"><label for="admin-room-charge-status">Room charges (Optional)</label><select id="admin-room-charge-status">
                     <option value="no" ${(source.room_charges_status || "no") === "no" ? "selected" : ""}>No</option>
                     <option value="yes" ${source.room_charges_status === "yes" ? "selected" : ""}>Yes</option>
                     <option value="waived_off" ${source.room_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
                 </select></div>
-                <div class="field-row"><label for="admin-room-charge-amount">Room charges amount</label><input id="admin-room-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.room_charges_amount || 0)}"></div>
-                <div class="field-row"><label for="admin-attender-charge-status">Attender charges</label><select id="admin-attender-charge-status">
+                <div class="field-row"><label for="admin-room-charge-amount">Room charges amount * (if Yes)</label><input id="admin-room-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.room_charges_amount || 0)}"></div>
+                <div class="field-row"><label for="admin-attender-charge-status">Attender charges (Optional)</label><select id="admin-attender-charge-status">
                     <option value="no" ${(source.attender_charges_status || "no") === "no" ? "selected" : ""}>No</option>
                     <option value="yes" ${source.attender_charges_status === "yes" ? "selected" : ""}>Yes</option>
                     <option value="waived_off" ${source.attender_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
                 </select></div>
-                <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
+                <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount * (if Yes)</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
             </div>
         </form>
     `;
@@ -3068,6 +3357,17 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     const attender = document.getElementById("admin-attender");
     const shiftInputs = ["admin-general", "admin-morning", "admin-day"].map((id) => document.getElementById(id));
     const budgetOptions = Array.from(document.querySelectorAll("[data-budget-head-field]"));
+    const sameAsRequestor = document.getElementById("admin-logistics-same-as-requestor");
+    const requestorFields = {
+        name: document.getElementById("admin-requestor-name"),
+        designation: document.getElementById("admin-requestor-designation"),
+        mobile: document.getElementById("admin-requestor-mobile"),
+    };
+    const logisticsFields = {
+        name: document.getElementById("admin-logistics-name"),
+        designation: document.getElementById("admin-logistics-designation"),
+        mobile: document.getElementById("admin-logistics-mobile"),
+    };
     if (!prefixSelect || !roomSelect) {
         return;
     }
@@ -3099,6 +3399,48 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     };
     attender?.addEventListener("change", syncAttender);
     syncAttender();
+
+    const copyRequestorToLogistics = () => {
+        if (logisticsFields.name && requestorFields.name) logisticsFields.name.value = requestorFields.name.value;
+        if (logisticsFields.designation && requestorFields.designation) logisticsFields.designation.value = requestorFields.designation.value;
+        if (logisticsFields.mobile && requestorFields.mobile) logisticsFields.mobile.value = requestorFields.mobile.value;
+    };
+    const clearLogisticsFields = () => {
+        Object.values(logisticsFields).forEach((field) => {
+            if (field) field.value = "";
+        });
+    };
+    const updateLogisticsFields = () => {
+        const locked = Boolean(sameAsRequestor?.checked);
+        if (locked) {
+            copyRequestorToLogistics();
+        }
+        Object.values(logisticsFields).forEach((field) => {
+            if (field) field.disabled = locked;
+        });
+    };
+    const requestorHasValue = Object.values(requestorFields).some((field) => field?.value?.trim());
+    const logisticsMatchesRequestor = requestorHasValue
+        && logisticsFields.name?.value === requestorFields.name?.value
+        && logisticsFields.designation?.value === requestorFields.designation?.value
+        && logisticsFields.mobile?.value === requestorFields.mobile?.value;
+    if (sameAsRequestor) {
+        sameAsRequestor.checked = logisticsMatchesRequestor;
+        sameAsRequestor.addEventListener("change", () => {
+            if (!sameAsRequestor.checked) {
+                clearLogisticsFields();
+            }
+            updateLogisticsFields();
+        });
+        Object.values(requestorFields).forEach((field) => {
+            field?.addEventListener("input", () => {
+                if (sameAsRequestor.checked) {
+                    copyRequestorToLogistics();
+                }
+            });
+        });
+        updateLogisticsFields();
+    }
 
     const syncBudgetHeadOption = (checkbox, shouldFocus = false) => {
         const field = document.getElementById(checkbox.dataset.budgetHeadField);
@@ -3241,19 +3583,43 @@ async function openAdminBookingForm(prefill = null, context = "booking") {
     try {
         const rooms = await fetchRooms();
         const selectedRoomId = prefill?.room || prefill?.preferred_room || "";
+        const createBookingFromForm = async ({ generateMailTemplate = false } = {}) => {
+            const payload = readAdminBookingPayload();
+            const endpoint = generateMailTemplate ? "/api/bookings/create-mail-template/" : "/api/bookings/create/";
+            const created = await apiFetch(endpoint, { method: "POST", body: payload });
+            const bookingSummary = buildCreatedBookingSummary(created, payload, rooms);
+            toast(generateMailTemplate ? "Booking created and mail template generated." : "Booking created successfully.");
+            closeModal();
+            await showCreatedBookingInCalendarSide(bookingSummary);
+            if (generateMailTemplate) {
+                openBookingMailTemplateModal(created.mail_template || {});
+            }
+        };
         openActionModal({
             title: context === "request" ? "Create Booking From Request" : "Create Booking",
             body: adminBookingFormHtml(prefill || {}, context),
             confirmText: "Create Booking",
             confirmClass: "primary-btn",
+            footerHtml: `
+                <button class="outline-btn" type="button" data-close-modal>Cancel</button>
+                <button class="outline-btn" type="button" id="modal-create-booking-mail">Create Booking and Mail</button>
+                <button class="primary-btn" type="button" id="modal-confirm">Create Booking</button>
+            `,
             wide: true,
-            onBind: () => bindAdminBookingForm(rooms, selectedRoomId, prefill?.preferred_prefix || state.prefix),
-            onConfirm: async () => {
-                await apiFetch("/api/bookings/create/", { method: "POST", body: readAdminBookingPayload() });
-                toast("Booking created successfully.");
-                closeModal();
-                await refreshVisibleBookingSurface();
+            onBind: () => {
+                bindAdminBookingForm(rooms, selectedRoomId, prefill?.preferred_prefix || state.prefix);
+                const mailButton = document.getElementById("modal-create-booking-mail");
+                mailButton?.addEventListener("click", async () => {
+                    mailButton.disabled = true;
+                    try {
+                        await createBookingFromForm({ generateMailTemplate: true });
+                    } catch (error) {
+                        toast(error.message, "error");
+                        mailButton.disabled = false;
+                    }
+                });
             },
+            onConfirm: async () => createBookingFromForm(),
         });
     } catch (error) {
         toast(error.message, "error");
@@ -3991,7 +4357,7 @@ function openDeleteMyRequestModal(request) {
         body: `
             <p class="item-meta">Are you sure you want to delete this request?</p>
             <div class="field-row">
-                <label for="delete-my-request-remarks">Remarks</label>
+                <label for="delete-my-request-remarks">Remarks (Optional)</label>
                 <textarea id="delete-my-request-remarks" placeholder="Optional deletion remarks"></textarea>
             </div>
         `,
@@ -4006,8 +4372,16 @@ function openDeleteMyRequestModal(request) {
     });
 }
 
-async function openAdminAvailableRoomsChooser() {
-    const { arrivalDate, departureDate } = selectedScheduleFromCalendar();
+async function openAdminAvailableRoomsChooser(options = {}) {
+    const prefill = options.prefill || {};
+    const prefillArrival = indiaParts(prefill.arrival_at || "");
+    const prefillDeparture = indiaParts(prefill.departure_at || "");
+    const calendarSchedule = selectedScheduleFromCalendar();
+    const arrivalDate = options.arrivalDate || prefillArrival.date || calendarSchedule.arrivalDate;
+    const departureDate = options.departureDate || prefillDeparture.date || calendarSchedule.departureDate;
+    const arrivalTime = options.arrivalTime || prefillArrival.time || "10:00";
+    const departureTime = options.departureTime || prefillDeparture.time || "18:00";
+    const prefix = options.prefix || prefill.preferred_prefix || prefill.prefix || state.prefix;
     if (!arrivalDate) {
         toast("Select a date range first.", "error");
         return;
@@ -4028,7 +4402,7 @@ async function openAdminAvailableRoomsChooser() {
     });
 
     try {
-        const data = await apiFetch(`/api/room-available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
+        const data = await apiFetch(`/api/room-available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(prefix)}`);
         const rooms = data?.rooms || [];
         const body = document.querySelector(".modal-body");
         if (!body) {
@@ -4039,12 +4413,12 @@ async function openAdminAvailableRoomsChooser() {
             return;
         }
         body.innerHTML = `
-            <p class="item-meta">Select a room to create a booking for ${escapeHtml(selectedRangeDisplayText())}.</p>
+            <p class="item-meta">Select a room to create a booking for ${escapeHtml(scheduleDisplayText(arrivalDate, departureDate))}.</p>
             <div class="available-room-list">
                 ${rooms.map((room, index) => {
                     const roomName = roomLabel({
                         id: room.room_id || room.id,
-                        prefix: room.prefix || data?.prefix || state.prefix,
+                        prefix: room.prefix || data?.prefix || prefix,
                         selection_label: room.selection_label,
                         room_name: room.room_name,
                         number: room.room_number || room.number,
@@ -4061,13 +4435,16 @@ async function openAdminAvailableRoomsChooser() {
         body.querySelectorAll("[data-room-index]").forEach((button) => {
             button.addEventListener("click", () => {
                 const room = rooms[Number(button.dataset.roomIndex)];
-                const arrivalTime = availableRoomPrefillArrivalTime(room, arrivalDate, "10:00");
+                const selectedPrefix = room?.prefix || data?.prefix || prefix;
+                const selectedArrivalTime = availableRoomPrefillArrivalTime(room, arrivalDate, arrivalTime || "10:00");
                 closeModal();
                 openAdminBookingForm({
+                    ...prefill,
                     room: room?.room_id || room?.id || "",
-                    prefix: room?.prefix || data?.prefix || state.prefix,
-                    arrival_at: buildIsoDateTime(arrivalDate, arrivalTime),
-                    departure_at: buildIsoDateTime(departureDate, "18:00"),
+                    prefix: selectedPrefix,
+                    preferred_prefix: selectedPrefix,
+                    arrival_at: buildIsoDateTime(arrivalDate, selectedArrivalTime),
+                    departure_at: buildIsoDateTime(departureDate, departureTime || "18:00"),
                 });
             });
         });
@@ -4172,35 +4549,35 @@ async function openRequestForm(existing = null, selectedRoom = null) {
                 <input id="req-prefix" type="hidden" value="${htmlValue(prefix)}">
                 <input id="req-room" type="hidden" value="${htmlValue(roomSelection.roomId)}">
                 <div class="two-col">
-                    <div class="field-row"><label>Room</label><input value="${htmlValue(roomSelection.roomName)}" readonly></div>
-                    <div class="field-row"><label>Building</label><input value="${htmlValue(prefix)}" readonly></div>
+                    <div class="field-row"><label>Room *</label><input value="${htmlValue(roomSelection.roomName)}" readonly></div>
+                    <div class="field-row"><label>Building *</label><input value="${htmlValue(prefix)}" readonly></div>
                 </div>
 
                 <div class="form-section-title">Stay Details</div>
                 <div class="two-col">
-                    <div class="field-row"><label>Arrival</label><input value="${htmlValue(formatDateOnly(arrival.date))}" readonly></div>
-                    <div class="field-row"><label>Arrival time</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                    <div class="field-row"><label>Departure</label><input value="${htmlValue(formatDateOnly(departure.date))}" readonly></div>
-                    <div class="field-row"><label>Departure time</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+                    <div class="field-row"><label>Arrival *</label><input value="${htmlValue(formatDateOnly(arrival.date))}" readonly></div>
+                    <div class="field-row"><label>Arrival time *</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
+                    <div class="field-row"><label>Departure *</label><input value="${htmlValue(formatDateOnly(departure.date))}" readonly></div>
+                    <div class="field-row"><label>Departure time *</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
                 </div>
 
                 <div class="form-section-title">Visitor Details</div>
                 <div class="two-col">
-                    <div class="field-row"><label>Visitor name</label><input id="req-visitor-name" value="${escapeHtml(existing?.visitor_name || "")}" required></div>
-                    <div class="field-row"><label>Designation</label><input id="req-visitor-designation" value="${escapeHtml(existing?.visitor_designation || "")}"></div>
-                    <div class="field-row"><label>Organisation</label><input id="req-visitor-organisation" value="${escapeHtml(existing?.visitor_organisation || "")}"></div>
-                    <div class="field-row"><label>Gender</label><select id="req-visitor-gender">
-                        <option value="" ${!existing?.visitor_gender ? "selected" : ""}>Select gender</option>
+                    <div class="field-row"><label>Visitor name *</label><input id="req-visitor-name" value="${escapeHtml(existing?.visitor_name || "")}" required></div>
+                    <div class="field-row"><label>Designation (Optional)</label><input id="req-visitor-designation" value="${escapeHtml(existing?.visitor_designation || "")}"></div>
+                    <div class="field-row"><label>Organisation (Optional)</label><input id="req-visitor-organisation" value="${escapeHtml(existing?.visitor_organisation || "")}"></div>
+                    <div class="field-row"><label>Gender (Optional)</label><select id="req-visitor-gender">
+                        <option value="" ${!existing?.visitor_gender ? "selected" : ""}>Select gender (Optional)</option>
                         <option value="Male" ${existing?.visitor_gender === "Male" ? "selected" : ""}>Male</option>
                         <option value="Female" ${existing?.visitor_gender === "Female" ? "selected" : ""}>Female</option>
                         <option value="Other" ${existing?.visitor_gender === "Other" ? "selected" : ""}>Other</option>
                     </select></div>
-                    <div class="field-row"><label>Visitor mobile</label><input id="req-visitor-mobile" value="${escapeHtml(existing?.visitor_mobile || "")}"></div>
-                    <div class="field-row"><label>Visitor email</label><input id="req-visitor-email" type="email" value="${escapeHtml(existing?.visitor_email || "")}"></div>
+                    <div class="field-row"><label>Visitor mobile (Optional)</label><input id="req-visitor-mobile" value="${escapeHtml(existing?.visitor_mobile || "")}"></div>
+                    <div class="field-row"><label>Visitor email (Optional)</label><input id="req-visitor-email" type="email" value="${escapeHtml(existing?.visitor_email || "")}"></div>
                 </div>
-                <div class="field-row"><label>Purpose of visit</label><textarea id="req-purpose">${escapeHtml(existing?.purpose_of_visit || "")}</textarea></div>
+                <div class="field-row"><label>Purpose of visit (Optional)</label><textarea id="req-purpose">${escapeHtml(existing?.purpose_of_visit || "")}</textarea></div>
 
-                <div class="form-section-title">Visitor Category</div>
+                <div class="form-section-title">Visitor Category (Optional)</div>
                 <div class="radio-list">
                     <label class="check-row"><input name="req-visitor-category" type="radio" value="institute_guest" ${existing?.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
                     <label class="check-row"><input name="req-visitor-category" type="radio" value="conference_workshop_guest" ${existing?.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
@@ -4208,32 +4585,33 @@ async function openRequestForm(existing = null, selectedRoom = null) {
                     <button class="outline-btn compact-btn" id="req-clear-visitor-category" type="button">Clear Selection</button>
                 </div>
 
-                <div class="form-section-title">Budget Head</div>
+                <div class="form-section-title">Budget Head (Optional)</div>
                 <div class="budget-head-group">
                     <label class="check-row"><input id="req-budget-individual" data-requester-budget-head-field="req-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
-                    <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="req-budget-name">Name</label><input id="req-budget-name" placeholder="Name" value="${htmlValue(budgetHead.individual)}"></div>
+                    <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="req-budget-name">Name (Optional)</label><input id="req-budget-name" placeholder="Name (Optional)" value="${htmlValue(budgetHead.individual)}"></div>
                     <label class="check-row"><input id="req-budget-institute-head" data-requester-budget-head-field="req-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
-                    <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="req-budget-department">Department Name</label><input id="req-budget-department" placeholder="Department Name" value="${htmlValue(budgetHead.instituteHead)}"></div>
+                    <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="req-budget-department">Department Name (Optional)</label><input id="req-budget-department" placeholder="Department Name (Optional)" value="${htmlValue(budgetHead.instituteHead)}"></div>
                     <label class="check-row"><input id="req-budget-project-head" data-requester-budget-head-field="req-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
-                    <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="req-budget-project-code">Project code</label><input id="req-budget-project-code" placeholder="Project code" value="${htmlValue(budgetHead.projectHead)}"></div>
+                    <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="req-budget-project-code">Project code (Optional)</label><input id="req-budget-project-code" placeholder="Project code (Optional)" value="${htmlValue(budgetHead.projectHead)}"></div>
                     <button class="outline-btn compact-btn budget-clear-btn" id="req-clear-budget-head" type="button">Clear Budget Head</button>
                 </div>
 
-                <div class="form-section-title">Attender Requirement</div>
-                <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required</label>
+                <div class="form-section-title">Attender Requirement (Optional)</div>
+                <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required (Optional)</label>
+                <div class="field-row"><label>Shift(s) * (if attender required)</label></div>
                 <div class="two-col">
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-general" type="checkbox" ${existing?.attender_general_shift ? "checked" : ""}> General shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}> Morning shift</label>
-                    <label style="display:flex;gap:8px;align-items:center"><input id="req-day" type="checkbox" ${existing?.attender_day_shift ? "checked" : ""}> Day shift</label>
+                    <label style="display:flex;gap:8px;align-items:center"><input id="req-day" type="checkbox" ${existing?.attender_day_shift ? "checked" : ""}> Evening shift</label>
                 </div>
 
                 <div class="form-section-title">Requester Details</div>
                 <div class="two-col">
-                    <div class="field-row"><label>Requester name</label><input id="req-requestor-name" value="${escapeHtml(requestorName)}" disabled aria-readonly="true"></div>
-                    <div class="field-row"><label>Department</label><input id="req-requestor-department" value="${escapeHtml(existing?.requestor_department || state.user?.department || "")}"></div>
-                    <div class="field-row"><label>Designation</label><input id="req-requestor-designation" value="${escapeHtml(existing?.requestor_designation || state.user?.designation || "")}"></div>
-                    <div class="field-row"><label>Mobile</label><input id="req-requestor-mobile" value="${escapeHtml(existing?.requestor_mobile || state.user?.mobile || "")}"></div>
-                    <div class="field-row"><label>Email</label><input id="req-requestor-email" type="email" value="${escapeHtml(requestorEmail)}" readonly></div>
+                    <div class="field-row"><label>Requester name (Optional)</label><input id="req-requestor-name" value="${escapeHtml(requestorName)}" disabled aria-readonly="true"></div>
+                    <div class="field-row"><label>Department (Optional)</label><input id="req-requestor-department" value="${escapeHtml(existing?.requestor_department || state.user?.department || "")}"></div>
+                    <div class="field-row"><label>Designation (Optional)</label><input id="req-requestor-designation" value="${escapeHtml(existing?.requestor_designation || state.user?.designation || "")}"></div>
+                    <div class="field-row"><label>Mobile (Optional)</label><input id="req-requestor-mobile" value="${escapeHtml(existing?.requestor_mobile || state.user?.mobile || "")}"></div>
+                    <div class="field-row"><label>Email (Optional)</label><input id="req-requestor-email" type="email" value="${escapeHtml(requestorEmail)}" readonly></div>
                 </div>
             </form>
         `,
@@ -4305,7 +4683,7 @@ async function submitRequesterRequest(existing = null) {
 function openRemarksModal(title, confirmText, confirmClass, onConfirm, placeholder = "Optional remarks") {
     openActionModal({
         title,
-        body: `<div class="field-row"><label for="modal-remarks">Remarks</label><textarea id="modal-remarks" placeholder="${escapeHtml(placeholder)}"></textarea></div>`,
+        body: `<div class="field-row"><label for="modal-remarks">Remarks (Optional)</label><textarea id="modal-remarks" placeholder="${escapeHtml(placeholder)}"></textarea></div>`,
         confirmText,
         confirmClass,
         onConfirm: async () => onConfirm(document.getElementById("modal-remarks").value),
@@ -4490,4 +4868,5 @@ window.addEventListener("hashchange", handleRouteChange);
 window.addEventListener("popstate", handleRouteChange);
 document.addEventListener("pointerdown", handleChargeSheetPointerDown, true);
 
+observeRequiredMarks();
 boot();

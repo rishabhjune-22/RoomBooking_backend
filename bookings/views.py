@@ -7,6 +7,7 @@ from django.db import transaction
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.html import escape
 
 from rest_framework import status
 from rest_framework.generics import CreateAPIView, ListAPIView, RetrieveAPIView, UpdateAPIView
@@ -49,6 +50,10 @@ from .serializers import (
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 logger = logging.getLogger(__name__)
+BOOKING_MAIL_LOGO_URL = (
+    "https://ci3.googleusercontent.com/mail-sig/"
+    "AIorK4x5mkU-53VNEVQUV3HiMhlngPIQcgcgXh68-gxnuC8GeQj0UYRAHxHWB4lh6qTUUh2ni6_CmozCmjhX"
+)
 
 
 AUDITED_BOOKING_FIELDS = [
@@ -79,7 +84,7 @@ AUDITED_BOOKING_FIELDS = [
     ("attender_required", "Attender Required"),
     ("attender_general_shift", "Attender General Shift"),
     ("attender_morning_shift", "Attender Morning Shift"),
-    ("attender_day_shift", "Attender Day Shift"),
+    ("attender_day_shift", "Attender Evening Shift"),
     ("room_charges_status", "Room Charges Status"),
     ("attender_charges_status", "Attender Charges Status"),
     ("room_charges_amount", "Room Charges Amount"),
@@ -614,6 +619,280 @@ class BookingCreateView(CreateAPIView):
             response_body["message"],
             response_body["data"],
             status_code=status.HTTP_201_CREATED,
+        )
+
+
+def format_mail_datetime(value):
+    local_value = timezone.localtime(value, INDIA_TZ)
+    return local_value.strftime("%d.%m.%Y"), local_value.strftime("%I:%M %p")
+
+
+def format_booking_room_for_mail(booking):
+    room = booking.room
+    if room.hostel_name:
+        hostel_name = {"Mainpat": "Mainpath"}.get(room.hostel_name, room.hostel_name)
+        return f"{hostel_name} ({room.prefix})-{room.selection_label}"
+    return str(room)
+
+
+def charge_amount_for_mail(status_value, amount):
+    if status_value == Booking.CHARGE_STATUS_YES and amount and amount > 0:
+        return amount
+    return Decimal("0")
+
+
+def format_charge_for_mail(status_value, amount):
+    payable = charge_amount_for_mail(status_value, amount)
+    if payable <= 0:
+        return "Nil"
+    normalized = payable.quantize(Decimal("0.01"))
+    if normalized == normalized.to_integral_value():
+        return f"Rs. {normalized:,.0f}"
+    return f"Rs. {normalized:,.2f}"
+
+
+def booking_days_nights_text(booking):
+    arrival = timezone.localtime(booking.arrival_at, INDIA_TZ).date()
+    departure = timezone.localtime(booking.departure_at, INDIA_TZ).date()
+    nights = max((departure - arrival).days, 0)
+    days = max(nights + 1, 1)
+    return f"{days}D{nights}N"
+
+
+def attender_facility_for_mail(booking):
+    if not booking.attender_required:
+        return "Nil"
+
+    shifts = []
+    if booking.attender_general_shift:
+        shifts.append("General Shift (09 AM to 05 PM)")
+    if booking.attender_morning_shift:
+        shifts.append("Morning Shift")
+    if booking.attender_day_shift:
+        shifts.append("Evening Shift")
+
+    if not shifts:
+        return "Attender requested"
+    if len(shifts) == 1:
+        return f"(a) Only {shifts[0]} attender is requested"
+    return "\n".join(f"({chr(97 + index)}) {shift} attender is requested" for index, shift in enumerate(shifts))
+
+
+def booking_mail_rows(booking):
+    checkin_date, checkin_time = format_mail_datetime(booking.arrival_at)
+    checkout_date, checkout_time = format_mail_datetime(booking.departure_at)
+    return {
+        "guest_name": booking.visitor_name,
+        "room_no": format_booking_room_for_mail(booking),
+        "checkin": f"{checkin_date}\n{checkin_time}",
+        "checkout": f"{checkout_date}\n{checkout_time}",
+        "days": booking_days_nights_text(booking),
+        "room_charges": format_charge_for_mail(booking.room_charges_status, booking.room_charges_amount),
+        "attender_facility": attender_facility_for_mail(booking),
+        "attender_charges": format_charge_for_mail(booking.attender_charges_status, booking.attender_charges_amount),
+    }
+
+
+def total_payable_for_mail(booking):
+    return (
+        charge_amount_for_mail(booking.room_charges_status, booking.room_charges_amount)
+        + charge_amount_for_mail(booking.attender_charges_status, booking.attender_charges_amount)
+    )
+
+
+def booking_mail_subject(booking):
+    return f"Accommodation details - Booking #{booking.booking_reference_number}"
+
+
+def booking_total_line_for_mail(booking, total):
+    if total != "Nil":
+        return f"Total Amount payable is {total}."
+    if booking.attender_required:
+        return "As room charges are waived off and attender charges are Nil, so Total Amount payable is Nil."
+    return (
+        "As room charges are waived off and no additional attender is requested, "
+        "so Total Amount payable is Nil."
+    )
+
+
+def booking_mail_plain_body(booking):
+    row = booking_mail_rows(booking)
+    total = format_charge_for_mail(Booking.CHARGE_STATUS_YES, total_payable_for_mail(booking))
+    total_line = booking_total_line_for_mail(booking, total)
+
+    return f"""Dear CCPS Team,
+
+Please find below the updated accommodation details of your guests as per your request : -
+
+Guest Name: {row["guest_name"]}
+Room No.: {row["room_no"]}
+Check-in Date/Time: {row["checkin"].replace(chr(10), " ")}
+Check-out Date/Time: {row["checkout"].replace(chr(10), " ")}
+No of Days: {row["days"]}
+Room Charges: {row["room_charges"]}
+Attender Facility: {row["attender_facility"]}
+Attender Charges: {row["attender_charges"]}
+
+Total
+Room Charges: {row["room_charges"]}
+Attender Charges: {row["attender_charges"]}
+
+{total_line}
+
+NOTE:
+
+(1) All logistical arrangements, including food and transportation, shall be managed by the requestor.
+(2) For any housekeeping assistance, kindly contact Supervisor Mr. Shivam at +91-9907383607 or Mr. Shubham at +91-8519019197.
+(3) Please check the rooms before the arrival of the guests and communicate any changes to be done to the Supervisor or attender in advance.
+
+सादर धन्यवाद/Thanks & Regards,
+
+हेमंत वर्मा/Hemant Verma
+अधीक्षक (निदेशालय)/Superintendent (Directorate)
+भारतीय प्रौद्योगिकी संस्थान भिलाई/Indian Institute of Technology Bhilai
+जिला- दुर्ग, छत्तीसगढ़-491002/District-Durg, Chhattisgarh-491002
+दूरभाष क्र./Mobile No. 9993111444
+"""
+
+
+def booking_mail_html_body(booking):
+    row = booking_mail_rows(booking)
+    total = format_charge_for_mail(Booking.CHARGE_STATUS_YES, total_payable_for_mail(booking))
+    total_line = booking_total_line_for_mail(booking, total)
+    logo_html = (
+        f'<p style="margin:18px 0 0 0;"><img src="{BOOKING_MAIL_LOGO_URL}" '
+        'alt="IIT Bhilai" style="width:72px;height:auto;object-fit:contain;display:block;"></p>'
+    )
+    cell_style = (
+        "border:1px solid #111;padding:3px 5px;font-size:11px;line-height:1.15;"
+        "vertical-align:top;text-align:left;color:#111;"
+    )
+    header_style = f"{cell_style}font-weight:700;"
+    total_style = f"{cell_style}font-weight:700;"
+    display_value = lambda value: escape(value).replace(chr(10), "<br>")
+    return f"""
+<div style="font-family:Arial, Helvetica, sans-serif;font-size:12px;line-height:1.35;color:#222;">
+<p style="margin:0 0 24px 0;font-size:16px;">Dear CCPS Team,</p>
+<p style="margin:0 0 28px 0;">Please find below the updated accommodation details of your guests as per your request : -</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:560px;table-layout:fixed;margin:0 0 18px 0;">
+    <thead>
+        <tr>
+            <th style="{header_style}width:68px;">Guest<br>Name</th>
+            <th style="{header_style}width:83px;">Room No.</th>
+            <th style="{header_style}width:74px;">Check-in<br>Date/Time</th>
+            <th style="{header_style}width:74px;">Check-out<br>Date/Time</th>
+            <th style="{header_style}width:43px;">No of<br>Days</th>
+            <th style="{header_style}width:58px;">Room<br>Charges</th>
+            <th style="{header_style}width:72px;">Attender<br>Facility</th>
+            <th style="{header_style}width:88px;">Attender<br>Charges</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td style="{cell_style}">{display_value(row["guest_name"])}</td>
+            <td style="{cell_style}">{display_value(row["room_no"])}</td>
+            <td style="{cell_style}">{display_value(row["checkin"])}</td>
+            <td style="{cell_style}">{display_value(row["checkout"])}</td>
+            <td style="{cell_style}">{display_value(row["days"])}</td>
+            <td style="{cell_style}">{display_value(row["room_charges"])}</td>
+            <td style="{cell_style}">{display_value(row["attender_facility"])}</td>
+            <td style="{cell_style}">{display_value(row["attender_charges"])}</td>
+        </tr>
+        <tr>
+            <td colspan="5" style="{total_style}">Total</td>
+            <td style="{cell_style}">{escape(row["room_charges"])}</td>
+            <td style="{cell_style}"></td>
+            <td style="{cell_style}">{escape(row["attender_charges"])}</td>
+        </tr>
+    </tbody>
+</table>
+<p style="margin:0 0 28px 0;font-weight:700;">{escape(total_line)}</p>
+<p style="margin:0 0 28px 0;font-weight:700;">NOTE:</p>
+<p style="margin:0 0 12px 0;">(1) All logistical arrangements, including food and transportation, shall be managed by the requestor.</p>
+<p style="margin:0 0 12px 0;">(2) For any housekeeping assistance, kindly contact Supervisor Mr. Shivam at <a href="tel:+919907383607">+91-9907383607</a> or Mr. Shubham at <a href="tel:+918519019197">+91-8519019197</a>.</p>
+<p style="margin:0 0 28px 0;">(3) Please check the rooms before the arrival of the guests and communicate any changes to be done to the Supervisor or attender in advance.</p>
+<p style="margin:0;color:#1f1a70;font-family:'Courier New', monospace;line-height:1.35;">
+सादर धन्यवाद/Thanks &amp; Regards,<br>
+<br>
+हेमंत वर्मा/Hemant Verma<br>
+अधीक्षक (निदेशालय)/Superintendent (Directorate)<br>
+भारतीय प्रौद्योगिकी संस्थान भिलाई/Indian Institute of Technology Bhilai<br>
+जिला- दुर्ग, छत्तीसगढ़-491002/District-Durg, Chhattisgarh-491002<br>
+दूरभाष क्र./Mobile No. 9993111444
+</p>
+{logo_html}
+</div>
+"""
+
+
+def booking_mail_template_payload(booking):
+    return {
+        "subject": booking_mail_subject(booking),
+        "body": booking_mail_plain_body(booking),
+        "html": booking_mail_html_body(booking),
+    }
+
+
+class BookingCreateMailTemplateView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_mutation"
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        idempotency = begin_idempotent_request(
+            request,
+            BookingIdempotencyRecord.ACTION_CREATE,
+            extra={"mail_template": True},
+        )
+        if idempotency.response is not None:
+            return idempotency.response
+
+        lock_rooms_for_booking_write(request.data.get("room"))
+        serializer = BookingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        booking = serializer.save(
+            created_by=request.user,
+            created_by_name=get_user_display_name(request.user),
+        )
+
+        response_body = action_response_body("Booking created and mail template generated successfully", booking)
+        response_body["data"]["mail_template"] = booking_mail_template_payload(booking)
+        complete_idempotent_request(
+            idempotency.record,
+            response_body,
+            status.HTTP_201_CREATED,
+            booking_id=booking.id,
+        )
+        logger.info(
+            "booking_created_mail_template_generated",
+            extra={
+                "event": "booking_created_mail_template_generated",
+                "booking_id": booking.id,
+                "room_id": booking.room_id,
+            },
+        )
+
+        return api_success(
+            response_body["message"],
+            response_body["data"],
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+class BookingMailTemplateView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_read"
+
+    def get(self, request, pk, *args, **kwargs):
+        booking = get_object_or_404(
+            Booking.objects.select_related("room"),
+            pk=pk,
+        )
+        return api_success(
+            "Booking mail template generated successfully",
+            booking_mail_template_payload(booking),
         )
 
 
