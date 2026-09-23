@@ -3609,10 +3609,18 @@ async function fillAdminBookingFormFromPreviousBooking() {
     setFieldValue("admin-requestor-mobile", booking.requestor_mobile || "");
     syncAdminLogisticsFromPreviousBooking(booking);
 
-    setFieldValue("admin-room-charge-status", booking.room_charges_status || "no", true);
-    setFieldValue("admin-room-charge-amount", booking.room_charges_amount ?? 0);
-    setFieldValue("admin-attender-charge-status", booking.attender_charges_status || "no", true);
-    setFieldValue("admin-attender-charge-amount", booking.attender_charges_amount ?? 0);
+    const roomChargeStatus = booking.room_charges_status || "no";
+    const attenderChargeStatus = booking.attender_charges_status || "no";
+    setFieldValue("admin-room-charge-status", roomChargeStatus, true);
+    setFieldValue(
+        "admin-room-charge-amount",
+        roomChargeStatus === "yes" ? booking.room_charges_amount ?? 0 : "",
+    );
+    setFieldValue("admin-attender-charge-status", attenderChargeStatus, true);
+    setFieldValue(
+        "admin-attender-charge-amount",
+        attenderChargeStatus === "yes" ? booking.attender_charges_amount ?? 0 : "",
+    );
 
     toast("Filled from previous booking.");
 }
@@ -3653,6 +3661,24 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
     if (!prefixSelect || !roomSelect) {
         return;
     }
+    const bindChargeAmount = (statusId, amountId) => {
+        const statusField = document.getElementById(statusId);
+        const amountField = document.getElementById(amountId);
+        if (!statusField || !amountField) {
+            return;
+        }
+
+        const sync = () => {
+            const enabled = statusField.value === "yes";
+            amountField.disabled = !enabled;
+            if (!enabled) {
+                amountField.value = "";
+            }
+        };
+
+        statusField.addEventListener("change", sync);
+        sync();
+    };
     const availabilityFilter = options.availabilityFilter !== false;
     const selectedRoom = rooms.find((room) => String(room.id) === String(selectedRoomId));
     if (selectedRoom?.prefix) {
@@ -3727,6 +3753,8 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
         });
     });
     renderRoomOptions();
+    bindChargeAmount("admin-room-charge-status", "admin-room-charge-amount");
+    bindChargeAmount("admin-attender-charge-status", "admin-attender-charge-amount");
 
     const syncAttender = () => {
         const enabled = attender?.checked;
