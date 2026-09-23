@@ -1445,6 +1445,19 @@ button:disabled {
     border-top: 1px solid var(--line);
 }
 
+.modal-footer > button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .modal-footer {
+        justify-content: flex-start;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
 .review-footer-stack {
     width: 100%;
     display: grid;
