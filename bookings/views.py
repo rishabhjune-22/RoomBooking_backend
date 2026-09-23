@@ -700,14 +700,46 @@ def total_payable_for_mail(booking):
     )
 
 
-def booking_mail_subject(booking):
-    return f"Accommodation details - Booking #{booking.booking_reference_number}"
+def normalize_mail_bookings(bookings):
+    if isinstance(bookings, Booking):
+        return [bookings]
+    return list(bookings)
 
 
-def booking_total_line_for_mail(booking, total):
+def booking_mail_subject(bookings):
+    mail_bookings = normalize_mail_bookings(bookings)
+    if len(mail_bookings) == 1:
+        booking = mail_bookings[0]
+        return f"Accommodation details - Booking #{booking.booking_reference_number}"
+    return f"Accommodation details - {len(mail_bookings)} bookings"
+
+
+def booking_mail_sender_name(user):
+    if not user or not getattr(user, "is_authenticated", False):
+        return ""
+    return get_user_display_name(user)
+
+
+def booking_charge_totals_for_mail(bookings):
+    mail_bookings = normalize_mail_bookings(bookings)
+    room_total = sum(
+        (charge_amount_for_mail(booking.room_charges_status, booking.room_charges_amount) for booking in mail_bookings),
+        Decimal("0"),
+    )
+    attender_total = sum(
+        (
+            charge_amount_for_mail(booking.attender_charges_status, booking.attender_charges_amount)
+            for booking in mail_bookings
+        ),
+        Decimal("0"),
+    )
+    return room_total, attender_total, room_total + attender_total
+
+
+def booking_total_line_for_mail(bookings, total):
     if total != "Nil":
         return f"Total Amount payable is {total}."
-    if booking.attender_required:
+    if any(booking.attender_required for booking in normalize_mail_bookings(bookings)):
         return "As room charges are waived off and attender charges are Nil, so Total Amount payable is Nil."
     return (
         "As room charges are waived off and no additional attender is requested, "
@@ -715,27 +747,36 @@ def booking_total_line_for_mail(booking, total):
     )
 
 
-def booking_mail_plain_body(booking):
-    row = booking_mail_rows(booking)
-    total = format_charge_for_mail(Booking.CHARGE_STATUS_YES, total_payable_for_mail(booking))
-    total_line = booking_total_line_for_mail(booking, total)
-
-    return f"""Dear CCPS Team,
-
-Please find below the updated accommodation details of your guests as per your request : -
-
-Guest Name: {row["guest_name"]}
+def booking_mail_plain_body(bookings, sender_name=""):
+    mail_bookings = normalize_mail_bookings(bookings)
+    rows = [booking_mail_rows(booking) for booking in mail_bookings]
+    room_total, attender_total, payable_total = booking_charge_totals_for_mail(mail_bookings)
+    room_total_text = format_charge_for_mail(Booking.CHARGE_STATUS_YES, room_total)
+    attender_total_text = format_charge_for_mail(Booking.CHARGE_STATUS_YES, attender_total)
+    total = format_charge_for_mail(Booking.CHARGE_STATUS_YES, payable_total)
+    total_line = booking_total_line_for_mail(mail_bookings, total)
+    sender_name = sender_name or "Room Booking Team"
+    booking_blocks = "\n\n".join(
+        f"""Guest Name: {row["guest_name"]}
 Room No.: {row["room_no"]}
 Check-in Date/Time: {row["checkin"].replace(chr(10), " ")}
 Check-out Date/Time: {row["checkout"].replace(chr(10), " ")}
 No of Days: {row["days"]}
 Room Charges: {row["room_charges"]}
 Attender Facility: {row["attender_facility"]}
-Attender Charges: {row["attender_charges"]}
+Attender Charges: {row["attender_charges"]}"""
+        for row in rows
+    )
+
+    return f"""Dear CCPS Team,
+
+Please find below the updated accommodation details of your guests as per your request : -
+
+{booking_blocks}
 
 Total
-Room Charges: {row["room_charges"]}
-Attender Charges: {row["attender_charges"]}
+Room Charges: {room_total_text}
+Attender Charges: {attender_total_text}
 
 {total_line}
 
@@ -747,7 +788,7 @@ NOTE:
 
 सादर धन्यवाद/Thanks & Regards,
 
-हेमंत वर्मा/Hemant Verma
+{sender_name}
 अधीक्षक (निदेशालय)/Superintendent (Directorate)
 भारतीय प्रौद्योगिकी संस्थान भिलाई/Indian Institute of Technology Bhilai
 जिला- दुर्ग, छत्तीसगढ़-491002/District-Durg, Chhattisgarh-491002
@@ -755,10 +796,15 @@ NOTE:
 """
 
 
-def booking_mail_html_body(booking):
-    row = booking_mail_rows(booking)
-    total = format_charge_for_mail(Booking.CHARGE_STATUS_YES, total_payable_for_mail(booking))
-    total_line = booking_total_line_for_mail(booking, total)
+def booking_mail_html_body(bookings, sender_name=""):
+    mail_bookings = normalize_mail_bookings(bookings)
+    rows = [booking_mail_rows(booking) for booking in mail_bookings]
+    room_total, attender_total, payable_total = booking_charge_totals_for_mail(mail_bookings)
+    room_total_text = format_charge_for_mail(Booking.CHARGE_STATUS_YES, room_total)
+    attender_total_text = format_charge_for_mail(Booking.CHARGE_STATUS_YES, attender_total)
+    total = format_charge_for_mail(Booking.CHARGE_STATUS_YES, payable_total)
+    total_line = booking_total_line_for_mail(mail_bookings, total)
+    sender_name = sender_name or "Room Booking Team"
     logo_html = (
         f'<p style="margin:18px 0 0 0;"><img src="{BOOKING_MAIL_LOGO_URL}" '
         'alt="IIT Bhilai" style="width:72px;height:auto;object-fit:contain;display:block;"></p>'
@@ -770,6 +816,21 @@ def booking_mail_html_body(booking):
     header_style = f"{cell_style}font-weight:700;"
     total_style = f"{cell_style}font-weight:700;"
     display_value = lambda value: escape(value).replace(chr(10), "<br>")
+    booking_rows_html = "\n".join(
+        f"""
+        <tr>
+            <td style="{cell_style}">{display_value(row["guest_name"])}</td>
+            <td style="{cell_style}">{display_value(row["room_no"])}</td>
+            <td style="{cell_style}">{display_value(row["checkin"])}</td>
+            <td style="{cell_style}">{display_value(row["checkout"])}</td>
+            <td style="{cell_style}">{display_value(row["days"])}</td>
+            <td style="{cell_style}">{display_value(row["room_charges"])}</td>
+            <td style="{cell_style}">{display_value(row["attender_facility"])}</td>
+            <td style="{cell_style}">{display_value(row["attender_charges"])}</td>
+        </tr>
+        """
+        for row in rows
+    )
     return f"""
 <div style="font-family:Arial, Helvetica, sans-serif;font-size:12px;line-height:1.35;color:#222;">
 <p style="margin:0 0 24px 0;font-size:16px;">Dear CCPS Team,</p>
@@ -788,21 +849,12 @@ def booking_mail_html_body(booking):
         </tr>
     </thead>
     <tbody>
-        <tr>
-            <td style="{cell_style}">{display_value(row["guest_name"])}</td>
-            <td style="{cell_style}">{display_value(row["room_no"])}</td>
-            <td style="{cell_style}">{display_value(row["checkin"])}</td>
-            <td style="{cell_style}">{display_value(row["checkout"])}</td>
-            <td style="{cell_style}">{display_value(row["days"])}</td>
-            <td style="{cell_style}">{display_value(row["room_charges"])}</td>
-            <td style="{cell_style}">{display_value(row["attender_facility"])}</td>
-            <td style="{cell_style}">{display_value(row["attender_charges"])}</td>
-        </tr>
+        {booking_rows_html}
         <tr>
             <td colspan="5" style="{total_style}">Total</td>
-            <td style="{cell_style}">{escape(row["room_charges"])}</td>
+            <td style="{cell_style}">{escape(room_total_text)}</td>
             <td style="{cell_style}"></td>
-            <td style="{cell_style}">{escape(row["attender_charges"])}</td>
+            <td style="{cell_style}">{escape(attender_total_text)}</td>
         </tr>
     </tbody>
 </table>
@@ -814,7 +866,7 @@ def booking_mail_html_body(booking):
 <p style="margin:0;color:#1f1a70;font-family:'Courier New', monospace;line-height:1.35;">
 सादर धन्यवाद/Thanks &amp; Regards,<br>
 <br>
-हेमंत वर्मा/Hemant Verma<br>
+{escape(sender_name)}<br>
 अधीक्षक (निदेशालय)/Superintendent (Directorate)<br>
 भारतीय प्रौद्योगिकी संस्थान भिलाई/Indian Institute of Technology Bhilai<br>
 जिला- दुर्ग, छत्तीसगढ़-491002/District-Durg, Chhattisgarh-491002<br>
@@ -825,11 +877,13 @@ def booking_mail_html_body(booking):
 """
 
 
-def booking_mail_template_payload(booking):
+def booking_mail_template_payload(bookings, user=None):
+    mail_bookings = normalize_mail_bookings(bookings)
+    sender_name = booking_mail_sender_name(user)
     return {
-        "subject": booking_mail_subject(booking),
-        "body": booking_mail_plain_body(booking),
-        "html": booking_mail_html_body(booking),
+        "subject": booking_mail_subject(mail_bookings),
+        "body": booking_mail_plain_body(mail_bookings, sender_name),
+        "html": booking_mail_html_body(mail_bookings, sender_name),
     }
 
 
@@ -857,7 +911,7 @@ class BookingCreateMailTemplateView(APIView):
         )
 
         response_body = action_response_body("Booking created and mail template generated successfully", booking)
-        response_body["data"]["mail_template"] = booking_mail_template_payload(booking)
+        response_body["data"]["mail_template"] = booking_mail_template_payload(booking, request.user)
         complete_idempotent_request(
             idempotency.record,
             response_body,
@@ -892,7 +946,47 @@ class BookingMailTemplateView(APIView):
         )
         return api_success(
             "Booking mail template generated successfully",
-            booking_mail_template_payload(booking),
+            booking_mail_template_payload(booking, request.user),
+        )
+
+
+class BookingBulkMailTemplateView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_read"
+
+    def post(self, request, *args, **kwargs):
+        payload = request.data if isinstance(request.data, dict) else {}
+        raw_ids = payload.get("booking_ids", payload.get("ids"))
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return api_error(
+                "Select at least one booking.",
+                errors={"booking_ids": ["This field must be a non-empty list."]},
+            )
+
+        try:
+            requested_ids = [int(value) for value in raw_ids]
+        except (TypeError, ValueError):
+            return api_error(
+                "Selected booking ids are invalid.",
+                errors={"booking_ids": ["Every booking id must be a number."]},
+            )
+
+        unique_ids = list(dict.fromkeys(requested_ids))
+        bookings = Booking.objects.select_related("room").filter(pk__in=unique_ids)
+        booking_by_id = {booking.id: booking for booking in bookings}
+        missing_ids = [booking_id for booking_id in unique_ids if booking_id not in booking_by_id]
+        if missing_ids:
+            return api_error(
+                "One or more selected bookings were not found.",
+                errors={"booking_ids": missing_ids},
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        ordered_bookings = [booking_by_id[booking_id] for booking_id in unique_ids]
+        return api_success(
+            "Booking mail template generated successfully",
+            booking_mail_template_payload(ordered_bookings, request.user),
         )
 
 

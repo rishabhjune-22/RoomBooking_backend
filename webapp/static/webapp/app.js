@@ -77,6 +77,7 @@ const state = {
     bookingLoading: false,
     bookingLoadedCount: 0,
     bookingInfiniteObserver: null,
+    selectedBookingIds: new Set(),
     chargeSheetPrefixFilter: "all",
     chargeSheetPaymentFilter: "all",
     chargeSheetCheckoutFrom: "",
@@ -2259,17 +2260,125 @@ async function createBookingShareLink(sheetName = "booking") {
     }
 }
 
+function bookingSelectionId(value) {
+    return String(value ?? "");
+}
+
+function selectedBookingIds() {
+    return Array.from(state.selectedBookingIds).filter(Boolean);
+}
+
+function updateBookingSelectionUi() {
+    document.querySelectorAll("[data-booking-select-id]").forEach((checkbox) => {
+        const selected = state.selectedBookingIds.has(checkbox.dataset.bookingSelectId);
+        checkbox.checked = selected;
+        checkbox.closest(".item-card")?.classList.toggle("selected", selected);
+    });
+    const count = state.selectedBookingIds.size;
+    const button = document.getElementById("delete-selected-bookings");
+    if (button) {
+        button.disabled = count === 0;
+        button.textContent = count ? `Delete Selected (${count})` : "Delete Selected";
+    }
+    const mailButton = document.getElementById("generate-selected-mail-template");
+    if (mailButton) {
+        mailButton.disabled = count === 0;
+        mailButton.textContent = count ? `Generate Email Template (${count})` : "Generate Email Template";
+    }
+}
+
+function clearBookingSelection() {
+    if (!state.selectedBookingIds.size) {
+        updateBookingSelectionUi();
+        return;
+    }
+    state.selectedBookingIds.clear();
+    updateBookingSelectionUi();
+}
+
+function setBookingSelection(bookingId, selected) {
+    const id = bookingSelectionId(bookingId);
+    if (!id) {
+        return;
+    }
+    if (selected) {
+        state.selectedBookingIds.add(id);
+    } else {
+        state.selectedBookingIds.delete(id);
+    }
+    updateBookingSelectionUi();
+}
+
+function bindBulkBookingActions() {
+    document.getElementById("generate-selected-mail-template")?.addEventListener("click", generateSelectedBookingMailTemplate);
+    document.getElementById("delete-selected-bookings")?.addEventListener("click", openBulkDeleteBookingsModal);
+    updateBookingSelectionUi();
+}
+
+async function generateSelectedBookingMailTemplate() {
+    const ids = selectedBookingIds();
+    if (!ids.length) {
+        toast("Select at least one booking to generate an email template.", "error");
+        return;
+    }
+    const button = document.getElementById("generate-selected-mail-template");
+    if (button) {
+        button.disabled = true;
+    }
+    try {
+        const template = await apiFetch("/api/bookings/mail-template/", {
+            method: "POST",
+            body: { booking_ids: ids },
+        });
+        openBookingMailTemplateModal(template);
+    } catch (error) {
+        toast(error.message, "error");
+    } finally {
+        updateBookingSelectionUi();
+    }
+}
+
+function openBulkDeleteBookingsModal() {
+    const ids = selectedBookingIds();
+    if (!ids.length) {
+        toast("Select at least one booking to delete.", "error");
+        return;
+    }
+    openActionModal({
+        title: "Delete Selected Bookings",
+        body: `<p class="item-meta">Are you sure you want to permanently delete ${ids.length} selected booking${ids.length === 1 ? "" : "s"}? This cannot be undone.</p>`,
+        confirmText: `Delete ${ids.length} Booking${ids.length === 1 ? "" : "s"}`,
+        confirmClass: "danger-btn",
+        onConfirm: async () => {
+            const deletingIds = selectedBookingIds();
+            for (const id of deletingIds) {
+                await apiFetch(`/api/bookings/${id}/delete/`, { method: "DELETE" });
+            }
+            state.selectedBookingIds.clear();
+            toast(`${deletingIds.length} booking${deletingIds.length === 1 ? "" : "s"} deleted successfully.`);
+            closeModal();
+            await refreshVisibleBookingSurface();
+        },
+    });
+}
+
 function bookingCardHtml(booking) {
+    const bookingId = bookingSelectionId(booking.id);
+    const checked = state.selectedBookingIds.has(bookingId) ? "checked" : "";
+    const selectedClass = checked ? " selected" : "";
     return `
-        <article class="item-card" data-booking-id="${booking.id}">
-            <div class="item-main">
-                <div>
-                    <h3 class="item-title">${escapeHtml(booking.visitor_name || "Visitor")}</h3>
-                    <p class="item-meta">Booking ID: ${escapeHtml(bookingDisplayId(booking))}</p>
-                    <p class="item-meta">${escapeHtml(booking.room_name)} - ${formatDateRange(booking)}</p>
-                    <p class="item-meta">Requestor: ${escapeHtml(booking.requestor_name || "-")} - Created by: ${escapeHtml(booking.created_by_name || "-")}</p>
+        <article class="item-card booking-card${selectedClass}" data-booking-id="${escapeHtml(bookingId)}">
+            <div class="booking-card-row">
+                <input class="booking-select-checkbox" type="checkbox" data-booking-select-id="${escapeHtml(bookingId)}" aria-label="Select booking ${escapeHtml(bookingDisplayId(booking))}" ${checked}>
+                <div class="item-main">
+                    <div>
+                        <h3 class="item-title">${escapeHtml(booking.visitor_name || "Visitor")}</h3>
+                        <p class="item-meta">Booking ID: ${escapeHtml(bookingDisplayId(booking))}</p>
+                        <p class="item-meta">${escapeHtml(booking.room_name)} - ${formatDateRange(booking)}</p>
+                        <p class="item-meta">Requestor: ${escapeHtml(booking.requestor_name || "-")} - Created by: ${escapeHtml(booking.created_by_name || "-")}</p>
+                    </div>
+                    <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
                 </div>
-                <span class="status-chip ${booking.status}">${titleCase(booking.status)}</span>
             </div>
         </article>
     `;
@@ -2390,6 +2499,12 @@ function renderBookingsView() {
                     <p class="filter-label">Status</p>
                     ${filterTabs(state.bookingStatusFilter, statusTabs)}
                 </div>
+                ${state.bookingViewMode === "cards" ? `
+                <div class="bulk-booking-actions">
+                    <button class="outline-btn" id="generate-selected-mail-template" type="button" disabled>Generate Email Template</button>
+                    <button class="danger-btn" id="delete-selected-bookings" type="button" disabled>Delete Selected</button>
+                </div>
+                ` : ""}
                 <div class="filter-grid">
                     <div class="field-row">
                         <label for="booking-prefix-filter">Building</label>
@@ -2427,6 +2542,7 @@ function renderBookingsView() {
         button.addEventListener("click", () => {
             state.bookingViewMode = button.dataset.bookingView;
             syncRouteHash();
+            clearBookingSelection();
             state.chargeSheetEditingId = "";
             renderBookingsView();
         });
@@ -2439,6 +2555,7 @@ function renderBookingsView() {
     } else if (state.bookingViewMode === "sheet") {
         bindFilterTabs(viewRoot(), (filter) => {
             state.bookingStatusFilter = filter;
+            clearBookingSelection();
             renderBookingsView();
         });
         bindBookingFilters();
@@ -2446,10 +2563,18 @@ function renderBookingsView() {
     } else {
         bindFilterTabs(viewRoot(), (filter) => {
             state.bookingStatusFilter = filter;
+            clearBookingSelection();
             renderBookingsView();
         });
         bindBookingFilters();
+        bindBulkBookingActions();
         document.getElementById("bookings-list").addEventListener("click", (event) => {
+            const checkbox = event.target.closest("[data-booking-select-id]");
+            if (checkbox) {
+                event.stopPropagation();
+                setBookingSelection(checkbox.dataset.bookingSelectId, checkbox.checked);
+                return;
+            }
             const card = event.target.closest("[data-booking-id]");
             if (card) {
                 openBookingDetails(card.dataset.bookingId);
@@ -2463,14 +2588,17 @@ function renderBookingsView() {
 function bindBookingFilters() {
     document.getElementById("booking-prefix-filter").addEventListener("change", (event) => {
         state.bookingPrefixFilter = event.target.value;
+        clearBookingSelection();
         refreshBookingsView();
     });
     document.getElementById("booking-arrival-from").addEventListener("change", (event) => {
         state.bookingArrivalFrom = event.target.value;
+        clearBookingSelection();
         refreshBookingsView();
     });
     document.getElementById("booking-departure-to").addEventListener("change", (event) => {
         state.bookingDepartureTo = event.target.value;
+        clearBookingSelection();
         refreshBookingsView();
     });
     document.getElementById("clear-booking-filters").addEventListener("click", () => {
@@ -2478,6 +2606,7 @@ function bindBookingFilters() {
         state.bookingPrefixFilter = "all";
         state.bookingArrivalFrom = "";
         state.bookingDepartureTo = "";
+        clearBookingSelection();
         renderBookingsView();
     });
 }
@@ -2823,6 +2952,7 @@ async function loadBookings({ reset = true } = {}) {
     }
     state.bookingLoading = true;
     if (reset) {
+        clearBookingSelection();
         state.bookingNextUrl = "";
         state.bookingLoadedCount = 0;
         list.innerHTML = `<div class="loading-state">Loading bookings...</div>`;

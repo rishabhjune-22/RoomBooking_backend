@@ -450,6 +450,13 @@ button:disabled {
     margin-bottom: 14px;
 }
 
+.bulk-booking-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
 .filter-label {
     margin: 0 0 8px;
     color: #344054;
@@ -1107,6 +1114,11 @@ button:disabled {
     gap: 10px;
 }
 
+.item-card.booking-card.selected {
+    border-color: rgba(15, 111, 191, 0.55);
+    box-shadow: 0 0 0 3px rgba(15, 111, 191, 0.12);
+}
+
 .item-card[data-booking-id],
 .item-card[data-request-id],
 .item-card[data-account-id],
@@ -1124,6 +1136,21 @@ button:disabled {
     border-color: rgba(15, 111, 191, 0.45);
     box-shadow: 0 8px 18px rgba(24, 39, 75, 0.08);
     transform: translateY(-1px);
+}
+
+.booking-card-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.booking-select-checkbox {
+    width: 18px;
+    height: 18px;
+    margin: 3px 0 0;
+    accent-color: var(--blue);
+    cursor: pointer;
 }
 
 .item-main {

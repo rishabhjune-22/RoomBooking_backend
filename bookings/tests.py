@@ -362,6 +362,9 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertIn("Accommodation details", data["mail_template"]["subject"])
         self.assertIn("Dear CCPS Team", data["mail_template"]["body"])
         self.assertIn("Mr. Amit Chauhan", data["mail_template"]["body"])
+        self.assertIn("Rishabh Kumar", data["mail_template"]["body"])
+        self.assertIn("Rishabh Kumar", data["mail_template"]["html"])
+        self.assertNotIn("Hemant Verma", data["mail_template"]["body"])
         self.assertEqual(len(getattr(mail, "outbox", [])), 0)
 
     def test_existing_booking_mail_template_returns_template_without_creating_booking(self):
@@ -378,9 +381,54 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertEqual(Booking.objects.count(), 1)
         data = response.json()["data"]
         self.assertIn("Accommodation details", data["subject"])
+        self.assertIn("Rishabh Kumar", data["body"])
+        self.assertIn("Rishabh Kumar", data["html"])
+        self.assertNotIn("Hemant Verma", data["body"])
         self.assertIn("Dear CCPS Team", data["body"])
         self.assertIn("Mr. Amit Chauhan", data["body"])
         self.assertIn("<table", data["html"])
+
+    def test_bulk_booking_mail_template_returns_combined_template(self):
+        first = self.create_booking(
+            self.room,
+            utc_dt(2026, 9, 11, 4, 0),
+            utc_dt(2026, 9, 12, 5, 0),
+            visitor_name="Mr. Amit Chauhan",
+        )
+        second = self.create_booking(
+            self.other_room,
+            utc_dt(2026, 9, 11, 4, 0),
+            utc_dt(2026, 9, 12, 5, 0),
+            visitor_name="Ms. Anu Singh",
+        )
+
+        response = self.client.post(
+            reverse("booking-mail-template-bulk"),
+            data={"booking_ids": [first.pk, second.pk]},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()["data"]
+        self.assertIn("2 bookings", data["subject"])
+        self.assertIn("Mr. Amit Chauhan", data["body"])
+        self.assertIn("Ms. Anu Singh", data["body"])
+        self.assertIn("Mr. Amit Chauhan", data["html"])
+        self.assertIn("Ms. Anu Singh", data["html"])
+        self.assertIn("Rishabh Kumar", data["body"])
+        self.assertIn("Total", data["body"])
+        self.assertIn("<table", data["html"])
+
+    def test_bulk_booking_mail_template_rejects_empty_selection(self):
+        response = self.client.post(
+            reverse("booking-mail-template-bulk"),
+            data={"booking_ids": []},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.json()["success"])
+        self.assertIn("Select at least one booking", response.json()["message"])
 
     def test_delete_is_idempotent_when_key_repeats(self):
         booking = self.create_booking(
