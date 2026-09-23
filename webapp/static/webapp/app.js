@@ -477,7 +477,7 @@ async function apiFetch(path, options = {}, retry = true) {
         headers.set("Content-Type", "application/json");
         body = JSON.stringify(body);
     }
-    const response = await fetch(path, { ...options, headers, body });
+    const response = await fetch(path, { ...options, headers, body, cache: "no-store" });
     let payload = null;
     try {
         payload = await response.json();
@@ -4560,7 +4560,8 @@ async function openAdminAvailableRoomsChooser() {
     });
 
     try {
-        const data = await apiFetch(`/api/room-available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
+        const cacheBuster = `_=${Date.now()}`;
+        const data = await apiFetch(`/api/room-available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}&${cacheBuster}`);
         const rooms = data?.rooms || [];
         const body = document.querySelector(".modal-body");
         if (!body) {
@@ -4666,7 +4667,8 @@ async function openRequesterAvailableRoomsChooser() {
     });
 
     try {
-        const data = await apiFetch(`/api/requester/available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
+        const cacheBuster = `_=${Date.now()}`;
+        const data = await apiFetch(`/api/requester/available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}&${cacheBuster}`);
         const rooms = data?.rooms || [];
         const body = document.querySelector(".modal-body");
         if (!body) {
