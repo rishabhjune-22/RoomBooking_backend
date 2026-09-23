@@ -3232,7 +3232,12 @@ async function openAdminBookingEditForm(bookingId) {
             confirmText: "Save Changes",
             confirmClass: "primary-btn",
             wide: true,
-            onBind: () => bindAdminBookingForm(rooms, booking.room || "", ""),
+            onBind: () => bindAdminBookingForm(
+                rooms,
+                booking.room || "",
+                "",
+                { availabilityFilter: false },
+            ),
             onConfirm: async () => {
                 await apiFetch(`/api/bookings/${booking.id}/edit/`, { method: "PATCH", body: readAdminBookingPayload() });
                 toast("Booking updated successfully.");
@@ -3585,10 +3590,10 @@ async function fillAdminBookingFormFromPreviousBooking() {
 
     const arrival = indiaParts(booking.arrival_at || "");
     const departure = indiaParts(booking.departure_at || "");
-    if (arrival.date) setFieldValue("admin-arrival-date", arrival.date);
-    if (arrival.time) setFieldValue("admin-arrival-time", arrival.time);
-    if (departure.date) setFieldValue("admin-departure-date", departure.date);
-    if (departure.time) setFieldValue("admin-departure-time", departure.time);
+    if (arrival.date) setFieldValue("admin-arrival-date", arrival.date, true);
+    if (arrival.time) setFieldValue("admin-arrival-time", arrival.time, true);
+    if (departure.date) setFieldValue("admin-departure-date", departure.date, true);
+    if (departure.time) setFieldValue("admin-departure-time", departure.time, true);
 
     setFieldValue("admin-purpose", booking.purpose_of_visit || "");
     setAdminVisitorCategory(booking.visitor_category || "");
@@ -3612,9 +3617,25 @@ async function fillAdminBookingFormFromPreviousBooking() {
     toast("Filled from previous booking.");
 }
 
-function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") {
+function availableRoomSelectLabel(room, prefix) {
+    const label = roomLabel({
+        id: room.room_id || room.id,
+        prefix: room.prefix || prefix,
+        selection_label: room.selection_label,
+        room_name: room.room_name,
+        number: room.room_number || room.number,
+    });
+    if (room.availability_status === "partial") {
+        return `${label} (${availableRoomStatusText(room)})`;
+    }
+    return label;
+}
+
+function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", options = {}) {
     const prefixSelect = document.getElementById("admin-prefix");
     const roomSelect = document.getElementById("admin-room");
+    const arrivalDateInput = document.getElementById("admin-arrival-date");
+    const departureDateInput = document.getElementById("admin-departure-date");
     const attender = document.getElementById("admin-attender");
     const shiftInputs = ["admin-general", "admin-morning", "admin-day"].map((id) => document.getElementById(id));
     const budgetOptions = Array.from(document.querySelectorAll("[data-budget-head-field]"));
@@ -3632,21 +3653,78 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "") 
     if (!prefixSelect || !roomSelect) {
         return;
     }
+    const availabilityFilter = options.availabilityFilter !== false;
     const selectedRoom = rooms.find((room) => String(room.id) === String(selectedRoomId));
     if (selectedRoom?.prefix) {
         prefixSelect.value = selectedRoom.prefix;
     } else if (preferredPrefix && BUILDINGS.includes(preferredPrefix)) {
         prefixSelect.value = preferredPrefix;
     }
-    const renderRoomOptions = () => {
+    let roomLoadToken = 0;
+    const renderAllRoomOptions = () => {
         const filtered = rooms.filter((room) => !prefixSelect.value || room.prefix === prefixSelect.value);
         roomSelect.innerHTML = `<option value="">Select room</option>` + filtered.map((room) => `
             <option value="${room.id}" ${String(room.id) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(roomLabel(room))}</option>
         `).join("");
     };
+    const renderAvailableRoomOptions = async () => {
+        const token = ++roomLoadToken;
+        const prefix = prefixSelect.value;
+        const arrivalDate = arrivalDateInput?.value || "";
+        const departureDate = departureDateInput?.value || arrivalDate;
+
+        if (!prefix || !arrivalDate || !departureDate) {
+            roomSelect.innerHTML = `<option value="">Select dates to load available rooms</option>`;
+            roomSelect.disabled = false;
+            return;
+        }
+
+        roomSelect.disabled = true;
+        roomSelect.innerHTML = `<option value="">Loading available rooms...</option>`;
+        try {
+            const data = await apiFetch(`/api/room-available-rooms-range/?arrival_date=${encodeURIComponent(arrivalDate)}&departure_date=${encodeURIComponent(departureDate)}&prefix=${encodeURIComponent(prefix)}`);
+            if (token !== roomLoadToken) {
+                return;
+            }
+            const availableRooms = data?.rooms || [];
+            if (!availableRooms.length) {
+                roomSelect.innerHTML = `<option value="">No available rooms for selected dates</option>`;
+                roomSelect.disabled = false;
+                return;
+            }
+
+            roomSelect.innerHTML = `<option value="">Select room</option>` + availableRooms.map((room) => {
+                const roomId = room.room_id || room.id || "";
+                return `
+                    <option value="${roomId}" ${String(roomId) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(availableRoomSelectLabel(room, prefix))}</option>
+                `;
+            }).join("");
+            roomSelect.disabled = false;
+        } catch (error) {
+            if (token !== roomLoadToken) {
+                return;
+            }
+            roomSelect.innerHTML = `<option value="">Could not load available rooms</option>`;
+            roomSelect.disabled = false;
+            toast(error.message || "Could not load available rooms.", "error");
+        }
+    };
+    const renderRoomOptions = () => {
+        if (availabilityFilter) {
+            renderAvailableRoomOptions();
+            return;
+        }
+        renderAllRoomOptions();
+    };
     prefixSelect.addEventListener("change", () => {
         selectedRoomId = "";
         renderRoomOptions();
+    });
+    [arrivalDateInput, departureDateInput].forEach((input) => {
+        input?.addEventListener("change", () => {
+            selectedRoomId = "";
+            renderRoomOptions();
+        });
     });
     renderRoomOptions();
 
