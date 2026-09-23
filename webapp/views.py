@@ -1,6 +1,8 @@
+import os
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db.models import DecimalField, ExpressionWrapper, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -15,8 +17,27 @@ INDIA_TZ = ZoneInfo("Asia/Kolkata")
 BUILDING_ORDER = {"Delta": 0, "Gamma": 1, "Beta": 2}
 
 
+def web_static_version():
+    configured_version = os.getenv("ROOM_BOOKING_STATIC_VERSION", "").strip()
+    if configured_version:
+        return configured_version
+
+    asset_paths = [
+        settings.BASE_DIR / "webapp/static/webapp/app.js",
+        settings.BASE_DIR / "webapp/static/webapp/styles.css",
+        settings.BASE_DIR / "webapp/templates/webapp/index.html",
+    ]
+    mtimes = [path.stat().st_mtime_ns for path in asset_paths if path.exists()]
+    return str(max(mtimes)) if mtimes else "dev"
+
+
 class RoomBookingWebAppView(TemplateView):
     template_name = "webapp/index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["static_version"] = web_static_version()
+        return context
 
 
 def parse_share_date(value):
