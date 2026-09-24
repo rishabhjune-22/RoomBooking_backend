@@ -360,7 +360,8 @@ class BookingApiBusinessRuleTests(TestCase):
         data = response.json()["data"]
         self.assertIn("mail_template", data)
         self.assertIn("Accommodation details", data["mail_template"]["subject"])
-        self.assertIn("Dear CCPS Team", data["mail_template"]["body"])
+        self.assertIn("Dear [Sir/Mam]", data["mail_template"]["body"])
+        self.assertNotIn("Dear CCPS Team", data["mail_template"]["body"])
         self.assertIn("Mr. Amit Chauhan", data["mail_template"]["body"])
         self.assertIn("Rishabh Kumar", data["mail_template"]["body"])
         self.assertIn("Rishabh Kumar", data["mail_template"]["html"])
@@ -384,7 +385,8 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertIn("Rishabh Kumar", data["body"])
         self.assertIn("Rishabh Kumar", data["html"])
         self.assertNotIn("Hemant Verma", data["body"])
-        self.assertIn("Dear CCPS Team", data["body"])
+        self.assertIn("Dear [Sir/Mam]", data["body"])
+        self.assertNotIn("Dear CCPS Team", data["body"])
         self.assertIn("Mr. Amit Chauhan", data["body"])
         self.assertIn("<table", data["html"])
 
@@ -530,6 +532,44 @@ class BookingApiBusinessRuleTests(TestCase):
             "Computer Science",
         )
         self.assertEqual(detail.json()["data"]["budget_head_project_code"], "PRJ-2026-001")
+
+    def test_create_accepts_guest_nationality(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+                visitor_nationality=Booking.VISITOR_NATIONALITY_FOREIGNER,
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.visitor_nationality, Booking.VISITOR_NATIONALITY_FOREIGNER)
+
+        detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            detail.json()["data"]["visitor_nationality"],
+            Booking.VISITOR_NATIONALITY_FOREIGNER,
+        )
+
+    def test_create_omits_guest_nationality_as_blank(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.visitor_nationality, "")
 
     def test_create_booking_uses_logged_in_user_as_created_by(self):
         response = self.client.post(
@@ -1420,7 +1460,9 @@ class BookingRequestWorkflowTests(TestCase):
 
         response = self.client.post(
             reverse("requester-booking-request-list"),
-            data=self.request_payload(),
+            data=self.request_payload(
+                visitor_nationality=Booking.VISITOR_NATIONALITY_FOREIGNER,
+            ),
             content_type="application/json",
         )
 
@@ -1432,10 +1474,12 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(booking_request.budget_head_name, "Requester Individual")
         self.assertEqual(booking_request.budget_head_department_name, "Requester Institute")
         self.assertEqual(booking_request.budget_head_project_code, "REQ-2026-001")
+        self.assertEqual(booking_request.visitor_nationality, Booking.VISITOR_NATIONALITY_FOREIGNER)
         data = response.json()["data"]
         self.assertEqual(data["budget_head_name"], "Requester Individual")
         self.assertEqual(data["budget_head_department_name"], "Requester Institute")
         self.assertEqual(data["budget_head_project_code"], "REQ-2026-001")
+        self.assertEqual(data["visitor_nationality"], Booking.VISITOR_NATIONALITY_FOREIGNER)
 
     def test_requester_submits_attender_request_without_count(self):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
@@ -1625,7 +1669,9 @@ class BookingRequestWorkflowTests(TestCase):
     def test_admin_delete_hides_request_from_normal_list(self):
         booking_request = BookingRequest.objects.create(
             requester=self.requester,
-            **self.request_model_kwargs(),
+            **self.request_model_kwargs(
+                visitor_nationality=Booking.VISITOR_NATIONALITY_FOREIGNER,
+            ),
         )
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
 
@@ -1815,7 +1861,9 @@ class BookingRequestWorkflowTests(TestCase):
     def test_admin_approve_creates_booking(self):
         booking_request = BookingRequest.objects.create(
             requester=self.requester,
-            **self.request_model_kwargs(),
+            **self.request_model_kwargs(
+                visitor_nationality=Booking.VISITOR_NATIONALITY_FOREIGNER,
+            ),
         )
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
 
@@ -1832,6 +1880,10 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertIsNotNone(booking_request.approved_booking)
         self.assertEqual(booking_request.approved_booking.room, self.room)
         self.assertEqual(booking_request.approved_booking.created_by, self.admin)
+        self.assertEqual(
+            booking_request.approved_booking.visitor_nationality,
+            Booking.VISITOR_NATIONALITY_FOREIGNER,
+        )
         self.assertEqual(booking_request.approved_booking.budget_head_name, "Requester Individual")
         self.assertEqual(booking_request.approved_booking.budget_head_department_name, "Requester Institute")
         self.assertEqual(booking_request.approved_booking.budget_head_project_code, "REQ-2026-001")
@@ -1854,6 +1906,7 @@ class BookingRequestWorkflowTests(TestCase):
                 "remarks": "Approved from form.",
                 "booking_remarks": "Guest will arrive late.",
                 "visitor_name": "Edited Visitor",
+                "visitor_nationality": Booking.VISITOR_NATIONALITY_INDIAN,
                 "purpose_of_visit": "Edited purpose",
                 "requestor_name": "Edited Requestor",
                 "requestor_department": "Edited Department",
@@ -1869,6 +1922,7 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertIsNotNone(booking)
         self.assertEqual(booking_request.admin_remarks, "Approved from form.")
         self.assertEqual(booking.visitor_name, "Edited Visitor")
+        self.assertEqual(booking.visitor_nationality, Booking.VISITOR_NATIONALITY_INDIAN)
         self.assertEqual(booking.purpose_of_visit, "Edited purpose")
         self.assertEqual(booking.remarks, "Guest will arrive late.")
         self.assertEqual(booking.requestor_name, "Edited Requestor")

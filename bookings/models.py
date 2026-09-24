@@ -39,6 +39,14 @@ class Booking(models.Model):
         (VISITOR_CATEGORY_OTHER, "Other Guest"),
     ]
 
+    VISITOR_NATIONALITY_INDIAN = "indian"
+    VISITOR_NATIONALITY_FOREIGNER = "foreigner"
+
+    VISITOR_NATIONALITY_CHOICES = [
+        (VISITOR_NATIONALITY_INDIAN, "Indian"),
+        (VISITOR_NATIONALITY_FOREIGNER, "Foreigner"),
+    ]
+
     BUDGET_HEAD_INDIVIDUAL = "individual"
     BUDGET_HEAD_INSTITUTE = "institute_head"
     BUDGET_HEAD_PROJECT = "project_head"
@@ -69,6 +77,12 @@ class Booking(models.Model):
     visitor_designation = models.CharField(max_length=100, blank=True, default="")
     visitor_organisation = models.CharField(max_length=100, blank=True, default="")
     visitor_gender = models.CharField(max_length=20, blank=True, default="")
+    visitor_nationality = models.CharField(
+        max_length=20,
+        choices=VISITOR_NATIONALITY_CHOICES,
+        blank=True,
+        default="",
+    )
     visitor_mobile = models.CharField(max_length=20, blank=True, default="")
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")
@@ -331,6 +345,12 @@ class BookingRequest(models.Model):
     visitor_designation = models.CharField(max_length=100, blank=True, default="")
     visitor_organisation = models.CharField(max_length=100, blank=True, default="")
     visitor_gender = models.CharField(max_length=20, blank=True, default="")
+    visitor_nationality = models.CharField(
+        max_length=20,
+        choices=Booking.VISITOR_NATIONALITY_CHOICES,
+        blank=True,
+        default="",
+    )
     visitor_mobile = models.CharField(max_length=20, blank=True, default="")
     visitor_email = models.EmailField(blank=True, default="")
     purpose_of_visit = models.TextField(blank=True, default="")

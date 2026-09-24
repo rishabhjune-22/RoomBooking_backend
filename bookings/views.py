@@ -64,6 +64,7 @@ AUDITED_BOOKING_FIELDS = [
     ("visitor_designation", "Visitor Designation"),
     ("visitor_organisation", "Visitor Organisation"),
     ("visitor_gender", "Visitor Gender"),
+    ("visitor_nationality", "Guest Nationality"),
     ("visitor_mobile", "Visitor Mobile"),
     ("visitor_email", "Visitor Email"),
     ("visitor_category", "Visitor Category"),
@@ -508,6 +509,7 @@ def booking_payload_from_request(booking_request, room):
         "visitor_designation": booking_request.visitor_designation,
         "visitor_organisation": booking_request.visitor_organisation,
         "visitor_gender": booking_request.visitor_gender,
+        "visitor_nationality": booking_request.visitor_nationality,
         "visitor_mobile": booking_request.visitor_mobile,
         "visitor_email": booking_request.visitor_email,
         "visitor_category": booking_request.visitor_category,
@@ -539,6 +541,7 @@ APPROVAL_BOOKING_OVERRIDE_FIELDS = [
     "visitor_designation",
     "visitor_organisation",
     "visitor_gender",
+    "visitor_nationality",
     "visitor_mobile",
     "visitor_email",
     "visitor_category",
@@ -768,7 +771,7 @@ Attender Charges: {row["attender_charges"]}"""
         for row in rows
     )
 
-    return f"""Dear CCPS Team,
+    return f"""Dear [Sir/Mam],
 
 Please find below the updated accommodation details of your guests as per your request : -
 
@@ -833,7 +836,7 @@ def booking_mail_html_body(bookings, sender_name=""):
     )
     return f"""
 <div style="font-family:Arial, Helvetica, sans-serif;font-size:12px;line-height:1.35;color:#222;">
-<p style="margin:0 0 24px 0;font-size:16px;">Dear CCPS Team,</p>
+<p style="margin:0 0 24px 0;font-size:16px;">Dear [Sir/Mam],</p>
 <p style="margin:0 0 28px 0;">Please find below the updated accommodation details of your guests as per your request : -</p>
 <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:560px;table-layout:fixed;margin:0 0 18px 0;">
     <thead>

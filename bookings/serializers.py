@@ -30,6 +30,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "visitor_designation",
             "visitor_organisation",
             "visitor_gender",
+            "visitor_nationality",
             "visitor_mobile",
             "visitor_email",
             "purpose_of_visit",
@@ -86,6 +87,8 @@ class BookingSerializer(serializers.ModelSerializer):
     "required": False,
     "allow_blank": True
 },
+
+"visitor_nationality": {"required": False, "allow_blank": True},
 
 "visitor_category": {"required": False, "allow_blank": True},
             "budget_head_type": {"required": False, "allow_blank": True},
@@ -765,6 +768,7 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "visitor_designation",
             "visitor_organisation",
             "visitor_gender",
+            "visitor_nationality",
             "visitor_mobile",
             "visitor_email",
             "visitor_category",
@@ -850,6 +854,7 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             "visitor_designation": {"required": False, "allow_blank": True},
             "visitor_organisation": {"required": False, "allow_blank": True},
             "visitor_gender": {"required": False, "allow_blank": True},
+            "visitor_nationality": {"required": False, "allow_blank": True},
             "visitor_mobile": {"required": False, "allow_blank": True},
             "visitor_email": {"required": False, "allow_blank": True},
             "visitor_category": {"required": False, "allow_blank": True},

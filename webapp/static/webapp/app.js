@@ -399,6 +399,16 @@ function valueOrDash(value) {
     return value || "-";
 }
 
+function visitorNationalityLabel(value) {
+    if (value === "foreigner") {
+        return "Foreigner";
+    }
+    if (value === "indian") {
+        return "Indian";
+    }
+    return valueOrDash(value);
+}
+
 function roomLabel(room) {
     if (!room) {
         return "";
@@ -1334,6 +1344,201 @@ function renderCalendarView() {
     loadCalendar();
 }
 
+function openAdminBookingDateRangePicker() {
+    if (state.bookingPrefixFilter !== "all" && BUILDINGS.includes(state.bookingPrefixFilter)) {
+        state.prefix = state.bookingPrefixFilter;
+    }
+    state.selectedDate = "";
+    state.rangeStart = "";
+    state.rangeEnd = "";
+
+    let pickerAvailability = null;
+    let selectedClickCount = 0;
+
+    const pickerGroup = () => pickerAvailability?.groups?.find((group) => group.prefix === state.prefix) || null;
+
+    const updatePickerSummary = () => {
+        const summary = document.getElementById("booking-date-picker-summary");
+        if (summary) {
+            summary.textContent = `Selected range: ${selectedRangeDisplayText()}`;
+        }
+        const showRoomsButton = document.getElementById("booking-date-picker-show-rooms");
+        if (showRoomsButton) {
+            showRoomsButton.disabled = !state.rangeStart;
+        }
+    };
+
+    const showPickerAvailableRooms = () => {
+        if (!state.rangeStart) {
+            toast("Select a date range first.", "error");
+            return;
+        }
+        const arrivalDate = state.rangeStart;
+        const departureDate = state.rangeEnd || state.rangeStart;
+        const prefix = state.prefix;
+        closeModal();
+        openAdminAvailableRoomsChooser({ arrivalDate, departureDate, prefix });
+    };
+
+    const drawPickerBuildingTabs = () => {
+        const node = document.getElementById("booking-date-building-tabs");
+        if (!node) {
+            return;
+        }
+        node.innerHTML = BUILDINGS.map((prefix) => `
+            <button class="chip ${state.prefix === prefix ? "active" : ""}" type="button" data-prefix="${prefix}">${prefix}</button>
+        `).join("");
+        node.querySelectorAll("[data-prefix]").forEach((button) => {
+            button.addEventListener("click", () => {
+                state.prefix = button.dataset.prefix;
+                state.selectedDate = "";
+                state.rangeStart = "";
+                state.rangeEnd = "";
+                selectedClickCount = 0;
+                drawPickerBuildingTabs();
+                drawPickerCalendar();
+                updatePickerSummary();
+            });
+        });
+    };
+
+    const drawPickerCalendar = () => {
+        const grid = document.getElementById("booking-date-picker-grid");
+        const group = pickerGroup();
+        if (!grid) {
+            return;
+        }
+        if (!group) {
+            grid.innerHTML = `<div class="empty-state" style="grid-column:1 / -1">No availability data for ${escapeHtml(state.prefix)}.</div>`;
+            return;
+        }
+
+        const daysByDate = Object.fromEntries(group.calendar.map((day) => [day.date, day]));
+        const firstDay = new Date(state.calendarYear, state.calendarMonth - 1, 1).getDay();
+        const daysInMonth = new Date(state.calendarYear, state.calendarMonth, 0).getDate();
+        const cells = [];
+        WEEKDAYS.forEach((day) => cells.push(`<div class="weekday">${day}</div>`));
+        for (let index = 0; index < firstDay; index += 1) {
+            cells.push(`<button class="day-cell empty" type="button" tabindex="-1"></button>`);
+        }
+        for (let day = 1; day <= daysInMonth; day += 1) {
+            const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
+            const item = daysByDate[dateValue];
+            const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+            cells.push(`
+                <button class="day-cell ${availabilityClass(item)} ${selectedClass}" type="button" data-date="${dateValue}">
+                    <span class="day-number">${day}</span>
+                    <span class="availability-note">${item ? `${item.available_rooms}/${item.total_rooms} rooms` : "No rooms"}</span>
+                </button>
+            `);
+        }
+        grid.innerHTML = cells.join("");
+        grid.querySelectorAll("[data-date]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const dateValue = button.dataset.date;
+                state.selectedDate = dateValue;
+                if (selectedClickCount !== 1) {
+                    state.rangeStart = dateValue;
+                    state.rangeEnd = dateValue;
+                    selectedClickCount = 1;
+                    drawPickerCalendar();
+                    updatePickerSummary();
+                    return;
+                }
+
+                if (dateValue < state.rangeStart) {
+                    state.rangeEnd = state.rangeStart;
+                    state.rangeStart = dateValue;
+                } else {
+                    state.rangeEnd = dateValue;
+                }
+                selectedClickCount = 2;
+                drawPickerCalendar();
+                updatePickerSummary();
+            });
+        });
+    };
+
+    const loadPickerCalendar = async () => {
+        const title = document.getElementById("booking-date-picker-month-title");
+        const grid = document.getElementById("booking-date-picker-grid");
+        if (title) {
+            title.textContent = monthName(state.calendarYear, state.calendarMonth);
+        }
+        if (grid) {
+            grid.innerHTML = `<div class="loading-state" style="grid-column:1 / -1">Loading availability...</div>`;
+        }
+        try {
+            pickerAvailability = await apiFetch(`/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`);
+            drawPickerBuildingTabs();
+            drawPickerCalendar();
+            updatePickerSummary();
+        } catch (error) {
+            if (grid) {
+                grid.innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
+            }
+        }
+    };
+
+    const changePickerMonth = (delta) => {
+        state.calendarMonth += delta;
+        if (state.calendarMonth < 1) {
+            state.calendarMonth = 12;
+            state.calendarYear -= 1;
+        } else if (state.calendarMonth > 12) {
+            state.calendarMonth = 1;
+            state.calendarYear += 1;
+        }
+        loadPickerCalendar();
+    };
+
+    openActionModal({
+        title: "Select Booking Dates",
+        body: `
+            <section class="surface calendar-panel booking-date-picker">
+                <div class="calendar-controls">
+                    <button class="outline-btn" id="booking-date-picker-prev-month" type="button">Previous</button>
+                    <div class="month-title" id="booking-date-picker-month-title"></div>
+                    <button class="outline-btn" id="booking-date-picker-next-month" type="button">Next</button>
+                </div>
+                <div class="building-tabs" id="booking-date-building-tabs"></div>
+                <p class="item-meta" id="booking-date-picker-summary">Selected range: ${escapeHtml(selectedRangeDisplayText())}</p>
+                <div class="calendar-grid" id="booking-date-picker-grid"></div>
+                <div class="legend">
+                    <span class="legend-item"><span class="dot open"></span> Available</span>
+                    <span class="legend-item"><span class="dot half"></span> Half Available</span>
+                    <span class="legend-item"><span class="dot low"></span> Less Than Half</span>
+                    <span class="legend-item"><span class="dot full"></span> Full</span>
+                </div>
+            </section>
+        `,
+        wide: true,
+        footerHtml: `
+            <button class="outline-btn" type="button" data-close-modal>Close</button>
+            <button class="primary-btn" type="button" id="booking-date-picker-show-rooms" disabled>Create Booking</button>
+        `,
+        onBind: () => {
+            document.getElementById("booking-date-picker-prev-month")?.addEventListener("click", () => changePickerMonth(-1));
+            document.getElementById("booking-date-picker-next-month")?.addEventListener("click", () => changePickerMonth(1));
+            document.getElementById("booking-date-picker-show-rooms")?.addEventListener("click", showPickerAvailableRooms);
+            document.getElementById("booking-date-picker-grid")?.addEventListener("click", (event) => {
+                const dayCell = event.target.closest(".day-cell");
+                if (dayCell?.dataset?.date) {
+                    return;
+                }
+                state.selectedDate = "";
+                state.rangeStart = "";
+                state.rangeEnd = "";
+                selectedClickCount = 0;
+                drawPickerCalendar();
+                updatePickerSummary();
+            });
+            drawPickerBuildingTabs();
+            loadPickerCalendar();
+        },
+    });
+}
+
 function drawBuildingTabs() {
     const node = document.getElementById("building-tabs");
     node.innerHTML = BUILDINGS.map((prefix) => `
@@ -1576,6 +1781,7 @@ function buildCreatedBookingSummary(created = {}, payload = {}, rooms = []) {
         arrival_at: payload.arrival_at || created.arrival_at || "",
         departure_at: payload.departure_at || created.departure_at || "",
         purpose_of_visit: payload.purpose_of_visit || created.purpose_of_visit || "",
+        visitor_nationality: payload.visitor_nationality || created.visitor_nationality || "",
         visitor_category: payload.visitor_category || created.visitor_category || "",
         budget_head_type: payload.budget_head_type || created.budget_head_type || "",
         budget_head_value: payload.budget_head_value || created.budget_head_value || "",
@@ -1603,6 +1809,7 @@ function createMoreBookingPrefillFromSummary(booking = {}) {
         arrival_at: booking.arrival_at || "",
         departure_at: booking.departure_at || "",
         purpose_of_visit: booking.purpose_of_visit || "",
+        visitor_nationality: booking.visitor_nationality || "",
         visitor_category: booking.visitor_category || "",
         budget_head_type: booking.budget_head_type || "",
         budget_head_value: booking.budget_head_value || "",
@@ -2547,7 +2754,7 @@ function renderBookingsView() {
             renderBookingsView();
         });
     });
-    document.getElementById("create-booking").addEventListener("click", () => openAdminBookingForm());
+    document.getElementById("create-booking").addEventListener("click", () => openAdminBookingDateRangePicker());
     document.getElementById("refresh-bookings").addEventListener("click", refreshBookingsView);
     if (isChargeSheet) {
         bindChargeSheetFilters();
@@ -3318,6 +3525,7 @@ async function openBookingDetails(bookingId) {
             ["Designation", booking.visitor_designation],
             ["Organisation", booking.visitor_organisation],
             ["Gender", booking.visitor_gender],
+            ["Guest nationality", visitorNationalityLabel(booking.visitor_nationality)],
             ["Mobile", booking.visitor_mobile],
             ["Email", booking.visitor_email],
             ["Category", titleCase(booking.visitor_category)],
@@ -3437,6 +3645,13 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                     <option value="Female" ${source.visitor_gender === "Female" ? "selected" : ""}>Female</option>
                     <option value="Other" ${source.visitor_gender === "Other" ? "selected" : ""}>Other</option>
                 </select></div>
+                <div class="field-row"><label>Guest nationality (Optional)</label>
+                    <div class="radio-list compact-radio-list">
+                        <label class="check-row"><input name="admin-visitor-nationality" type="radio" value="indian" ${source.visitor_nationality === "indian" ? "checked" : ""}> Indian</label>
+                        <label class="check-row"><input name="admin-visitor-nationality" type="radio" value="foreigner" ${source.visitor_nationality === "foreigner" ? "checked" : ""}> Foreigner</label>
+                    </div>
+                    <button class="outline-btn compact-btn" id="admin-clear-visitor-nationality" type="button">Clear Selection</button>
+                </div>
                 <div class="field-row"><label for="admin-visitor-mobile">Visitor mobile (Optional)</label><input id="admin-visitor-mobile" inputmode="tel" value="${htmlValue(source.visitor_mobile)}"></div>
                 <div class="field-row"><label for="admin-visitor-email">Visitor email (Optional)</label><input id="admin-visitor-email" type="email" value="${htmlValue(source.visitor_email)}"></div>
             </div>
@@ -3538,6 +3753,13 @@ function setAdminVisitorCategory(value = "") {
     });
 }
 
+function setAdminVisitorNationality(value = "") {
+    const normalized = value === "foreigner" || value === "indian" ? value : "";
+    document.querySelectorAll('input[name="admin-visitor-nationality"]').forEach((input) => {
+        input.checked = Boolean(normalized) && input.value === normalized;
+    });
+}
+
 async function latestRecentBookingForAutofill() {
     if (state.latestRecentBooking) {
         return state.latestRecentBooking;
@@ -3596,6 +3818,7 @@ async function fillAdminBookingFormFromPreviousBooking() {
     if (departure.time) setFieldValue("admin-departure-time", departure.time, true);
 
     setFieldValue("admin-purpose", booking.purpose_of_visit || "");
+    setAdminVisitorNationality(booking.visitor_nationality || "");
     setAdminVisitorCategory(booking.visitor_category || "");
 
     const budgetHead = normalizedBudgetHeadFields(booking);
@@ -3836,6 +4059,11 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
             input.checked = false;
         });
     });
+    document.getElementById("admin-clear-visitor-nationality")?.addEventListener("click", () => {
+        document.querySelectorAll('input[name="admin-visitor-nationality"]').forEach((input) => {
+            input.checked = false;
+        });
+    });
     document.getElementById("admin-fill-from-previous")?.addEventListener("change", async (event) => {
         if (!event.target.checked) {
             return;
@@ -3898,6 +4126,11 @@ function bindRequesterBudgetHeadFields() {
             input.checked = false;
         });
     });
+    document.getElementById("req-clear-visitor-nationality")?.addEventListener("click", () => {
+        document.querySelectorAll('input[name="req-visitor-nationality"]').forEach((input) => {
+            input.checked = false;
+        });
+    });
 }
 
 function readAdminBookingPayload() {
@@ -3932,6 +4165,7 @@ function readAdminBookingPayload() {
         visitor_designation: val("admin-visitor-designation"),
         visitor_organisation: val("admin-visitor-organisation"),
         visitor_gender: val("admin-visitor-gender"),
+        visitor_nationality: document.querySelector('input[name="admin-visitor-nationality"]:checked')?.value || "",
         visitor_mobile: val("admin-visitor-mobile"),
         visitor_email: val("admin-visitor-email"),
         visitor_category: document.querySelector('input[name="admin-visitor-category"]:checked')?.value || "",
@@ -4218,6 +4452,7 @@ function bookingRequestDetailRows(request) {
         ["Designation", request.visitor_designation],
         ["Organisation", request.visitor_organisation],
         ["Gender", request.visitor_gender],
+        ["Guest nationality", visitorNationalityLabel(request.visitor_nationality)],
         ["Mobile", request.visitor_mobile],
         ["Email", request.visitor_email],
         ["Category", titleCase(request.visitor_category)],
@@ -4953,6 +5188,13 @@ async function openRequestForm(existing = null, selectedRoom = null) {
                         <option value="Female" ${existing?.visitor_gender === "Female" ? "selected" : ""}>Female</option>
                         <option value="Other" ${existing?.visitor_gender === "Other" ? "selected" : ""}>Other</option>
                     </select></div>
+                    <div class="field-row"><label>Guest nationality (Optional)</label>
+                        <div class="radio-list compact-radio-list">
+                            <label class="check-row"><input name="req-visitor-nationality" type="radio" value="indian" ${existing?.visitor_nationality === "indian" ? "checked" : ""}> Indian</label>
+                            <label class="check-row"><input name="req-visitor-nationality" type="radio" value="foreigner" ${existing?.visitor_nationality === "foreigner" ? "checked" : ""}> Foreigner</label>
+                        </div>
+                        <button class="outline-btn compact-btn" id="req-clear-visitor-nationality" type="button">Clear Selection</button>
+                    </div>
                     <div class="field-row"><label>Visitor mobile (Optional)</label><input id="req-visitor-mobile" value="${escapeHtml(existing?.visitor_mobile || "")}"></div>
                     <div class="field-row"><label>Visitor email (Optional)</label><input id="req-visitor-email" type="email" value="${escapeHtml(existing?.visitor_email || "")}"></div>
                 </div>
@@ -5031,6 +5273,7 @@ async function submitRequesterRequest(existing = null) {
         visitor_designation: document.getElementById("req-visitor-designation").value.trim(),
         visitor_organisation: document.getElementById("req-visitor-organisation").value.trim(),
         visitor_gender: document.getElementById("req-visitor-gender").value,
+        visitor_nationality: document.querySelector('input[name="req-visitor-nationality"]:checked')?.value || "",
         visitor_mobile: document.getElementById("req-visitor-mobile").value.trim(),
         visitor_email: document.getElementById("req-visitor-email").value.trim(),
         visitor_category: document.querySelector('input[name="req-visitor-category"]:checked')?.value || "",

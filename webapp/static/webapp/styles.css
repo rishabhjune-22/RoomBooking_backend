@@ -1309,6 +1309,11 @@ button:disabled {
     gap: 8px;
 }
 
+.compact-radio-list {
+    grid-template-columns: repeat(2, minmax(0, max-content));
+    align-items: center;
+}
+
 .budget-head-group {
     display: grid;
     gap: 8px;
