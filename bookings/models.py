@@ -117,9 +117,8 @@ class Booking(models.Model):
     )
     attender_required = models.BooleanField(default=False)
 
-    attender_general_shift = models.BooleanField(default=False)  # 9 AM - 5 PM
     attender_morning_shift = models.BooleanField(default=False)  # 7 AM - 3 PM
-    attender_day_shift = models.BooleanField(default=False)      # 3 PM - 11 PM
+    attender_evening_shift = models.BooleanField(default=False)  # 3 PM - 11 PM
 
     room_charges_status = models.CharField(
         max_length=20,
@@ -367,9 +366,8 @@ class BookingRequest(models.Model):
     budget_head_project_code = models.CharField(max_length=100, blank=True, default="")
 
     attender_required = models.BooleanField(default=False)
-    attender_general_shift = models.BooleanField(default=False)
     attender_morning_shift = models.BooleanField(default=False)
-    attender_day_shift = models.BooleanField(default=False)
+    attender_evening_shift = models.BooleanField(default=False)
 
     requestor_name = models.CharField(max_length=100, blank=True, default="")
     requestor_designation = models.CharField(max_length=100, blank=True, default="")

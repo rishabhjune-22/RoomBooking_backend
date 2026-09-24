@@ -8,6 +8,8 @@ const STORAGE_KEYS = {
 };
 
 const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
+const LIVE_BOOKING_REFRESH_INTERVAL_MS = 15000;
+const LIVE_BOOKING_FOCUS_REFRESH_MIN_GAP_MS = 5000;
 
 const STATUS_LABELS = {
     pending: "Pending",
@@ -114,6 +116,9 @@ const state = {
         my_requests: [],
     },
     latestRecentBooking: null,
+    liveBookingRefreshTimer: null,
+    liveBookingRefreshInFlight: false,
+    lastLiveBookingRefreshAt: 0,
 };
 
 function styleRequiredMarks(root = document) {
@@ -529,9 +534,8 @@ function buildingRoomValue(value, prefix) {
 
 function shiftsText(item) {
     const shifts = [];
-    if (item?.attender_general_shift) shifts.push("General shift");
     if (item?.attender_morning_shift) shifts.push("Morning shift");
-    if (item?.attender_day_shift) shifts.push("Evening shift");
+    if (item?.attender_evening_shift) shifts.push("Evening shift");
     return shifts.length ? shifts.join(", ") : "-";
 }
 
@@ -553,6 +557,7 @@ function clearSession() {
     state.access = "";
     state.refresh = "";
     state.user = null;
+    stopLiveBookingRefresh();
     resetWorkflowNotificationState();
     localStorage.removeItem(STORAGE_KEYS.access);
     localStorage.removeItem(STORAGE_KEYS.refresh);
@@ -799,6 +804,7 @@ async function submitAuthForm(event) {
         state.view = defaultViewForCurrentRole();
         syncRouteHash(true);
         renderDashboard();
+        startLiveBookingRefresh();
     } catch (error) {
         renderAuth(error.message, true);
     }
@@ -1569,9 +1575,18 @@ function changeMonth(delta) {
     loadCalendar();
 }
 
-async function loadCalendar() {
-    document.getElementById("month-title").textContent = monthName(state.calendarYear, state.calendarMonth);
-    document.getElementById("calendar-grid").innerHTML = `<div class="loading-state" style="grid-column:1 / -1">Loading availability...</div>`;
+async function loadCalendar({ silent = false } = {}) {
+    const title = document.getElementById("month-title");
+    const grid = document.getElementById("calendar-grid");
+    if (!grid) {
+        return;
+    }
+    if (title) {
+        title.textContent = monthName(state.calendarYear, state.calendarMonth);
+    }
+    if (!silent) {
+        grid.innerHTML = `<div class="loading-state" style="grid-column:1 / -1">Loading availability...</div>`;
+    }
     const endpoint = isAdminLike()
         ? `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`
         : `/api/requester/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
@@ -1580,7 +1595,9 @@ async function loadCalendar() {
         drawCalendar();
         renderCalendarSide();
     } catch (error) {
-        document.getElementById("calendar-grid").innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
+        if (!silent) {
+            grid.innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
+        }
     }
 }
 
@@ -3147,7 +3164,7 @@ async function refreshVisibleBookingSurface() {
     }
 }
 
-async function loadBookings({ reset = true } = {}) {
+async function loadBookings({ reset = true, silent = false } = {}) {
     const list = document.getElementById("bookings-list");
     let sentinelMessage = "";
     if (!list || state.bookingLoading) {
@@ -3159,11 +3176,15 @@ async function loadBookings({ reset = true } = {}) {
     }
     state.bookingLoading = true;
     if (reset) {
-        clearBookingSelection();
+        if (!silent) {
+            clearBookingSelection();
+        }
         state.bookingNextUrl = "";
         state.bookingLoadedCount = 0;
-        list.innerHTML = `<div class="loading-state">Loading bookings...</div>`;
-        updateBookingScrollState("");
+        if (!silent) {
+            list.innerHTML = `<div class="loading-state">Loading bookings...</div>`;
+            updateBookingScrollState("");
+        }
     } else {
         updateBookingScrollState(`<div class="loading-state compact">Loading more bookings...</div>`);
     }
@@ -3183,7 +3204,10 @@ async function loadBookings({ reset = true } = {}) {
         state.bookingLoadedCount += rows.length;
         updateBookingScrollState();
     } catch (error) {
-        if (reset) {
+        if (silent) {
+            return;
+        }
+        if (reset && !silent) {
             list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
             sentinelMessage = "";
         } else {
@@ -3698,9 +3722,8 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             <label class="check-row"><input id="admin-attender" type="checkbox" ${source.attender_required ? "checked" : ""}> Attender required (Optional)</label>
             <div class="field-row"><label>Shift(s) * (if attender required)</label></div>
             <div class="two-col">
-                <label class="check-row"><input id="admin-general" type="checkbox" ${source.attender_general_shift ? "checked" : ""}> General shift</label>
                 <label class="check-row"><input id="admin-morning" type="checkbox" ${source.attender_morning_shift ? "checked" : ""}> Morning shift</label>
-                <label class="check-row"><input id="admin-day" type="checkbox" ${source.attender_day_shift ? "checked" : ""}> Evening shift</label>
+                <label class="check-row"><input id="admin-evening" type="checkbox" ${source.attender_evening_shift ? "checked" : ""}> Evening shift</label>
             </div>
 
             <div class="form-section-title">Charges</div>
@@ -3868,7 +3891,7 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
     const arrivalDateInput = document.getElementById("admin-arrival-date");
     const departureDateInput = document.getElementById("admin-departure-date");
     const attender = document.getElementById("admin-attender");
-    const shiftInputs = ["admin-general", "admin-morning", "admin-day"].map((id) => document.getElementById(id));
+    const shiftInputs = ["admin-morning", "admin-evening"].map((id) => document.getElementById(id));
     const budgetOptions = Array.from(document.querySelectorAll("[data-budget-head-field]"));
     const sameAsRequestor = document.getElementById("admin-logistics-same-as-requestor");
     const requestorFields = {
@@ -4082,7 +4105,7 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
 
 function bindRequesterAttenderRequirement() {
     const attender = document.getElementById("req-attender");
-    const shiftInputs = ["req-general", "req-morning", "req-day"].map((id) => document.getElementById(id));
+    const shiftInputs = ["req-morning", "req-evening"].map((id) => document.getElementById(id));
     const syncAttender = () => {
         const enabled = Boolean(attender?.checked);
         shiftInputs.forEach((input) => {
@@ -4176,9 +4199,8 @@ function readAdminBookingPayload() {
         requestor_department: val("admin-requestor-department"),
         requestor_mobile: val("admin-requestor-mobile"),
         attender_required: attenderRequired,
-        attender_general_shift: attenderRequired && checked("admin-general"),
         attender_morning_shift: attenderRequired && checked("admin-morning"),
-        attender_day_shift: attenderRequired && checked("admin-day"),
+        attender_evening_shift: attenderRequired && checked("admin-evening"),
         room_charges_status: roomChargeStatus,
         room_charges_amount: roomChargeStatus === "yes" ? Number(val("admin-room-charge-amount") || 0) : 0,
         attender_charges_status: attenderChargeStatus,
@@ -5223,9 +5245,8 @@ async function openRequestForm(existing = null, selectedRoom = null) {
                 <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required (Optional)</label>
                 <div class="field-row"><label>Shift(s) * (if attender required)</label></div>
                 <div class="two-col">
-                    <label style="display:flex;gap:8px;align-items:center"><input id="req-general" type="checkbox" ${existing?.attender_general_shift ? "checked" : ""}> General shift</label>
                     <label style="display:flex;gap:8px;align-items:center"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}> Morning shift</label>
-                    <label style="display:flex;gap:8px;align-items:center"><input id="req-day" type="checkbox" ${existing?.attender_day_shift ? "checked" : ""}> Evening shift</label>
+                    <label style="display:flex;gap:8px;align-items:center"><input id="req-evening" type="checkbox" ${existing?.attender_evening_shift ? "checked" : ""}> Evening shift</label>
                 </div>
 
                 <div class="form-section-title">Requester Details</div>
@@ -5289,9 +5310,8 @@ async function submitRequesterRequest(existing = null) {
         requestor_mobile: document.getElementById("req-requestor-mobile").value.trim(),
         requestor_email: document.getElementById("req-requestor-email").value.trim() || state.user?.email || "",
         attender_required: attenderRequired,
-        attender_general_shift: attenderRequired && document.getElementById("req-general").checked,
         attender_morning_shift: attenderRequired && document.getElementById("req-morning").checked,
-        attender_day_shift: attenderRequired && document.getElementById("req-day").checked,
+        attender_evening_shift: attenderRequired && document.getElementById("req-evening").checked,
     };
     if (!payload.visitor_name) {
         throw new Error("Visitor name is required.");
@@ -5435,6 +5455,81 @@ function closeModal() {
     document.querySelector(".modal-backdrop")?.remove();
 }
 
+function isLiveBookingRefreshView() {
+    return state.view === "bookings" || state.view === "calendar";
+}
+
+function isEditableElementFocused() {
+    const active = document.activeElement;
+    if (!active || active === document.body) {
+        return false;
+    }
+    const tagName = active.tagName;
+    return active.isContentEditable
+        || tagName === "INPUT"
+        || tagName === "TEXTAREA"
+        || tagName === "SELECT";
+}
+
+function liveBookingRefreshBlocked() {
+    return document.hidden
+        || document.querySelector(".modal-backdrop")
+        || state.selectedBookingIds.size > 0
+        || isEditableElementFocused();
+}
+
+async function refreshLiveBookingData({ force = false } = {}) {
+    if (!state.access || !state.user || !isLiveBookingRefreshView()) {
+        return;
+    }
+    const now = Date.now();
+    if (force && now - state.lastLiveBookingRefreshAt < LIVE_BOOKING_FOCUS_REFRESH_MIN_GAP_MS) {
+        return;
+    }
+    if (state.liveBookingRefreshInFlight || liveBookingRefreshBlocked()) {
+        return;
+    }
+    state.liveBookingRefreshInFlight = true;
+    try {
+        if (state.view === "calendar") {
+            await loadCalendar({ silent: true });
+        } else if (state.bookingViewMode === "cards") {
+            await loadBookings({ reset: true, silent: true });
+        } else {
+            await refreshBookingsView();
+        }
+        state.lastLiveBookingRefreshAt = Date.now();
+    } catch (error) {
+        // Background refresh should never interrupt the current workflow.
+    } finally {
+        state.liveBookingRefreshInFlight = false;
+    }
+}
+
+function startLiveBookingRefresh() {
+    if (state.liveBookingRefreshTimer || !state.access || !state.user) {
+        return;
+    }
+    state.liveBookingRefreshTimer = window.setInterval(
+        () => refreshLiveBookingData(),
+        LIVE_BOOKING_REFRESH_INTERVAL_MS,
+    );
+}
+
+function stopLiveBookingRefresh() {
+    if (state.liveBookingRefreshTimer) {
+        window.clearInterval(state.liveBookingRefreshTimer);
+        state.liveBookingRefreshTimer = null;
+    }
+    state.liveBookingRefreshInFlight = false;
+}
+
+function handleLiveBookingRefreshWake() {
+    if (!document.hidden) {
+        refreshLiveBookingData({ force: true });
+    }
+}
+
 async function boot() {
     const savedUser = localStorage.getItem(STORAGE_KEYS.user);
     if (savedUser) {
@@ -5454,6 +5549,7 @@ async function boot() {
         applyRouteFromHash();
         syncRouteHash(true);
         renderDashboard();
+        startLiveBookingRefresh();
     } catch (error) {
         clearSession();
         renderAuth("Please login again.", true);
@@ -5490,6 +5586,8 @@ function handleChargeSheetPointerDown(event) {
 
 window.addEventListener("hashchange", handleRouteChange);
 window.addEventListener("popstate", handleRouteChange);
+window.addEventListener("focus", handleLiveBookingRefreshWake);
+document.addEventListener("visibilitychange", handleLiveBookingRefreshWake);
 document.addEventListener("pointerdown", handleChargeSheetPointerDown, true);
 
 observeRequiredMarks();

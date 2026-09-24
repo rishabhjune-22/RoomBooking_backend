@@ -863,18 +863,20 @@ class BookingApiBusinessRuleTests(TestCase):
                 arrival_at=utc_dt(2026, 7, 1, 10, 0),
                 departure_at=utc_dt(2026, 7, 1, 12, 0),
                 attender_required=True,
-                attender_day_shift=True,
+                attender_evening_shift=True,
             ),
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
-        self.assertTrue(booking.attender_day_shift)
+        self.assertTrue(booking.attender_evening_shift)
 
         detail = self.client.get(reverse("booking-detail", kwargs={"pk": booking.pk}))
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
-        self.assertTrue(detail.json()["data"]["attender_day_shift"])
+        self.assertTrue(detail.json()["data"]["attender_evening_shift"])
+        self.assertNotIn("attender_day_shift", detail.json()["data"])
+        self.assertNotIn("attender_general_shift", detail.json()["data"])
         self.assertNotIn("attender_count_per_day", detail.json()["data"])
         self.assertNotIn("attender_night_shift", detail.json()["data"])
 
@@ -1488,14 +1490,16 @@ class BookingRequestWorkflowTests(TestCase):
             reverse("requester-booking-request-list"),
             data=self.request_payload(
                 attender_required=True,
-                attender_day_shift=True,
+                attender_evening_shift=True,
             ),
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         booking_request = BookingRequest.objects.get()
-        self.assertTrue(booking_request.attender_day_shift)
+        self.assertTrue(booking_request.attender_evening_shift)
+        self.assertNotIn("attender_day_shift", response.json()["data"])
+        self.assertNotIn("attender_general_shift", response.json()["data"])
         self.assertNotIn("attender_count_per_day", response.json()["data"])
 
     def test_requester_sees_only_own_requests(self):

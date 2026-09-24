@@ -41,10 +41,9 @@ class BookingSerializer(serializers.ModelSerializer):
             "budget_head_name",
             "budget_head_department_name",
             "budget_head_project_code",
-"attender_required",
-"attender_general_shift",
-"attender_morning_shift",
-"attender_day_shift",
+            "attender_required",
+            "attender_morning_shift",
+            "attender_evening_shift",
             "room_charges_status",
             "attender_charges_status",
             "room_charges_amount",
@@ -227,25 +226,19 @@ class BookingSerializer(serializers.ModelSerializer):
             getattr(instance, "attender_required", False)
         )
 
-        general_shift = attrs.get(
-            "attender_general_shift",
-            getattr(instance, "attender_general_shift", False)
-        )
-
         morning_shift = attrs.get(
             "attender_morning_shift",
             getattr(instance, "attender_morning_shift", False)
         )
 
-        day_shift = attrs.get(
-            "attender_day_shift",
-            getattr(instance, "attender_day_shift", False)
+        evening_shift = attrs.get(
+            "attender_evening_shift",
+            getattr(instance, "attender_evening_shift", False)
         )
 
         if attender_required and not any([
-            general_shift,
             morning_shift,
-            day_shift,
+            evening_shift,
         ]):
             raise serializers.ValidationError({
                 "attender_shift": [
@@ -254,9 +247,8 @@ class BookingSerializer(serializers.ModelSerializer):
             })
 
         if not attender_required:
-            attrs["attender_general_shift"] = False
             attrs["attender_morning_shift"] = False
-            attrs["attender_day_shift"] = False
+            attrs["attender_evening_shift"] = False
 
     def set_default_optional_fields(self, attrs):
         optional_fields = [
@@ -779,9 +771,8 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "budget_head_department_name",
             "budget_head_project_code",
             "attender_required",
-            "attender_general_shift",
             "attender_morning_shift",
-            "attender_day_shift",
+            "attender_evening_shift",
             "requestor_name",
             "requestor_designation",
             "requestor_department",
@@ -900,16 +891,12 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
         )
         has_shift = any([
             attrs.get(
-                "attender_general_shift",
-                getattr(instance, "attender_general_shift", False),
-            ),
-            attrs.get(
                 "attender_morning_shift",
                 getattr(instance, "attender_morning_shift", False),
             ),
             attrs.get(
-                "attender_day_shift",
-                getattr(instance, "attender_day_shift", False),
+                "attender_evening_shift",
+                getattr(instance, "attender_evening_shift", False),
             ),
         ])
 
@@ -919,9 +906,8 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             })
 
         if not attender_required:
-            attrs["attender_general_shift"] = False
             attrs["attender_morning_shift"] = False
-            attrs["attender_day_shift"] = False
+            attrs["attender_evening_shift"] = False
 
         return attrs
 

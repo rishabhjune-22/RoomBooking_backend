@@ -83,9 +83,8 @@ AUDITED_BOOKING_FIELDS = [
     ("logistics_designation", "Logistics Designation"),
     ("logistics_mobile", "Logistics Mobile"),
     ("attender_required", "Attender Required"),
-    ("attender_general_shift", "Attender General Shift"),
     ("attender_morning_shift", "Attender Morning Shift"),
-    ("attender_day_shift", "Attender Evening Shift"),
+    ("attender_evening_shift", "Attender Evening Shift"),
     ("room_charges_status", "Room Charges Status"),
     ("attender_charges_status", "Attender Charges Status"),
     ("room_charges_amount", "Room Charges Amount"),
@@ -524,9 +523,8 @@ def booking_payload_from_request(booking_request, room):
         "requestor_department": booking_request.requestor_department,
         "requestor_mobile": booking_request.requestor_mobile,
         "attender_required": booking_request.attender_required,
-        "attender_general_shift": booking_request.attender_general_shift,
         "attender_morning_shift": booking_request.attender_morning_shift,
-        "attender_day_shift": booking_request.attender_day_shift,
+        "attender_evening_shift": booking_request.attender_evening_shift,
         "room_charges_status": Booking.CHARGE_STATUS_NO,
         "attender_charges_status": Booking.CHARGE_STATUS_NO,
         "room_charges_amount": 0,
@@ -551,9 +549,8 @@ APPROVAL_BOOKING_OVERRIDE_FIELDS = [
     "requestor_department",
     "requestor_mobile",
     "attender_required",
-    "attender_general_shift",
     "attender_morning_shift",
-    "attender_day_shift",
+    "attender_evening_shift",
     "room_charges_status",
     "attender_charges_status",
     "room_charges_amount",
@@ -667,11 +664,9 @@ def attender_facility_for_mail(booking):
         return "Nil"
 
     shifts = []
-    if booking.attender_general_shift:
-        shifts.append("General Shift (09 AM to 05 PM)")
     if booking.attender_morning_shift:
         shifts.append("Morning Shift")
-    if booking.attender_day_shift:
+    if booking.attender_evening_shift:
         shifts.append("Evening Shift")
 
     if not shifts:
