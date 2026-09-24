@@ -880,6 +880,49 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertNotIn("attender_count_per_day", detail.json()["data"])
         self.assertNotIn("attender_night_shift", detail.json()["data"])
 
+    def test_attender_charges_auto_calculate_per_chargeable_shift(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 1, 12, 0),
+                attender_required=True,
+                attender_morning_shift=True,
+                attender_morning_chargeable=False,
+                attender_evening_shift=True,
+                attender_charges_status=Booking.CHARGE_STATUS_YES,
+                attender_charges_amount="0",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertFalse(booking.attender_morning_chargeable)
+        self.assertEqual(booking.attender_charges_amount, 850)
+
+    def test_attender_charges_auto_calculate_per_chargeable_shift_and_day(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 3, 12, 0),
+                attender_required=True,
+                attender_morning_shift=True,
+                attender_morning_chargeable=True,
+                attender_evening_shift=True,
+                attender_charges_status=Booking.CHARGE_STATUS_YES,
+                attender_charges_amount="850",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.attender_charges_amount, 5100)
+
     def test_backdated_create_is_expired_and_visible_in_expired_list(self):
         response = self.client.post(
             reverse("booking-create"),
@@ -1498,6 +1541,8 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         booking_request = BookingRequest.objects.get()
         self.assertTrue(booking_request.attender_evening_shift)
+        self.assertFalse(booking_request.attender_morning_chargeable)
+        self.assertFalse(response.json()["data"]["attender_morning_chargeable"])
         self.assertNotIn("attender_day_shift", response.json()["data"])
         self.assertNotIn("attender_general_shift", response.json()["data"])
         self.assertNotIn("attender_count_per_day", response.json()["data"])

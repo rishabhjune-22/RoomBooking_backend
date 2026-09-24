@@ -84,6 +84,7 @@ AUDITED_BOOKING_FIELDS = [
     ("logistics_mobile", "Logistics Mobile"),
     ("attender_required", "Attender Required"),
     ("attender_morning_shift", "Attender Morning Shift"),
+    ("attender_morning_chargeable", "Morning Shift Chargeable"),
     ("attender_evening_shift", "Attender Evening Shift"),
     ("room_charges_status", "Room Charges Status"),
     ("attender_charges_status", "Attender Charges Status"),
@@ -524,6 +525,7 @@ def booking_payload_from_request(booking_request, room):
         "requestor_mobile": booking_request.requestor_mobile,
         "attender_required": booking_request.attender_required,
         "attender_morning_shift": booking_request.attender_morning_shift,
+        "attender_morning_chargeable": booking_request.attender_morning_chargeable,
         "attender_evening_shift": booking_request.attender_evening_shift,
         "room_charges_status": Booking.CHARGE_STATUS_NO,
         "attender_charges_status": Booking.CHARGE_STATUS_NO,
@@ -550,6 +552,7 @@ APPROVAL_BOOKING_OVERRIDE_FIELDS = [
     "requestor_mobile",
     "attender_required",
     "attender_morning_shift",
+    "attender_morning_chargeable",
     "attender_evening_shift",
     "room_charges_status",
     "attender_charges_status",
@@ -665,9 +668,11 @@ def attender_facility_for_mail(booking):
 
     shifts = []
     if booking.attender_morning_shift:
-        shifts.append("Morning Shift")
+        morning_label = "Morning Shift (7 AM - 3 PM"
+        morning_label += ", Chargeable)" if booking.attender_morning_chargeable else ", Non-chargeable)"
+        shifts.append(morning_label)
     if booking.attender_evening_shift:
-        shifts.append("Evening Shift")
+        shifts.append("Evening Shift (3 PM - 11 PM)")
 
     if not shifts:
         return "Attender requested"

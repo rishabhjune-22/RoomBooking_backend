@@ -239,6 +239,7 @@ class WorkflowNotificationCountView(APIView):
                 booking_request.budget_head_project_code,
                 str(booking_request.attender_required),
                 str(booking_request.attender_morning_shift),
+                str(booking_request.attender_morning_chargeable),
                 str(booking_request.attender_evening_shift),
             ]
             return hashlib.sha256("|".join(values).encode("utf-8")).hexdigest()[:12]

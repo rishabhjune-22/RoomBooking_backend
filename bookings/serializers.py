@@ -1,4 +1,5 @@
 from datetime import time, timedelta
+from decimal import Decimal
 import re
 
 from django.utils import timezone
@@ -13,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 PHONE_ALLOWED_RE = re.compile(r"^\+?[0-9][0-9\s().-]*$")
 PHONE_DIGIT_RE = re.compile(r"\d")
+ATTENDER_CHARGE_PER_SHIFT = Decimal("850")
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -43,6 +46,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "budget_head_project_code",
             "attender_required",
             "attender_morning_shift",
+            "attender_morning_chargeable",
             "attender_evening_shift",
             "room_charges_status",
             "attender_charges_status",
@@ -209,6 +213,13 @@ class BookingSerializer(serializers.ModelSerializer):
                 getattr(instance, status_field, Booking.CHARGE_STATUS_NO),
             )
             amount = attrs.get(amount_field, getattr(instance, amount_field, 0))
+            if (
+                amount_field == "attender_charges_amount"
+                and charge_status == Booking.CHARGE_STATUS_YES
+            ):
+                calculated_amount = self.calculate_attender_charges_amount(attrs)
+                attrs[amount_field] = calculated_amount
+                amount = calculated_amount
 
             if charge_status == Booking.CHARGE_STATUS_YES and amount <= 0:
                 raise serializers.ValidationError({
@@ -217,6 +228,45 @@ class BookingSerializer(serializers.ModelSerializer):
 
             if charge_status != Booking.CHARGE_STATUS_YES:
                 attrs[amount_field] = 0
+
+    def calculate_attender_charges_amount(self, attrs):
+        instance = self.instance
+        attender_required = attrs.get(
+            "attender_required",
+            getattr(instance, "attender_required", False),
+        )
+        if not attender_required:
+            return Decimal("0")
+        morning_shift = attrs.get(
+            "attender_morning_shift",
+            getattr(instance, "attender_morning_shift", False),
+        )
+        morning_chargeable = attrs.get(
+            "attender_morning_chargeable",
+            getattr(instance, "attender_morning_chargeable", True),
+        )
+        evening_shift = attrs.get(
+            "attender_evening_shift",
+            getattr(instance, "attender_evening_shift", False),
+        )
+        chargeable_shift_count = 0
+        if morning_shift and morning_chargeable:
+            chargeable_shift_count += 1
+        if evening_shift:
+            chargeable_shift_count += 1
+        return ATTENDER_CHARGE_PER_SHIFT * chargeable_shift_count * self.booking_stay_days(attrs)
+
+    def booking_stay_days(self, attrs):
+        instance = self.instance
+        arrival_at = attrs.get("arrival_at", getattr(instance, "arrival_at", None))
+        departure_at = attrs.get("departure_at", getattr(instance, "departure_at", None))
+        if not arrival_at or not departure_at:
+            return Decimal("1")
+
+        arrival_date = timezone.localtime(arrival_at, INDIA_TZ).date()
+        departure_date = timezone.localtime(departure_at, INDIA_TZ).date()
+        nights = max((departure_date - arrival_date).days, 0)
+        return Decimal(max(nights + 1, 1))
 
     def validate_attender_fields(self, attrs):
         instance = self.instance
@@ -248,7 +298,10 @@ class BookingSerializer(serializers.ModelSerializer):
 
         if not attender_required:
             attrs["attender_morning_shift"] = False
+            attrs["attender_morning_chargeable"] = False
             attrs["attender_evening_shift"] = False
+        elif not morning_shift:
+            attrs["attender_morning_chargeable"] = False
 
     def set_default_optional_fields(self, attrs):
         optional_fields = [
@@ -772,6 +825,7 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "budget_head_project_code",
             "attender_required",
             "attender_morning_shift",
+            "attender_morning_chargeable",
             "attender_evening_shift",
             "requestor_name",
             "requestor_designation",
@@ -907,7 +961,13 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
 
         if not attender_required:
             attrs["attender_morning_shift"] = False
+            attrs["attender_morning_chargeable"] = False
             attrs["attender_evening_shift"] = False
+        elif not attrs.get(
+            "attender_morning_shift",
+            getattr(instance, "attender_morning_shift", False),
+        ):
+            attrs["attender_morning_chargeable"] = False
 
         return attrs
 
