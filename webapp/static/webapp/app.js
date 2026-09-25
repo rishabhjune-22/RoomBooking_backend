@@ -8,8 +8,6 @@ const STORAGE_KEYS = {
 };
 
 const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
-const LIVE_BOOKING_REFRESH_INTERVAL_MS = 15000;
-const LIVE_BOOKING_FOCUS_REFRESH_MIN_GAP_MS = 5000;
 const ATTENDER_CHARGE_PER_SHIFT = 850;
 const ROOM_CHARGE_RATES = {
     Gamma: { attached: 1500, nonAttached: 1300 },
@@ -127,9 +125,6 @@ const state = {
         my_requests: [],
     },
     latestRecentBooking: null,
-    liveBookingRefreshTimer: null,
-    liveBookingRefreshInFlight: false,
-    lastLiveBookingRefreshAt: 0,
 };
 
 function styleRequiredMarks(root = document) {
@@ -617,7 +612,6 @@ function clearSession() {
     state.access = "";
     state.refresh = "";
     state.user = null;
-    stopLiveBookingRefresh();
     resetWorkflowNotificationState();
     localStorage.removeItem(STORAGE_KEYS.access);
     localStorage.removeItem(STORAGE_KEYS.refresh);
@@ -864,7 +858,6 @@ async function submitAuthForm(event) {
         state.view = defaultViewForCurrentRole();
         syncRouteHash(true);
         renderDashboard();
-        startLiveBookingRefresh();
     } catch (error) {
         renderAuth(error.message, true);
     }
@@ -5736,81 +5729,6 @@ function closeModal() {
     document.querySelector(".modal-backdrop")?.remove();
 }
 
-function isLiveBookingRefreshView() {
-    return state.view === "bookings" || state.view === "calendar";
-}
-
-function isEditableElementFocused() {
-    const active = document.activeElement;
-    if (!active || active === document.body) {
-        return false;
-    }
-    const tagName = active.tagName;
-    return active.isContentEditable
-        || tagName === "INPUT"
-        || tagName === "TEXTAREA"
-        || tagName === "SELECT";
-}
-
-function liveBookingRefreshBlocked() {
-    return document.hidden
-        || document.querySelector(".modal-backdrop")
-        || state.selectedBookingIds.size > 0
-        || isEditableElementFocused();
-}
-
-async function refreshLiveBookingData({ force = false } = {}) {
-    if (!state.access || !state.user || !isLiveBookingRefreshView()) {
-        return;
-    }
-    const now = Date.now();
-    if (force && now - state.lastLiveBookingRefreshAt < LIVE_BOOKING_FOCUS_REFRESH_MIN_GAP_MS) {
-        return;
-    }
-    if (state.liveBookingRefreshInFlight || liveBookingRefreshBlocked()) {
-        return;
-    }
-    state.liveBookingRefreshInFlight = true;
-    try {
-        if (state.view === "calendar") {
-            await loadCalendar({ silent: true });
-        } else if (state.bookingViewMode === "cards") {
-            await loadBookings({ reset: true, silent: true });
-        } else {
-            await refreshBookingsView();
-        }
-        state.lastLiveBookingRefreshAt = Date.now();
-    } catch (error) {
-        // Background refresh should never interrupt the current workflow.
-    } finally {
-        state.liveBookingRefreshInFlight = false;
-    }
-}
-
-function startLiveBookingRefresh() {
-    if (state.liveBookingRefreshTimer || !state.access || !state.user) {
-        return;
-    }
-    state.liveBookingRefreshTimer = window.setInterval(
-        () => refreshLiveBookingData(),
-        LIVE_BOOKING_REFRESH_INTERVAL_MS,
-    );
-}
-
-function stopLiveBookingRefresh() {
-    if (state.liveBookingRefreshTimer) {
-        window.clearInterval(state.liveBookingRefreshTimer);
-        state.liveBookingRefreshTimer = null;
-    }
-    state.liveBookingRefreshInFlight = false;
-}
-
-function handleLiveBookingRefreshWake() {
-    if (!document.hidden) {
-        refreshLiveBookingData({ force: true });
-    }
-}
-
 async function boot() {
     const savedUser = localStorage.getItem(STORAGE_KEYS.user);
     if (savedUser) {
@@ -5830,7 +5748,6 @@ async function boot() {
         applyRouteFromHash();
         syncRouteHash(true);
         renderDashboard();
-        startLiveBookingRefresh();
     } catch (error) {
         clearSession();
         renderAuth("Please login again.", true);
@@ -5867,8 +5784,6 @@ function handleChargeSheetPointerDown(event) {
 
 window.addEventListener("hashchange", handleRouteChange);
 window.addEventListener("popstate", handleRouteChange);
-window.addEventListener("focus", handleLiveBookingRefreshWake);
-document.addEventListener("visibilitychange", handleLiveBookingRefreshWake);
 document.addEventListener("pointerdown", handleChargeSheetPointerDown, true);
 
 observeRequiredMarks();
