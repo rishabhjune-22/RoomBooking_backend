@@ -22,6 +22,12 @@ ROOM_CHARGE_RATES = {
     ("Beta", True): Decimal("1000"),
     ("Beta", False): Decimal("800"),
 }
+FOREIGN_ROOM_CHARGE_RATES = {
+    ("Gamma", True): Decimal("2000"),
+    ("Gamma", False): Decimal("1800"),
+    ("Beta", True): Decimal("1500"),
+    ("Beta", False): Decimal("1300"),
+}
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -250,7 +256,16 @@ class BookingSerializer(serializers.ModelSerializer):
         room = attrs.get("room", getattr(self.instance, "room", None))
         if not room:
             return None
-        rate = ROOM_CHARGE_RATES.get((room.prefix, room.has_attached_bath))
+        visitor_nationality = attrs.get(
+            "visitor_nationality",
+            getattr(self.instance, "visitor_nationality", ""),
+        )
+        rates = (
+            FOREIGN_ROOM_CHARGE_RATES
+            if visitor_nationality == Booking.VISITOR_NATIONALITY_FOREIGNER
+            else ROOM_CHARGE_RATES
+        )
+        rate = rates.get((room.prefix, room.has_attached_bath))
         if rate is None:
             return None
         return rate * self.booking_stay_days(attrs)

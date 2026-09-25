@@ -961,6 +961,24 @@ class BookingApiBusinessRuleTests(TestCase):
         booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
         self.assertEqual(booking.room_charges_amount, 3000)
 
+    def test_foreign_beta_room_charges_auto_calculate_per_day(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 3, 12, 0),
+                visitor_nationality=Booking.VISITOR_NATIONALITY_FOREIGNER,
+                room_charges_status=Booking.CHARGE_STATUS_YES,
+                room_charges_amount="0",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.room_charges_amount, 4500)
+
     def test_beta_room_charges_manual_amount_is_preserved(self):
         response = self.client.post(
             reverse("booking-create"),
@@ -1000,6 +1018,30 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
         self.assertEqual(booking.room_charges_amount, 2600)
+
+    def test_foreign_non_attached_gamma_room_charges_auto_calculate_per_day(self):
+        room = Room.objects.create(
+            prefix="Gamma",
+            number="FNA101",
+            hostel_name="Mainpat",
+            has_attached_bath=False,
+        )
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 2, 12, 0),
+                visitor_nationality=Booking.VISITOR_NATIONALITY_FOREIGNER,
+                room_charges_status=Booking.CHARGE_STATUS_YES,
+                room_charges_amount="0",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.room_charges_amount, 3600)
 
     def test_delta_room_charges_remain_manual(self):
         room = Room.objects.create(prefix="Delta", number="D101", hostel_name="Gaurlata")

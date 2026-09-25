@@ -15,6 +15,10 @@ const ROOM_CHARGE_RATES = {
     Gamma: { attached: 1500, nonAttached: 1300 },
     Beta: { attached: 1000, nonAttached: 800 },
 };
+const FOREIGN_ROOM_CHARGE_RATES = {
+    Gamma: { attached: 2000, nonAttached: 1800 },
+    Beta: { attached: 1500, nonAttached: 1300 },
+};
 
 const STATUS_LABELS = {
     pending: "Pending",
@@ -573,17 +577,20 @@ function calculateAttenderChargeAmount(attenderRequired, morningShift, morningCh
     return chargeableShiftCount * ATTENDER_CHARGE_PER_SHIFT * Math.max(Number(stayDays) || 1, 1);
 }
 
-function roomChargeRate(room, fallbackPrefix = "") {
+function roomChargeRate(room, fallbackPrefix = "", visitorNationality = "") {
     const prefix = String(room?.prefix || fallbackPrefix || "").trim();
-    const rates = ROOM_CHARGE_RATES[prefix];
+    const rateTable = visitorNationality === "foreigner"
+        ? FOREIGN_ROOM_CHARGE_RATES
+        : ROOM_CHARGE_RATES;
+    const rates = rateTable[prefix];
     if (!rates) {
         return null;
     }
     return room?.has_attached_bath === false ? rates.nonAttached : rates.attached;
 }
 
-function calculateRoomChargeAmount(room, fallbackPrefix, stayDays = 1) {
-    const rate = roomChargeRate(room, fallbackPrefix);
+function calculateRoomChargeAmount(room, fallbackPrefix, stayDays = 1, visitorNationality = "") {
+    const rate = roomChargeRate(room, fallbackPrefix, visitorNationality);
     if (rate === null) {
         return null;
     }
@@ -4011,6 +4018,7 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
         selectedAdminRoom(),
         prefixSelect.value,
         inclusiveStayDays(arrivalDateInput?.value, departureDateInput?.value),
+        document.querySelector('input[name="admin-visitor-nationality"]:checked')?.value || "",
     );
     const syncCalculatedRoomCharges = ({ autoStatus = true } = {}) => {
         if (!roomChargeStatus || !roomChargeAmount) {
@@ -4116,6 +4124,9 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
     const syncAttenderChargeAmountEnabled = bindChargeAmount("admin-attender-charge-status", "admin-attender-charge-amount");
     roomSelect.addEventListener("change", () => syncCalculatedRoomCharges({ autoStatus: true }));
     roomChargeStatus?.addEventListener("change", () => syncCalculatedRoomCharges({ autoStatus: false }));
+    document.querySelectorAll('input[name="admin-visitor-nationality"]').forEach((input) => {
+        input.addEventListener("change", () => syncCalculatedRoomCharges({ autoStatus: false }));
+    });
     if (!availabilityFilter || currentRoomOptions.length) {
         syncCalculatedRoomCharges({ autoStatus: !preserveInitialRoomChargeStatus });
         hasSyncedInitialRoomCharges = true;
