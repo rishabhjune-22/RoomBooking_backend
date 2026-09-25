@@ -1026,12 +1026,29 @@ class BookingListView(ListAPIView):
 
         query_params = self.get_query_params()
         prefix = query_params.get("prefix")
+        search = query_params.get("search", "")
         arrival_from = query_params.get("arrival_from")
         departure_to = query_params.get("departure_to")
         status_filter = query_params.get("status")
 
         if prefix:
             queryset = queryset.filter(room__prefix__iexact=prefix)
+
+        if search:
+            search_filter = (
+                Q(visitor_name__icontains=search)
+                | Q(visitor_organisation__icontains=search)
+                | Q(requestor_name__icontains=search)
+                | Q(purpose_of_visit__icontains=search)
+                | Q(remarks__icontains=search)
+                | Q(room__prefix__icontains=search)
+                | Q(room__number__icontains=search)
+                | Q(room__hostel_name__icontains=search)
+            )
+            normalized_reference = search.strip().lstrip("0")
+            if normalized_reference.isdigit():
+                search_filter |= Q(id=int(normalized_reference))
+            queryset = queryset.filter(search_filter)
 
         if arrival_from:
             start_at, _ = get_local_date_bounds(arrival_from)

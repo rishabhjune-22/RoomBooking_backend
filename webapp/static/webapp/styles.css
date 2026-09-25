@@ -842,6 +842,20 @@ button:disabled {
     max-height: 70vh;
 }
 
+.sheet-scrollbar-top {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.sheet-scrollbar-spacer {
+    height: 1px;
+}
+
 .charge-sheet-table th,
 .charge-sheet-table td {
     min-width: 132px;

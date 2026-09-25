@@ -512,6 +512,7 @@ class RoomAvailabilityResponseSerializer(serializers.Serializer):
 
 class BookingListQuerySerializer(serializers.Serializer):
     prefix = serializers.CharField(required=False, allow_blank=False)
+    search = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
     arrival_from = serializers.DateField(required=False)
     departure_to = serializers.DateField(required=False)
     status = serializers.CharField(required=False, allow_blank=False)

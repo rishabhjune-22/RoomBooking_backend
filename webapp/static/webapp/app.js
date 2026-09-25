@@ -81,6 +81,7 @@ const state = {
     rangeEnd: "",
     bookingStatusFilter: "all",
     bookingPrefixFilter: "all",
+    bookingSearch: "",
     bookingArrivalFrom: "",
     bookingDepartureTo: "",
     bookingViewMode: "cards",
@@ -98,6 +99,7 @@ const state = {
     chargeSheetRows: [],
     chargeSheetEditingId: "",
     chargeSheetSelectedId: "",
+    chargeSheetScrollLeft: 0,
     bookingRequestFilter: "pending",
     requesterAccountFilter: "pending",
     superadminAccountRoleFilter: "all",
@@ -2002,6 +2004,7 @@ function bookingsEndpoint() {
     const params = new URLSearchParams({ page_size: "50" });
     if (state.bookingStatusFilter !== "all") params.set("status", state.bookingStatusFilter);
     if (state.bookingPrefixFilter !== "all") params.set("prefix", state.bookingPrefixFilter);
+    if (state.bookingSearch) params.set("search", state.bookingSearch);
     if (state.bookingArrivalFrom) params.set("arrival_from", state.bookingArrivalFrom);
     if (state.bookingDepartureTo) params.set("departure_to", state.bookingDepartureTo);
     return `/api/bookings/?${params.toString()}`;
@@ -2019,6 +2022,7 @@ function bookingSheetEndpoint() {
     const params = new URLSearchParams({ page_size: "100" });
     if (state.bookingStatusFilter !== "all") params.set("status", state.bookingStatusFilter);
     if (state.bookingPrefixFilter !== "all") params.set("prefix", state.bookingPrefixFilter);
+    if (state.bookingSearch) params.set("search", state.bookingSearch);
     return `/api/bookings/?${params.toString()}`;
 }
 
@@ -2789,6 +2793,10 @@ function renderBookingsView() {
                 ` : ""}
                 <div class="filter-grid">
                     <div class="field-row">
+                        <label for="booking-search">Search</label>
+                        <input id="booking-search" type="search" placeholder="Reference, requestor, guest, room, purpose, remarks..." value="${htmlValue(state.bookingSearch)}">
+                    </div>
+                    <div class="field-row">
                         <label for="booking-prefix-filter">Building</label>
                         <select id="booking-prefix-filter">
                             <option value="all" ${state.bookingPrefixFilter === "all" ? "selected" : ""}>All buildings</option>
@@ -2804,6 +2812,7 @@ function renderBookingsView() {
                         <input id="booking-departure-to" type="date" value="${escapeHtml(state.bookingDepartureTo)}">
                     </div>
                     <div class="filter-actions">
+                        <button class="primary-btn" id="apply-booking-search" type="button">Search</button>
                         <button class="outline-btn" id="clear-booking-filters" type="button">Clear Filters</button>
                     </div>
                 </div>
@@ -2868,6 +2877,18 @@ function renderBookingsView() {
 }
 
 function bindBookingFilters() {
+    const applySearch = () => {
+        state.bookingSearch = document.getElementById("booking-search")?.value?.trim() || "";
+        clearBookingSelection();
+        refreshBookingsView();
+    };
+    document.getElementById("apply-booking-search")?.addEventListener("click", applySearch);
+    document.getElementById("booking-search")?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            applySearch();
+        }
+    });
     document.getElementById("booking-prefix-filter").addEventListener("change", (event) => {
         state.bookingPrefixFilter = event.target.value;
         clearBookingSelection();
@@ -2886,6 +2907,7 @@ function bindBookingFilters() {
     document.getElementById("clear-booking-filters").addEventListener("click", () => {
         state.bookingStatusFilter = "all";
         state.bookingPrefixFilter = "all";
+        state.bookingSearch = "";
         state.bookingArrivalFrom = "";
         state.bookingDepartureTo = "";
         clearBookingSelection();
@@ -3088,6 +3110,9 @@ function renderChargeSheetRows(shell) {
             </div>
         </div>
         ${chargeSheetLegendHtml()}
+        <div class="sheet-scrollbar-top charge-sheet-scrollbar-top" aria-label="Horizontal charges sheet scrollbar">
+            <div class="sheet-scrollbar-spacer"></div>
+        </div>
         <div class="sheet-scroll charge-sheet-scroll" role="region" aria-label="Booking charges sheet">
             <table class="excel-table charge-sheet-table">
                 <thead>
@@ -3133,6 +3158,7 @@ async function loadChargeSheetView() {
 }
 
 function bindChargeSheetTable(shell) {
+    bindChargeSheetHorizontalScroll(shell);
     shell.onclick = async (event) => {
         const exportButton = event.target.closest("[data-sheet-export]");
         if (exportButton) {
@@ -3183,6 +3209,55 @@ function bindChargeSheetTable(shell) {
         event.preventDefault();
         setChargeSheetOrdering(sortHeader.dataset.chargeSort);
     };
+}
+
+function bindChargeSheetHorizontalScroll(shell) {
+    const topScrollbar = shell.querySelector(".charge-sheet-scrollbar-top");
+    const bottomScrollbar = shell.querySelector(".charge-sheet-scroll");
+    const spacer = topScrollbar?.querySelector(".sheet-scrollbar-spacer");
+    const table = bottomScrollbar?.querySelector(".charge-sheet-table");
+    if (!topScrollbar || !bottomScrollbar || !spacer || !table) {
+        return;
+    }
+
+    shell._chargeSheetResizeObserver?.disconnect();
+    const syncSpacerWidth = () => {
+        spacer.style.width = `${table.scrollWidth}px`;
+        const maximumScrollLeft = Math.max(
+            0,
+            table.scrollWidth - bottomScrollbar.clientWidth,
+        );
+        const restoredScrollLeft = Math.min(
+            Math.max(Number(state.chargeSheetScrollLeft) || 0, 0),
+            maximumScrollLeft,
+        );
+        bottomScrollbar.scrollLeft = restoredScrollLeft;
+        topScrollbar.scrollLeft = restoredScrollLeft;
+    };
+    let syncingScrollbars = false;
+    const syncScrollPosition = (source, target) => {
+        if (syncingScrollbars) {
+            return;
+        }
+        syncingScrollbars = true;
+        target.scrollLeft = source.scrollLeft;
+        state.chargeSheetScrollLeft = source.scrollLeft;
+        syncingScrollbars = false;
+    };
+
+    topScrollbar.addEventListener("scroll", () => {
+        syncScrollPosition(topScrollbar, bottomScrollbar);
+    });
+    bottomScrollbar.addEventListener("scroll", () => {
+        syncScrollPosition(bottomScrollbar, topScrollbar);
+    });
+
+    syncSpacerWidth();
+    if ("ResizeObserver" in window) {
+        shell._chargeSheetResizeObserver = new ResizeObserver(syncSpacerWidth);
+        shell._chargeSheetResizeObserver.observe(table);
+        shell._chargeSheetResizeObserver.observe(bottomScrollbar);
+    }
 }
 
 async function saveChargeSheetRow(rowId, shell) {

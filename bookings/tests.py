@@ -1103,6 +1103,45 @@ class BookingApiBusinessRuleTests(TestCase):
         ids = [item["id"] for item in response.json()["data"]["results"]]
         self.assertIn(booking.id, ids)
 
+    def test_booking_list_searches_booking_details_and_reference(self):
+        booking = self.create_booking(
+            self.room,
+            utc_dt(2026, 7, 1, 10, 0),
+            utc_dt(2026, 7, 1, 12, 0),
+            visitor_name="Searchable Guest",
+            visitor_organisation="Orbital Institute",
+            requestor_name="Unique Requestor",
+            purpose_of_visit="Research symposium",
+            remarks="Needs late checkout",
+        )
+
+        search_terms = [
+            "Searchable Guest",
+            "Orbital Institute",
+            "Unique Requestor",
+            "Research symposium",
+            "late checkout",
+            "101",
+            "Palma",
+            str(booking.id).zfill(6),
+        ]
+        for search_term in search_terms:
+            with self.subTest(search=search_term):
+                response = self.client.get(
+                    reverse("booking-list"),
+                    {"search": search_term},
+                )
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                ids = [item["id"] for item in response.json()["data"]["results"]]
+                self.assertIn(booking.id, ids)
+
+        no_match = self.client.get(
+            reverse("booking-list"),
+            {"search": "definitely-not-a-booking"},
+        )
+        self.assertEqual(no_match.status_code, status.HTTP_200_OK)
+        self.assertEqual(no_match.json()["data"]["count"], 0)
+
     def test_available_rooms_range_marks_departure_day_partial(self):
         self.create_booking(
             self.room,
