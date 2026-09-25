@@ -914,7 +914,7 @@ class BookingApiBusinessRuleTests(TestCase):
                 attender_morning_chargeable=True,
                 attender_evening_shift=True,
                 attender_charges_status=Booking.CHARGE_STATUS_YES,
-                attender_charges_amount="850",
+                attender_charges_amount="0",
             ),
             content_type="application/json",
         )
@@ -922,6 +922,102 @@ class BookingApiBusinessRuleTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
         self.assertEqual(booking.attender_charges_amount, 5100)
+
+    def test_attender_charges_manual_amount_is_preserved(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 3, 12, 0),
+                attender_required=True,
+                attender_morning_shift=True,
+                attender_morning_chargeable=True,
+                attender_evening_shift=True,
+                attender_charges_status=Booking.CHARGE_STATUS_YES,
+                attender_charges_amount="999",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.attender_charges_amount, 999)
+
+    def test_beta_room_charges_auto_calculate_per_day(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 3, 12, 0),
+                room_charges_status=Booking.CHARGE_STATUS_YES,
+                room_charges_amount="0",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.room_charges_amount, 3000)
+
+    def test_beta_room_charges_manual_amount_is_preserved(self):
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=self.room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 3, 12, 0),
+                room_charges_status=Booking.CHARGE_STATUS_YES,
+                room_charges_amount="999",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.room_charges_amount, 999)
+
+    def test_non_attached_gamma_room_charges_auto_calculate_per_day(self):
+        room = Room.objects.create(
+            prefix="Gamma",
+            number="NA101",
+            hostel_name="Mainpat",
+            has_attached_bath=False,
+        )
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 2, 12, 0),
+                room_charges_status=Booking.CHARGE_STATUS_YES,
+                room_charges_amount="0",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.room_charges_amount, 2600)
+
+    def test_delta_room_charges_remain_manual(self):
+        room = Room.objects.create(prefix="Delta", number="D101", hostel_name="Gaurlata")
+        response = self.client.post(
+            reverse("booking-create"),
+            data=self.valid_payload(
+                room=room,
+                arrival_at=utc_dt(2026, 7, 1, 10, 0),
+                departure_at=utc_dt(2026, 7, 3, 12, 0),
+                room_charges_status=Booking.CHARGE_STATUS_YES,
+                room_charges_amount="1234",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(pk=response.json()["data"]["booking_id"])
+        self.assertEqual(booking.room_charges_amount, 1234)
 
     def test_backdated_create_is_expired_and_visible_in_expired_list(self):
         response = self.client.post(

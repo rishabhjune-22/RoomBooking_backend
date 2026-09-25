@@ -11,6 +11,10 @@ const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
 const LIVE_BOOKING_REFRESH_INTERVAL_MS = 15000;
 const LIVE_BOOKING_FOCUS_REFRESH_MIN_GAP_MS = 5000;
 const ATTENDER_CHARGE_PER_SHIFT = 850;
+const ROOM_CHARGE_RATES = {
+    Gamma: { attached: 1500, nonAttached: 1300 },
+    Beta: { attached: 1000, nonAttached: 800 },
+};
 
 const STATUS_LABELS = {
     pending: "Pending",
@@ -567,6 +571,23 @@ function calculateAttenderChargeAmount(attenderRequired, morningShift, morningCh
         chargeableShiftCount += 1;
     }
     return chargeableShiftCount * ATTENDER_CHARGE_PER_SHIFT * Math.max(Number(stayDays) || 1, 1);
+}
+
+function roomChargeRate(room, fallbackPrefix = "") {
+    const prefix = String(room?.prefix || fallbackPrefix || "").trim();
+    const rates = ROOM_CHARGE_RATES[prefix];
+    if (!rates) {
+        return null;
+    }
+    return room?.has_attached_bath === false ? rates.nonAttached : rates.attached;
+}
+
+function calculateRoomChargeAmount(room, fallbackPrefix, stayDays = 1) {
+    const rate = roomChargeRate(room, fallbackPrefix);
+    if (rate === null) {
+        return null;
+    }
+    return rate * Math.max(Number(stayDays) || 1, 1);
 }
 
 function htmlValue(value) {
@@ -3497,7 +3518,7 @@ async function openAdminBookingEditForm(bookingId) {
                 rooms,
                 booking.room || "",
                 "",
-                { availabilityFilter: false },
+                { availabilityFilter: false, preserveRoomChargeStatus: true },
             ),
             onConfirm: async () => {
                 await apiFetch(`/api/bookings/${booking.id}/edit/`, { method: "PATCH", body: readAdminBookingPayload() });
@@ -3664,6 +3685,9 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     const departure = source.departure_at ? indiaParts(source.departure_at) : { date: selectedEnd, time: "18:00" };
     const prefix = source.preferred_prefix || source.prefix || state.prefix || BUILDINGS[0];
     const budgetHead = normalizedBudgetHeadFields(source);
+    const roomPreferenceNoteField = context === "request"
+        ? `<input id="admin-room-note" value="${htmlValue(source.room_preference_note)}" readonly>`
+        : `<input id="admin-room-note" value="" disabled aria-readonly="true">`;
     const requestMeta = source.id && context === "request" ? `
         <div class="form-section-title">Request Review</div>
         <div class="two-col">
@@ -3689,7 +3713,7 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 <div class="field-row"><label for="admin-arrival-time">Check-In time *</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
                 <div class="field-row"><label for="admin-departure-date">Check-Out date *</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
                 <div class="field-row"><label for="admin-departure-time">Check-Out time *</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
-                <div class="field-row"><label for="admin-room-note">Room preference note (Optional)</label><input id="admin-room-note" value="${htmlValue(source.room_preference_note)}"></div>
+                <div class="field-row"><label for="admin-room-note">Room preference note (Optional)</label>${roomPreferenceNoteField}</div>
                 <div class="field-row"><label for="admin-visitor-name">Visitor name *</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
                 <div class="field-row"><label for="admin-visitor-designation">Visitor designation (Optional)</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
                 <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation (Optional)</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
@@ -3762,18 +3786,18 @@ function adminBookingFormHtml(source = {}, context = "booking") {
 
             <div class="form-section-title">Charges</div>
             <div class="two-col">
-                <div class="field-row"><label for="admin-room-charge-status">Room charges (Optional)</label><select id="admin-room-charge-status">
+                <div class="field-row"><label for="admin-room-charge-status">Room charges (Beta/Gamma auto per day; Delta manual) (Optional)</label><select id="admin-room-charge-status">
                     <option value="no" ${(source.room_charges_status || "no") === "no" ? "selected" : ""}>No</option>
                     <option value="yes" ${source.room_charges_status === "yes" ? "selected" : ""}>Yes</option>
                     <option value="waived_off" ${source.room_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
                 </select></div>
-                <div class="field-row"><label for="admin-room-charge-amount">Room charges amount * (if Yes)</label><input id="admin-room-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.room_charges_amount || 0)}"></div>
+                <div class="field-row"><label for="admin-room-charge-amount">Room charges amount * (auto-filled, editable)</label><input id="admin-room-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.room_charges_amount || 0)}"></div>
                 <div class="field-row"><label for="admin-attender-charge-status">Attender charges (Rs 850 per chargeable shift per day) (Optional)</label><select id="admin-attender-charge-status">
                     <option value="no" ${(source.attender_charges_status || "no") === "no" ? "selected" : ""}>No</option>
                     <option value="yes" ${source.attender_charges_status === "yes" ? "selected" : ""}>Yes</option>
                     <option value="waived_off" ${source.attender_charges_status === "waived_off" ? "selected" : ""}>Waived Off</option>
                 </select></div>
-                <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount * (auto-filled)</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}" readonly></div>
+                <div class="field-row"><label for="admin-attender-charge-amount">Attender charges amount * (auto-filled, editable)</label><input id="admin-attender-charge-amount" type="number" min="0" step="0.01" value="${htmlValue(source.attender_charges_amount || 0)}"></div>
             </div>
         </form>
     `;
@@ -3896,6 +3920,7 @@ async function fillAdminBookingFormFromPreviousBooking() {
         "admin-room-charge-amount",
         roomChargeStatus === "yes" ? booking.room_charges_amount ?? 0 : "",
     );
+    document.getElementById("admin-room-charge-status")?.dispatchEvent(new Event("change", { bubbles: true }));
     setFieldValue("admin-attender-charge-status", attenderChargeStatus, true);
     document.getElementById("admin-attender-charge-status")?.dispatchEvent(new Event("change", { bubbles: true }));
 
@@ -3926,6 +3951,8 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
     const eveningShiftInput = document.getElementById("admin-evening");
     const morningChargeableInputs = Array.from(document.querySelectorAll('input[name="admin-morning-chargeable"]'));
     const morningChargeability = document.getElementById("admin-morning-chargeability");
+    const roomChargeStatus = document.getElementById("admin-room-charge-status");
+    const roomChargeAmount = document.getElementById("admin-room-charge-amount");
     const attenderChargeStatus = document.getElementById("admin-attender-charge-status");
     const attenderChargeAmount = document.getElementById("admin-attender-charge-amount");
     const shiftInputs = ["admin-morning", "admin-evening"].map((id) => document.getElementById(id));
@@ -3964,17 +3991,58 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
         return sync;
     };
     const availabilityFilter = options.availabilityFilter !== false;
+    const preserveInitialRoomChargeStatus = options.preserveRoomChargeStatus === true;
+    let hasSyncedInitialRoomCharges = false;
+    let currentRoomOptions = rooms;
     const selectedRoom = rooms.find((room) => String(room.id) === String(selectedRoomId));
     if (selectedRoom?.prefix) {
         prefixSelect.value = selectedRoom.prefix;
     } else if (preferredPrefix && BUILDINGS.includes(preferredPrefix)) {
         prefixSelect.value = preferredPrefix;
     }
+    const selectedAdminRoom = () => {
+        const selectedId = roomSelect.value;
+        if (!selectedId) {
+            return null;
+        }
+        return currentRoomOptions.find((room) => String(room.room_id || room.id) === String(selectedId)) || null;
+    };
+    const calculatedAdminRoomChargeAmount = () => calculateRoomChargeAmount(
+        selectedAdminRoom(),
+        prefixSelect.value,
+        inclusiveStayDays(arrivalDateInput?.value, departureDateInput?.value),
+    );
+    const syncCalculatedRoomCharges = ({ autoStatus = true } = {}) => {
+        if (!roomChargeStatus || !roomChargeAmount) {
+            return;
+        }
+        const room = selectedAdminRoom();
+        const calculatedAmount = room ? calculatedAdminRoomChargeAmount() : null;
+        const autoCalculated = calculatedAmount !== null;
+
+        if (autoStatus && autoCalculated) {
+            roomChargeStatus.value = "yes";
+        }
+
+        const chargesReceived = roomChargeStatus.value === "yes";
+        roomChargeAmount.disabled = !chargesReceived || !room;
+        roomChargeAmount.readOnly = false;
+
+        if (!chargesReceived || !room) {
+            roomChargeAmount.value = "";
+            return;
+        }
+
+        if (autoCalculated) {
+            roomChargeAmount.value = String(calculatedAmount);
+        }
+    };
     let roomLoadToken = 0;
     const renderAllRoomOptions = () => {
         const filtered = rooms.filter((room) => !prefixSelect.value || room.prefix === prefixSelect.value);
+        currentRoomOptions = filtered;
         roomSelect.innerHTML = `<option value="">Select room</option>` + filtered.map((room) => `
-            <option value="${room.id}" ${String(room.id) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(roomLabel(room))}</option>
+            <option value="${room.id}" data-prefix="${escapeHtml(room.prefix || "")}" data-has-attached-bath="${room.has_attached_bath === false ? "false" : "true"}" ${String(room.id) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(roomLabel(room))}</option>
         `).join("");
     };
     const renderAvailableRoomOptions = async () => {
@@ -3984,6 +4052,7 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
         const departureDate = departureDateInput?.value || arrivalDate;
 
         if (!prefix || !arrivalDate || !departureDate) {
+            currentRoomOptions = [];
             roomSelect.innerHTML = `<option value="">Select dates to load available rooms</option>`;
             roomSelect.disabled = false;
             return;
@@ -3998,18 +4067,22 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
             }
             const availableRooms = data?.rooms || [];
             if (!availableRooms.length) {
+                currentRoomOptions = [];
                 roomSelect.innerHTML = `<option value="">No available rooms for selected dates</option>`;
                 roomSelect.disabled = false;
                 return;
             }
 
+            currentRoomOptions = availableRooms;
             roomSelect.innerHTML = `<option value="">Select room</option>` + availableRooms.map((room) => {
                 const roomId = room.room_id || room.id || "";
                 return `
-                    <option value="${roomId}" ${String(roomId) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(availableRoomSelectLabel(room, prefix))}</option>
+                    <option value="${roomId}" data-prefix="${escapeHtml(room.prefix || prefix || "")}" data-has-attached-bath="${room.has_attached_bath === false ? "false" : "true"}" ${String(roomId) === String(selectedRoomId) ? "selected" : ""}>${escapeHtml(availableRoomSelectLabel(room, prefix))}</option>
                 `;
             }).join("");
             roomSelect.disabled = false;
+            syncCalculatedRoomCharges({ autoStatus: !preserveInitialRoomChargeStatus });
+            hasSyncedInitialRoomCharges = true;
         } catch (error) {
             if (token !== roomLoadToken) {
                 return;
@@ -4029,17 +4102,24 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
     prefixSelect.addEventListener("change", () => {
         selectedRoomId = "";
         renderRoomOptions();
+        syncCalculatedRoomCharges({ autoStatus: false });
     });
     [arrivalDateInput, departureDateInput].forEach((input) => {
         input?.addEventListener("change", () => {
             selectedRoomId = "";
             renderRoomOptions();
+            syncCalculatedRoomCharges({ autoStatus: false });
             syncCalculatedAttenderCharges();
         });
     });
     renderRoomOptions();
-    bindChargeAmount("admin-room-charge-status", "admin-room-charge-amount");
     const syncAttenderChargeAmountEnabled = bindChargeAmount("admin-attender-charge-status", "admin-attender-charge-amount");
+    roomSelect.addEventListener("change", () => syncCalculatedRoomCharges({ autoStatus: true }));
+    roomChargeStatus?.addEventListener("change", () => syncCalculatedRoomCharges({ autoStatus: false }));
+    if (!availabilityFilter || currentRoomOptions.length) {
+        syncCalculatedRoomCharges({ autoStatus: !preserveInitialRoomChargeStatus });
+        hasSyncedInitialRoomCharges = true;
+    }
 
     const selectedMorningChargeable = () => (
         document.querySelector('input[name="admin-morning-chargeable"]:checked')?.value !== "no"
@@ -4097,6 +4177,9 @@ function bindAdminBookingForm(rooms, selectedRoomId = "", preferredPrefix = "", 
     });
     attenderChargeStatus?.addEventListener("change", () => syncCalculatedAttenderCharges({ autoStatus: false }));
     syncAttender();
+    if (!hasSyncedInitialRoomCharges) {
+        syncCalculatedRoomCharges({ autoStatus: !preserveInitialRoomChargeStatus });
+    }
 
     const copyRequestorToLogistics = () => {
         if (logisticsFields.name && requestorFields.name) logisticsFields.name.value = requestorFields.name.value;
@@ -4278,13 +4361,6 @@ function readAdminBookingPayload() {
     const attenderEveningShift = attenderRequired && checked("admin-evening");
     const morningChargeable = attenderMorningShift
         && document.querySelector('input[name="admin-morning-chargeable"]:checked')?.value !== "no";
-    const calculatedAttenderChargeAmount = calculateAttenderChargeAmount(
-        attenderRequired,
-        attenderMorningShift,
-        morningChargeable,
-        attenderEveningShift,
-        inclusiveStayDays(val("admin-arrival-date"), val("admin-departure-date")),
-    );
     const roomChargeStatus = val("admin-room-charge-status") || "no";
     const attenderChargeStatus = val("admin-attender-charge-status") || "no";
     const budgetName = checked("admin-budget-individual") ? val("admin-budget-name") : "";
@@ -4315,7 +4391,7 @@ function readAdminBookingPayload() {
         room_charges_status: roomChargeStatus,
         room_charges_amount: roomChargeStatus === "yes" ? Number(val("admin-room-charge-amount") || 0) : 0,
         attender_charges_status: attenderChargeStatus,
-        attender_charges_amount: attenderChargeStatus === "yes" ? calculatedAttenderChargeAmount : 0,
+        attender_charges_amount: attenderChargeStatus === "yes" ? Number(val("admin-attender-charge-amount") || 0) : 0,
         budget_head_type: "",
         budget_head_value: "",
         budget_head_name: budgetName,

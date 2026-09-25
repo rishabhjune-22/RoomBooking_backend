@@ -400,6 +400,7 @@ def build_room_response(room, availability_status="available", cooling_end=None)
         "room_name": f"{room.prefix} {room.number}",
         "selection_label": room.selection_label,
         "prefix": room.prefix,
+        "has_attached_bath": room.has_attached_bath,
         "availability_status": availability_status,
         "available_from_date": cooling_end.date() if cooling_end else None,
         "available_from_time": cooling_end.strftime("%I:%M %p") if cooling_end else None,

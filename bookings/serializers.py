@@ -16,6 +16,12 @@ PHONE_ALLOWED_RE = re.compile(r"^\+?[0-9][0-9\s().-]*$")
 PHONE_DIGIT_RE = re.compile(r"\d")
 ATTENDER_CHARGE_PER_SHIFT = Decimal("850")
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
+ROOM_CHARGE_RATES = {
+    ("Gamma", True): Decimal("1500"),
+    ("Gamma", False): Decimal("1300"),
+    ("Beta", True): Decimal("1000"),
+    ("Beta", False): Decimal("800"),
+}
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -214,8 +220,19 @@ class BookingSerializer(serializers.ModelSerializer):
             )
             amount = attrs.get(amount_field, getattr(instance, amount_field, 0))
             if (
+                amount_field == "room_charges_amount"
+                and charge_status == Booking.CHARGE_STATUS_YES
+                and amount <= 0
+            ):
+                calculated_amount = self.calculate_room_charges_amount(attrs)
+                if calculated_amount is not None:
+                    attrs[amount_field] = calculated_amount
+                    amount = calculated_amount
+
+            if (
                 amount_field == "attender_charges_amount"
                 and charge_status == Booking.CHARGE_STATUS_YES
+                and amount <= 0
             ):
                 calculated_amount = self.calculate_attender_charges_amount(attrs)
                 attrs[amount_field] = calculated_amount
@@ -228,6 +245,15 @@ class BookingSerializer(serializers.ModelSerializer):
 
             if charge_status != Booking.CHARGE_STATUS_YES:
                 attrs[amount_field] = 0
+
+    def calculate_room_charges_amount(self, attrs):
+        room = attrs.get("room", getattr(self.instance, "room", None))
+        if not room:
+            return None
+        rate = ROOM_CHARGE_RATES.get((room.prefix, room.has_attached_bath))
+        if rate is None:
+            return None
+        return rate * self.booking_stay_days(attrs)
 
     def calculate_attender_charges_amount(self, attrs):
         instance = self.instance
