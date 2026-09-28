@@ -566,6 +566,7 @@ function renderAuth(message = "", isError = false) {
             <section class="login-form-side">
                 <button class="floating-theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode"></button>
                 <div class="login-card">
+                    <div class="auth-brand-badge">${brandLogoHtml()}</div>
                     <h2 class="auth-welcome">${isSignup ? "Create Account" : "Welcome Back"}</h2>
                     <p class="auth-welcome-sub">${isSignup ? "Register as Admin or Requester to get started." : "Sign in to manage your bookings."}</p>
                     <div class="segmented auth-role-tabs" role="tablist" aria-label="Role">
