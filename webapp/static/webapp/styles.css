@@ -1306,6 +1306,26 @@ button:disabled {
     gap: 12px;
 }
 
+.requester-room-preference {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 5px;
+    padding: 12px 14px;
+    border: 1px solid #e0a800;
+    border-radius: 10px;
+    background: #fff3b0;
+    color: #5d4700;
+    overflow-wrap: anywhere;
+}
+
+.requester-room-preference strong {
+    font-size: 13px;
+}
+
+.requester-room-preference span {
+    font-size: 14px;
+}
+
 .booking-form {
     gap: 14px;
 }

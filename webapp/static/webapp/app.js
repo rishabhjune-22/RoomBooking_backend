@@ -1364,7 +1364,7 @@ function renderCalendarView() {
         <div class="section-header">
             <div>
                 <h2>Calendar</h2>
-                <p>${isAdminLike() ? "Full room availability and booking details." : "Requester-safe availability with no private booking details."}</p>
+                <p>${isAdminLike() ? "Full room availability and booking details." : "Select your requested arrival and departure dates."}</p>
             </div>
             ${isAdminLike()
                 ? `<button class="primary-btn" id="calendar-create-booking">Create Booking</button>`
@@ -1377,14 +1377,14 @@ function renderCalendarView() {
                     <div class="month-title" id="month-title"></div>
                     <button class="outline-btn" id="next-month">Next</button>
                 </div>
-                <div class="building-tabs" id="building-tabs"></div>
+                ${isAdminLike() ? `<div class="building-tabs" id="building-tabs"></div>` : ""}
                 <div class="calendar-grid" id="calendar-grid"></div>
-                <div class="legend">
+                ${isAdminLike() ? `<div class="legend">
                     <span class="legend-item"><span class="dot open"></span> Available</span>
                     <span class="legend-item"><span class="dot half"></span> Half Available</span>
                     <span class="legend-item"><span class="dot low"></span> Less Than Half</span>
                     <span class="legend-item"><span class="dot full"></span> Full</span>
-                </div>
+                </div>` : ""}
             </section>
             <aside class="surface side-panel" id="calendar-side">
                 <div class="loading-state">Loading calendar...</div>
@@ -1397,9 +1397,11 @@ function renderCalendarView() {
     if (isAdminLike()) {
         document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminAvailableRoomsChooser());
     } else {
-        document.getElementById("request-booking-btn").addEventListener("click", () => openRequesterAvailableRoomsChooser());
+        document.getElementById("request-booking-btn").addEventListener("click", () => openRequestForm());
     }
-    drawBuildingTabs();
+    if (isAdminLike()) {
+        drawBuildingTabs();
+    }
     loadCalendar();
 }
 
@@ -1640,9 +1642,13 @@ async function loadCalendar({ silent = false } = {}) {
     if (!silent) {
         grid.innerHTML = `<div class="loading-state" style="grid-column:1 / -1">Loading availability...</div>`;
     }
-    const endpoint = isAdminLike()
-        ? `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`
-        : `/api/requester/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
+    if (!isAdminLike()) {
+        state.availability = null;
+        drawRequesterCalendar();
+        renderCalendarSide();
+        return;
+    }
+    const endpoint = `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
     try {
         state.availability = await apiFetch(endpoint);
         drawCalendar();
@@ -1652,6 +1658,33 @@ async function loadCalendar({ silent = false } = {}) {
             grid.innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
         }
     }
+}
+
+function drawRequesterCalendar() {
+    const grid = document.getElementById("calendar-grid");
+    if (!grid) {
+        return;
+    }
+    const firstDay = new Date(state.calendarYear, state.calendarMonth - 1, 1).getDay();
+    const daysInMonth = new Date(state.calendarYear, state.calendarMonth, 0).getDate();
+    const cells = [];
+    WEEKDAYS.forEach((day) => cells.push(`<div class="weekday">${day}</div>`));
+    for (let index = 0; index < firstDay; index += 1) {
+        cells.push(`<button class="day-cell empty" type="button" tabindex="-1"></button>`);
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
+        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        cells.push(`
+            <button class="day-cell requester-date ${selectedClass}" type="button" data-date="${dateValue}">
+                <span class="day-number">${day}</span>
+            </button>
+        `);
+    }
+    grid.innerHTML = cells.join("");
+    grid.querySelectorAll("[data-date]").forEach((button) => {
+        button.addEventListener("click", () => handleDateClick(button.dataset.date));
+    });
 }
 
 function currentCalendarGroup() {
@@ -1684,6 +1717,10 @@ function isInSelectedRange(dateValue) {
 }
 
 function drawCalendar() {
+    if (!isAdminLike()) {
+        drawRequesterCalendar();
+        return;
+    }
     const grid = document.getElementById("calendar-grid");
     const group = currentCalendarGroup();
     if (!grid || !group) {
@@ -1768,7 +1805,7 @@ function renderCalendarSide(content = "") {
         return;
     }
     const group = currentCalendarGroup();
-    if (!group) {
+    if (isAdminLike() && !group) {
         side.innerHTML = `<div class="empty-state">No building data.</div>`;
         return;
     }
@@ -1792,7 +1829,6 @@ function renderCalendarSide(content = "") {
                 <h3 style="margin:0 0 6px">Request Schedule</h3>
                 <p class="item-meta">Select one date for same-day request or select another date for a range.</p>
             </div>
-            <div class="detail-row"><span class="detail-label">Building</span><span class="detail-value">${escapeHtml(state.prefix)}</span></div>
             <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
         </div>
     `;
@@ -3760,9 +3796,12 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     const departure = source.departure_at ? indiaParts(source.departure_at) : { date: selectedEnd, time: "18:00" };
     const prefix = source.preferred_prefix || source.prefix || state.prefix || BUILDINGS[0];
     const budgetHead = normalizedBudgetHeadFields(source);
-    const roomPreferenceNoteField = context === "request"
-        ? `<input id="admin-room-note" value="${htmlValue(source.room_preference_note)}" readonly>`
-        : `<input id="admin-room-note" value="" disabled aria-readonly="true">`;
+    const roomPreferencePanel = context === "request" ? `
+        <div class="requester-room-preference" role="note">
+            <strong>Requester Room Preference</strong>
+            <span>${escapeHtml(source.room_preference_note || "No preference provided")}</span>
+        </div>
+    ` : "";
     const requestMeta = source.id && context === "request" ? `
         <div class="form-section-title">Request Review</div>
         <div class="two-col">
@@ -3783,12 +3822,12 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             <div class="form-section-title">Visitor Details</div>
             <div class="two-col">
                 <div class="field-row"><label for="admin-prefix">Building *</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+                ${roomPreferencePanel}
                 <div class="field-row"><label for="admin-room">Room No *</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
                 <div class="field-row"><label for="admin-arrival-date">Check-In date *</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
                 <div class="field-row"><label for="admin-arrival-time">Check-In time *</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
                 <div class="field-row"><label for="admin-departure-date">Check-Out date *</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
                 <div class="field-row"><label for="admin-departure-time">Check-Out time *</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
-                <div class="field-row"><label for="admin-room-note">Room preference note (Optional)</label>${roomPreferenceNoteField}</div>
                 <div class="field-row"><label for="admin-visitor-name">Visitor name *</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
                 <div class="field-row"><label for="admin-visitor-designation">Visitor designation (Optional)</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
                 <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation (Optional)</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
@@ -4719,8 +4758,9 @@ function openBookingRequestDetails(request) {
     openDetailsModal("Booking Request Details", bookingRequestDetailRows(request));
 }
 
-function bookingRequestDetailRows(request) {
+function bookingRequestDetailRows(request, options = {}) {
     const budgetHead = normalizedBudgetHeadFields(request);
+    const requesterView = options.requesterView === true;
     return [
         { section: "Request Status" },
         ["ID", request.id],
@@ -4732,8 +4772,10 @@ function bookingRequestDetailRows(request) {
         { section: "Schedule & Room" },
         ["Arrival", formatDateTime(request.arrival_at)],
         ["Departure", formatDateTime(request.departure_at)],
-        ["Building preference", request.preferred_prefix],
-        ["Preferred room", request.preferred_room_name || "No specific room"],
+        ...(!requesterView ? [
+            ["Building preference", request.preferred_prefix],
+            ["Preferred room", request.preferred_room_name || "No specific room"],
+        ] : []),
         ["Room note", request.room_preference_note],
         { section: "Visitor Details" },
         ["Visitor name", request.visitor_name],
@@ -5214,7 +5256,7 @@ async function loadMyRequests() {
                 <div class="item-main">
                     <div>
                         <h3 class="item-title">${escapeHtml(request.visitor_name || "Booking request")}</h3>
-                        <p class="item-meta">${formatDateRange(request)} - ${escapeHtml(request.preferred_room_name || request.preferred_prefix || "No room preference")}</p>
+                        <p class="item-meta">${formatDateRange(request)} - ${escapeHtml(request.room_preference_note || "No room preference note")}</p>
                         ${request.admin_remarks ? `<p class="item-meta">Remarks: ${escapeHtml(request.admin_remarks)}</p>` : ""}
                     </div>
                     <span class="status-chip ${request.status}">${titleCase(request.status)}</span>
@@ -5235,42 +5277,47 @@ function openMyRequestDetails(request) {
         return;
     }
     const canEdit = request.status === "pending" || request.status === "correction_required";
+    const canPullBack = request.can_pull_back === true;
     const editText = request.status === "correction_required" ? "Edit & Resubmit" : "Edit";
     openActionModal({
         title: `Booking Request #${request.id}`,
-        body: detailsRowsHtml(bookingRequestDetailRows(request)),
+        body: detailsRowsHtml(bookingRequestDetailRows(request, { requesterView: true })),
         wide: true,
         footerHtml: `
             <button class="outline-btn" type="button" data-close-modal>Close</button>
             ${canEdit ? `<button class="primary-btn" type="button" id="my-request-edit">${editText}</button>` : ""}
-            <button class="danger-btn" type="button" id="my-request-delete">Delete Request</button>
+            ${canPullBack
+                ? `<button class="danger-btn" type="button" id="my-request-pull-back">Pull Back</button>`
+                : `<span class="item-meta">${request.admin_seen_at
+                    ? "Already seen by admin — pull back is no longer available."
+                    : "Pull back is unavailable for this request."}</span>`}
         `,
         onBind: () => {
             document.getElementById("my-request-edit")?.addEventListener("click", () => {
                 closeModal();
                 openRequestForm(request);
             });
-            document.getElementById("my-request-delete")?.addEventListener("click", () => openDeleteMyRequestModal(request));
+            document.getElementById("my-request-pull-back")?.addEventListener("click", () => openPullBackMyRequestModal(request));
         },
     });
 }
 
-function openDeleteMyRequestModal(request) {
+function openPullBackMyRequestModal(request) {
     openActionModal({
-        title: "Delete Request",
+        title: "Pull Back Request",
         body: `
-            <p class="item-meta">Are you sure you want to delete this request?</p>
+            <p class="item-meta">Pull back this request before an administrator reviews it?</p>
             <div class="field-row">
-                <label for="delete-my-request-remarks">Remarks (Optional)</label>
-                <textarea id="delete-my-request-remarks" placeholder="Optional deletion remarks"></textarea>
+                <label for="pull-back-request-remarks">Reason (Optional)</label>
+                <textarea id="pull-back-request-remarks" placeholder="Optional reason for pulling back"></textarea>
             </div>
         `,
-        confirmText: "Delete Request",
+        confirmText: "Pull Back",
         confirmClass: "danger-btn",
         onConfirm: async () => {
-            const remarks = document.getElementById("delete-my-request-remarks")?.value?.trim() || "";
+            const remarks = document.getElementById("pull-back-request-remarks")?.value?.trim() || "";
             await apiFetch(`/api/requester/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
-            toast("Request deleted successfully.");
+            toast("Request pulled back successfully.");
             await loadMyRequests();
         },
     });
@@ -5360,67 +5407,7 @@ async function openAdminAvailableRoomsChooser(options = {}) {
     }
 }
 
-async function openRequesterAvailableRoomsChooser() {
-    const { arrivalDate, departureDate } = requesterSelectedSchedule();
-    if (!arrivalDate) {
-        toast("Select an arrival date first.", "error");
-        return;
-    }
-    if (!departureDate) {
-        toast("Select a departure date first.", "error");
-        return;
-    }
-    if (departureDate < arrivalDate) {
-        toast("Departure date cannot be before arrival date.", "error");
-        return;
-    }
-    openActionModal({
-        title: "Available Rooms",
-        body: `<div class="loading-state">Loading available rooms...</div>`,
-        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
-    });
-
-    try {
-        const data = await apiFetch(`/api/requester/available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
-        const rooms = data?.rooms || [];
-        const body = document.querySelector(".modal-body");
-        if (!body) {
-            return;
-        }
-        if (!rooms.length) {
-            body.innerHTML = `<div class="empty-state">No rooms are available for the selected range.</div>`;
-            return;
-        }
-        body.innerHTML = `
-            <p class="item-meta">Select a preferred room for your booking request.</p>
-            <div class="available-room-list">
-                ${rooms.map((room, index) => {
-                    const selection = requesterRoomSelection(room, data?.prefix || state.prefix);
-                    return `
-                        <button class="available-room-card" type="button" data-room-index="${index}">
-                            <span class="available-room-title">${escapeHtml(selection.roomName)}</span>
-                            <span class="available-room-status ${room.availability_status === "partial" ? "partial" : "available"}">${escapeHtml(availableRoomStatusText(room))}</span>
-                        </button>
-                    `;
-                }).join("")}
-            </div>
-        `;
-        body.querySelectorAll("[data-room-index]").forEach((button) => {
-            button.addEventListener("click", () => {
-                const room = rooms[Number(button.dataset.roomIndex)];
-                closeModal();
-                openRequestForm(null, requesterRoomSelection(room, data?.prefix || state.prefix));
-            });
-        });
-    } catch (error) {
-        const body = document.querySelector(".modal-body");
-        if (body) {
-            body.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</div>`;
-        }
-    }
-}
-
-async function openRequestForm(existing = null, selectedRoom = null) {
+async function openRequestForm(existing = null) {
     const editing = Boolean(existing);
     const arrival = editing ? indiaParts(existing.arrival_at) : { date: state.rangeStart || todayIso(), time: "10:00" };
     const departure = editing ? indiaParts(existing.departure_at) : { date: state.rangeEnd || state.rangeStart || todayIso(), time: "18:00" };
@@ -5429,17 +5416,6 @@ async function openRequestForm(existing = null, selectedRoom = null) {
         arrival.date = calendarSchedule.arrivalDate;
         departure.date = calendarSchedule.departureDate;
     }
-    const prefix = editing ? (existing.preferred_prefix || state.prefix) : (selectedRoom?.prefix || state.prefix);
-    const existingHasRoom = Boolean(existing?.preferred_room || existing?.preferred_room_name);
-    const roomSelection = editing && existingHasRoom
-        ? requesterRoomSelection({
-            id: existing.preferred_room,
-            room_id: existing.preferred_room,
-            room_name: existing.preferred_room_name,
-            selection_label: existing.preferred_room_name,
-            prefix,
-        }, prefix)
-        : requesterRoomSelection(selectedRoom, prefix);
     const requestorName = state.user?.name || existing?.requestor_name || "";
     const requestorEmail = existing?.requestor_email || state.user?.email || "";
     const budgetHead = normalizedBudgetHeadFields(existing || {});
@@ -5448,15 +5424,10 @@ async function openRequestForm(existing = null, selectedRoom = null) {
         title: editing ? "Edit Request" : "Request Booking",
         body: `
             <form id="request-form" class="field-grid">
-                <div class="form-section-title">Room Details</div>
+                <div class="form-section-title">Room Preference</div>
                 <input id="req-arrival-date" type="hidden" value="${htmlValue(arrival.date)}">
                 <input id="req-departure-date" type="hidden" value="${htmlValue(departure.date)}">
-                <input id="req-prefix" type="hidden" value="${htmlValue(prefix)}">
-                <input id="req-room" type="hidden" value="${htmlValue(roomSelection.roomId)}">
-                <div class="two-col">
-                    <div class="field-row"><label>Room *</label><input value="${htmlValue(roomSelection.roomName)}" readonly></div>
-                    <div class="field-row"><label>Building *</label><input value="${htmlValue(prefix)}" readonly></div>
-                </div>
+                <div class="field-row"><label for="req-room-preference-note">Room preference note (Optional)</label><textarea id="req-room-preference-note" placeholder="Example: Ground floor room, attached bathroom, or any other preference">${escapeHtml(existing?.room_preference_note || "")}</textarea></div>
 
                 <div class="form-section-title">Stay Details</div>
                 <div class="two-col">
@@ -5560,8 +5531,7 @@ async function submitRequesterRequest(existing = null) {
     const payload = {
         arrival_at: arrivalAt,
         departure_at: departureAt,
-        preferred_prefix: document.getElementById("req-prefix").value,
-        preferred_room: document.getElementById("req-room").value || null,
+        room_preference_note: document.getElementById("req-room-preference-note").value.trim(),
         visitor_name: document.getElementById("req-visitor-name").value.trim(),
         visitor_designation: document.getElementById("req-visitor-designation").value.trim(),
         visitor_organisation: document.getElementById("req-visitor-organisation").value.trim(),

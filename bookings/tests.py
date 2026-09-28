@@ -1593,89 +1593,14 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(list_response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_requester_can_access_safe_availability(self):
+    def test_requester_availability_endpoints_are_not_exposed(self):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
 
-        response = self.client.get(
-            reverse("requester-availability"),
-            {"month": 7, "year": 2026},
-        )
+        calendar_response = self.client.get("/api/requester/availability/")
+        rooms_response = self.client.get("/api/requester/available-rooms-range/")
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        day = response.json()["data"]["groups"][0]["calendar"][0]
-        self.assertIn("available_rooms", day)
-        self.assertNotIn("guest_name", day)
-        self.assertNotIn("requestor_name", day)
-
-    def test_unauthenticated_requester_availability_rejected(self):
-        response = self.client.get(reverse("requester-availability"))
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    def test_requester_can_access_safe_available_rooms_range(self):
-        Booking.objects.create(
-            room=self.room,
-            arrival_at=local_dt(2026, 7, 3, 10, 0),
-            departure_at=local_dt(2026, 7, 3, 12, 0),
-            visitor_name="Private Visitor",
-            requestor_name="Private Requestor",
-            purpose_of_visit="Private Purpose",
-            created_by=self.admin,
-            created_by_name="Private Admin",
-        )
-        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
-
-        response = self.client.get(
-            reverse("requester-available-rooms-range"),
-            {
-                "arrival_date": "2026-07-03",
-                "departure_date": "2026-07-03",
-                "prefix": "Delta",
-            },
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        data = response.json()["data"]
-        rooms = data["rooms"]
-        by_id = {room["room_id"]: room for room in rooms}
-        self.assertEqual(by_id[self.room.id]["availability_status"], "partial")
-        self.assertIn("available_from_date", by_id[self.room.id])
-        self.assertIn("available_from_time", by_id[self.room.id])
-        self.assertEqual(by_id[self.other_room.id]["availability_status"], "available")
-        private_payload = str(data)
-        self.assertNotIn("Private Visitor", private_payload)
-        self.assertNotIn("Private Requestor", private_payload)
-        self.assertNotIn("Private Purpose", private_payload)
-        self.assertNotIn("created_by", private_payload)
-        self.assertNotIn("edit_history", private_payload)
-
-    def test_requester_available_rooms_range_rejects_unauthenticated_and_pending(self):
-        unauthenticated = self.client.get(
-            reverse("requester-available-rooms-range"),
-            {
-                "arrival_date": "2026-07-03",
-                "departure_date": "2026-07-03",
-                "prefix": "Delta",
-            },
-        )
-        self.assertEqual(unauthenticated.status_code, status.HTTP_401_UNAUTHORIZED)
-
-        pending = create_requester(
-            email="pending-requester@example.com",
-            name="Pending Requester",
-        )
-        set_user_role(pending, ROLE_REQUESTER, approval_status=APPROVAL_PENDING)
-        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(pending)
-
-        pending_response = self.client.get(
-            reverse("requester-available-rooms-range"),
-            {
-                "arrival_date": "2026-07-03",
-                "departure_date": "2026-07-03",
-                "prefix": "Delta",
-            },
-        )
-
-        self.assertEqual(pending_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(calendar_response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(rooms_response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_requester_submits_request(self):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
@@ -1693,6 +1618,9 @@ class BookingRequestWorkflowTests(TestCase):
         booking_request = BookingRequest.objects.get()
         self.assertEqual(booking_request.requester, self.requester)
         self.assertEqual(booking_request.status, BookingRequest.STATUS_PENDING)
+        self.assertIsNone(booking_request.preferred_room)
+        self.assertEqual(booking_request.preferred_prefix, "")
+        self.assertEqual(booking_request.room_preference_note, "Attached bathroom preferred")
         self.assertEqual(booking_request.budget_head_name, "Requester Individual")
         self.assertEqual(booking_request.budget_head_department_name, "Requester Institute")
         self.assertEqual(booking_request.budget_head_project_code, "REQ-2026-001")
@@ -1702,6 +1630,9 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(data["budget_head_department_name"], "Requester Institute")
         self.assertEqual(data["budget_head_project_code"], "REQ-2026-001")
         self.assertEqual(data["visitor_nationality"], Booking.VISITOR_NATIONALITY_FOREIGNER)
+        self.assertNotIn("preferred_room", data)
+        self.assertNotIn("preferred_room_name", data)
+        self.assertNotIn("preferred_prefix", data)
 
     def test_requester_submits_attender_request_without_count(self):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
@@ -1724,6 +1655,18 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertNotIn("attender_general_shift", response.json()["data"])
         self.assertNotIn("attender_count_per_day", response.json()["data"])
 
+    def test_requester_can_submit_without_room_preference_note(self):
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+
+        response = self.client.post(
+            reverse("requester-booking-request-list"),
+            data=self.request_payload(room_preference_note=""),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(BookingRequest.objects.get().room_preference_note, "")
+
     def test_requester_sees_only_own_requests(self):
         own_request = BookingRequest.objects.create(
             requester=self.requester,
@@ -1741,37 +1684,55 @@ class BookingRequestWorkflowTests(TestCase):
         ids = [item["id"] for item in response.json()["data"]]
         self.assertEqual(ids, [own_request.id])
 
-    def test_requester_can_soft_delete_own_request_for_all_statuses(self):
-        statuses = [
-            BookingRequest.STATUS_PENDING,
-            BookingRequest.STATUS_CORRECTION_REQUIRED,
-            BookingRequest.STATUS_APPROVED,
-            BookingRequest.STATUS_REJECTED,
-        ]
+    def test_requester_can_pull_back_own_unseen_pending_request(self):
         self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_PENDING,
+            **self.request_model_kwargs(visitor_name="Unseen Visitor"),
+        )
 
-        for request_status in statuses:
-            with self.subTest(request_status=request_status):
-                booking_request = BookingRequest.objects.create(
-                    requester=self.requester,
-                    status=request_status,
-                    **self.request_model_kwargs(visitor_name=f"Visitor {request_status}"),
-                )
+        response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk}),
+            data={"remarks": "No longer needed"},
+            content_type="application/json",
+        )
 
-                response = self.client.delete(
-                    reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk}),
-                    data={"remarks": "No longer needed"},
-                    content_type="application/json",
-                )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["success"])
+        booking_request.refresh_from_db()
+        self.assertTrue(booking_request.is_deleted)
+        self.assertIsNotNone(booking_request.deleted_at)
+        self.assertEqual(booking_request.deleted_by, self.requester)
+        self.assertEqual(booking_request.deleted_by_name, "Requester One")
+        self.assertEqual(booking_request.delete_reason, "No longer needed")
 
-                self.assertEqual(response.status_code, status.HTTP_200_OK)
-                self.assertTrue(response.json()["success"])
-                booking_request.refresh_from_db()
-                self.assertTrue(booking_request.is_deleted)
-                self.assertIsNotNone(booking_request.deleted_at)
-                self.assertEqual(booking_request.deleted_by, self.requester)
-                self.assertEqual(booking_request.deleted_by_name, "Requester One")
-                self.assertEqual(booking_request.delete_reason, "No longer needed")
+    def test_admin_detail_marks_request_seen_and_blocks_pull_back(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            **self.request_model_kwargs(visitor_name="Seen Visitor"),
+        )
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+        detail_response = self.client.get(
+            reverse("admin-booking-request-detail", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertFalse(detail_response.json()["data"]["can_pull_back"])
+        booking_request.refresh_from_db()
+        self.assertIsNotNone(booking_request.admin_seen_at)
+        self.assertEqual(booking_request.admin_seen_by, self.admin)
+
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.requester)
+        delete_response = self.client.delete(
+            reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
+        )
+
+        self.assertEqual(delete_response.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("seen by an administrator", delete_response.json()["message"])
+        booking_request.refresh_from_db()
+        self.assertFalse(booking_request.is_deleted)
 
     def test_requester_cannot_delete_another_requesters_request(self):
         booking_request = BookingRequest.objects.create(
@@ -1803,7 +1764,7 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
         self.assertEqual(list_response.json()["data"], [])
 
-    def test_requester_delete_approved_request_keeps_real_booking(self):
+    def test_requester_cannot_pull_back_approved_request(self):
         booking = Booking.objects.create(
             room=self.room,
             arrival_at=utc_dt(2026, 7, 1, 10, 0),
@@ -1822,9 +1783,9 @@ class BookingRequestWorkflowTests(TestCase):
             reverse("requester-booking-request-delete", kwargs={"pk": booking_request.pk})
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         booking_request.refresh_from_db()
-        self.assertTrue(booking_request.is_deleted)
+        self.assertFalse(booking_request.is_deleted)
         self.assertTrue(Booking.objects.filter(pk=booking.pk).exists())
 
     def test_requester_cannot_delete_already_deleted_request(self):
@@ -2418,6 +2379,7 @@ class BookingRequestWorkflowTests(TestCase):
             "arrival_at": iso(utc_dt(2026, 7, 1, 10, 0)),
             "departure_at": iso(utc_dt(2026, 7, 1, 12, 0)),
             "preferred_prefix": "Delta",
+            "room_preference_note": "Attached bathroom preferred",
             "visitor_name": "Requester Visitor",
             "visitor_mobile": "9876543210",
             "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,
@@ -2481,26 +2443,11 @@ class BookingApiIntegrationTests(TestCase):
         requester_token = self.signup_approve_and_login_requester(admin_token)
 
         self.authenticate(requester_token)
-        availability_before = self.client.get(
-            reverse("requester-available-rooms-range"),
-            {
-                "arrival_date": "2026-09-10",
-                "departure_date": "2026-09-10",
-                "prefix": "Delta",
-            },
-        )
-        self.assertEqual(availability_before.status_code, status.HTTP_200_OK)
-        before_by_id = {
-            room["room_id"]: room
-            for room in availability_before.json()["data"]["rooms"]
-        }
-        self.assertEqual(before_by_id[self.room.id]["availability_status"], "available")
-
         create_request = self.client.post(
             reverse("requester-booking-request-list"),
             data=self.booking_request_payload(
-                arrival_at=local_dt(2026, 9, 10, 10, 0),
-                departure_at=local_dt(2026, 9, 10, 12, 0),
+                arrival_at=local_dt(2027, 9, 10, 10, 0),
+                departure_at=local_dt(2027, 9, 10, 12, 0),
                 preferred_room=self.room.id,
             ),
             content_type="application/json",
@@ -2532,8 +2479,8 @@ class BookingApiIntegrationTests(TestCase):
         availability_after = self.client.get(
             reverse("room-available-rooms-range"),
             {
-                "arrival_date": "2026-09-10",
-                "departure_date": "2026-09-10",
+                "arrival_date": "2027-09-10",
+                "departure_date": "2027-09-10",
                 "prefix": "Delta",
             },
         )
@@ -2549,8 +2496,8 @@ class BookingApiIntegrationTests(TestCase):
             reverse("booking-create"),
             data=self.admin_booking_payload(
                 room=self.room,
-                arrival_at=local_dt(2026, 9, 10, 11, 0),
-                departure_at=local_dt(2026, 9, 10, 13, 0),
+                arrival_at=local_dt(2027, 9, 10, 11, 0),
+                departure_at=local_dt(2027, 9, 10, 13, 0),
             ),
             content_type="application/json",
         )
@@ -2561,8 +2508,8 @@ class BookingApiIntegrationTests(TestCase):
             reverse("booking-create"),
             data=self.admin_booking_payload(
                 room=self.room,
-                arrival_at=local_dt(2026, 9, 10, 13, 0),
-                departure_at=local_dt(2026, 9, 10, 14, 0),
+                arrival_at=local_dt(2027, 9, 10, 13, 0),
+                departure_at=local_dt(2027, 9, 10, 14, 0),
                 visitor_name="Boundary Visitor",
             ),
             content_type="application/json",
@@ -2796,6 +2743,7 @@ class BookingApiIntegrationTests(TestCase):
             "departure_at": iso(departure_at),
             "preferred_prefix": "Delta",
             "preferred_room": preferred_room,
+            "room_preference_note": "Quiet room near the lift",
             "visitor_name": "Integration Visitor",
             "visitor_mobile": "9876543210",
             "visitor_category": Booking.VISITOR_CATEGORY_INSTITUTE,

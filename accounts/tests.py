@@ -991,7 +991,7 @@ class AccountApprovalApiTests(TestCase):
         self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(requester)
 
         approval_response = self.client.get(reverse("admin-requester-account-list"))
-        protected_response = self.client.get(reverse("requester-availability"))
+        protected_response = self.client.get(reverse("requester-booking-request-list"))
 
         self.assertEqual(approval_response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(protected_response.status_code, status.HTTP_403_FORBIDDEN)

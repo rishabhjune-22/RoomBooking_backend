@@ -18,8 +18,6 @@ from .views import (
     BookingMailTemplateView,
     BookingShareCreateView,
     BookingUpdateView,
-    RequesterAvailabilityCalendarView,
-    RequesterAvailableRoomsByDateRangeView,
     RequesterBookingRequestDeleteView,
     RequesterBookingRequestDetailView,
     RequesterBookingRequestListCreateView,
@@ -77,16 +75,6 @@ urlpatterns = [
         "admin/booking-requests/<int:pk>/delete/",
         AdminBookingRequestDeleteView.as_view(),
         name="admin-booking-request-delete",
-    ),
-    path(
-        "requester/availability/",
-        RequesterAvailabilityCalendarView.as_view(),
-        name="requester-availability",
-    ),
-    path(
-        "requester/available-rooms-range/",
-        RequesterAvailableRoomsByDateRangeView.as_view(),
-        name="requester-available-rooms-range",
     ),
     path(
         "requester/booking-requests/",
