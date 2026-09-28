@@ -354,6 +354,12 @@ html[data-theme="dark"] .auth-brand-badge {
     letter-spacing: 0.01em;
 }
 
+.required-mark {
+    color: var(--red);
+    font-weight: 700;
+    margin-left: 2px;
+}
+
 .field-row input,
 .field-row select,
 .field-row textarea {
@@ -3046,7 +3052,7 @@ html[data-theme="dark"] .auth-brand-badge {
 .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.48);
+    background: var(--overlay);
     z-index: 50;
     display: grid;
     place-items: center;
@@ -3119,6 +3125,30 @@ html[data-theme="dark"] .auth-brand-badge {
     justify-content: flex-end;
     gap: 10px;
     border-top: 1px solid var(--line);
+}
+
+.mail-template-preview {
+    padding: 16px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    overflow-x: auto;
+}
+
+.mail-template-preview :is(div, p, span, td, th, tr, table, a) {
+    color: var(--text) !important;
+    border-color: var(--border-strong) !important;
+}
+
+.mail-template-preview a {
+    color: var(--blue) !important;
+}
+
+.mail-template-preview img {
+    background: #ffffff;
+    border-radius: 6px;
+    padding: 4px;
 }
 
 .review-footer-stack {
