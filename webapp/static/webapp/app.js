@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
     refresh: "roomBookingWebRefresh",
     user: "roomBookingWebUser",
     workflowNotificationReadPrefix: "roomBookingWorkflowNotificationRead",
+    theme: "roomBookingWebTheme",
 };
 
 const BOOKING_VIEW_MODES = new Set(["cards", "sheet", "charge_sheet"]);
@@ -234,6 +235,13 @@ function isoDate(year, month, day) {
 
 function todayIso() {
     return indiaParts(new Date()).date;
+}
+
+function isPastCalendarDate(dateValue) {
+    if (!dateValue) {
+        return true;
+    }
+    return String(dateValue).slice(0, 10) < todayIso();
 }
 
 function currentMonthRange() {
@@ -741,79 +749,110 @@ function toast(message, type = "success") {
     window.setTimeout(() => node.remove(), 3200);
 }
 
+const EYE_OPEN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+const EYE_CLOSED_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+
 function renderAuth(message = "", isError = false) {
     const isSignup = state.authMode === "signup";
+    const isAdmin = state.authRole === "admin";
     appRoot.innerHTML = `
         <main class="login-shell">
-            <section class="login-card">
-                <div class="brand-row">
-                    <div class="brand-mark">${brandLogoHtml()}</div>
-                    <div>
-                        <h1 class="brand-title">Room Booking</h1>
-                    </div>
-                </div>
-                <div class="segmented" role="tablist" aria-label="Role">
-                    <button class="segment-btn ${state.authRole === "admin" ? "active" : ""}" data-auth-role="admin" aria-label="Use admin role" aria-pressed="${state.authRole === "admin"}">Admin</button>
-                    <button class="segment-btn ${state.authRole === "requester" ? "active" : ""}" data-auth-role="requester" aria-label="Use requester role" aria-pressed="${state.authRole === "requester"}">Requester</button>
-                </div>
-                <div class="segmented" role="tablist" aria-label="Mode">
-                    <button class="segment-btn ${!isSignup ? "active" : ""}" data-auth-mode="login" aria-label="Use login mode" aria-pressed="${!isSignup}">Login</button>
-                    <button class="segment-btn ${isSignup ? "active" : ""}" data-auth-mode="signup" aria-label="Use signup mode" aria-pressed="${isSignup}">Signup</button>
-                </div>
-                <form id="auth-form" class="field-grid">
-                    ${isSignup ? `
-                        <div class="field-row">
-                            <label for="name">Full name *</label>
-                            <input id="name" name="name" autocomplete="name" required>
+            <button class="floating-theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode">
+                ${currentTheme() === "dark" ? sunIconSvg() : moonIconSvg()}
+            </button>
+            <aside class="login-hero">
+                <div class="hero-content">
+                    <div class="hero-brand-mark">${brandLogoHtml()}</div>
+                    <h1 class="hero-title">Room Booking System</h1>
+                    <p class="hero-desc">Streamline your room reservations with our intelligent booking platform.</p>
+                    <div class="hero-features">
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x1F4C5;</div>
+                            <span>Real-time availability calendar</span>
                         </div>
-                    ` : ""}
-                    <div class="field-row">
-                        <label for="email">Email *</label>
-                        <input id="email" name="email" type="email" autocomplete="email" required>
-                    </div>
-                    <div class="field-row">
-                        <label for="password">Password *</label>
-                        <div class="password-wrap">
-                            <input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required>
-                            <button class="outline-btn" type="button" data-toggle-password="password">Show</button>
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x2699;</div>
+                            <span>Multi-building hostel management</span>
+                        </div>
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x1F512;</div>
+                            <span>Secure role-based access control</span>
+                        </div>
+                        <div class="hero-feature">
+                            <div class="hero-feature-icon">&#x1F4CA;</div>
+                            <span>Charge sheet &amp; expense tracking</span>
                         </div>
                     </div>
-                    ${isSignup ? `
+                </div>
+            </aside>
+            <section class="login-form-side">
+                <div class="login-card">
+                    <div class="auth-brand-badge">${brandLogoHtml()}</div>
+                    <h2 class="auth-welcome">${isSignup ? "Create Account" : "Welcome Back"}</h2>
+                    <p class="auth-welcome-sub">${isSignup ? "Register as Admin or Requester to get started." : "Sign in to manage your bookings."}</p>
+                    <div class="segmented auth-role-tabs" role="tablist" aria-label="Role">
+                        <button class="segment-btn ${isAdmin ? "active" : ""}" data-auth-role="admin">Admin</button>
+                        <button class="segment-btn ${!isAdmin ? "active" : ""}" data-auth-role="requester">Requester</button>
+                    </div>
+                    <div class="segmented auth-mode-tabs" role="tablist" aria-label="Mode">
+                        <button class="segment-btn ${!isSignup ? "active" : ""}" data-auth-mode="login">Login</button>
+                        <button class="segment-btn ${isSignup ? "active" : ""}" data-auth-mode="signup">Signup</button>
+                    </div>
+                    <form id="auth-form" class="field-grid">
+                        ${isSignup ? `
+                            <div class="field-row">
+                                <label for="name">Full name *</label>
+                                <input id="name" name="name" autocomplete="name" required>
+                            </div>
+                        ` : ""}
                         <div class="field-row">
-                            <label for="confirm_password">Confirm password *</label>
+                            <label for="email">Email *</label>
+                            <input id="email" name="email" type="email" autocomplete="email" required>
+                        </div>
+                        <div class="field-row">
+                            <label for="password">Password *</label>
                             <div class="password-wrap">
-                                <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
-                                <button class="outline-btn" type="button" data-toggle-password="confirm_password">Show</button>
+                                <input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required>
+                                <button class="outline-btn icon-only-btn" type="button" data-toggle-password="password" aria-label="Toggle password visibility">${EYE_OPEN_SVG}</button>
                             </div>
                         </div>
-                        ${state.authRole === "admin" ? `
+                        ${isSignup ? `
                             <div class="field-row">
-                                <label for="admin_code">Admin invite code *</label>
-                                <input id="admin_code" name="admin_code" autocomplete="off" required>
-                            </div>
-                        ` : `
-                            <div class="two-col">
-                                <div class="field-row">
-                                    <label for="department">Department (Optional)</label>
-                                    <input id="department" name="department">
-                                </div>
-                                <div class="field-row">
-                                    <label for="designation">Designation (Optional)</label>
-                                    <input id="designation" name="designation">
+                                <label for="confirm_password">Confirm password *</label>
+                                <div class="password-wrap">
+                                    <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
+                                    <button class="outline-btn icon-only-btn" type="button" data-toggle-password="confirm_password" aria-label="Toggle password visibility">${EYE_OPEN_SVG}</button>
                                 </div>
                             </div>
-                            <div class="field-row">
-                                <label for="mobile">Mobile (Optional)</label>
-                                <input id="mobile" name="mobile" inputmode="tel">
-                            </div>
-                        `}
-                    ` : ""}
-                    <div class="form-actions">
-                        <button class="primary-btn" type="submit">${isSignup ? "Create Account" : "Login"}</button>
-                        <span class="brand-subtitle">${state.authRole === "admin" ? "Using Admin tab" : "Using Requester tab"}</span>
-                    </div>
-                </form>
-                ${message ? `<div class="status-message ${isError ? "error" : "success"}">${escapeHtml(message)}</div>` : ""}
+                            ${isAdmin ? `
+                                <div class="field-row">
+                                    <label for="admin_code">Admin invite code *</label>
+                                    <input id="admin_code" name="admin_code" autocomplete="off" required>
+                                </div>
+                            ` : `
+                                <div class="two-col">
+                                    <div class="field-row">
+                                        <label for="department">Department (Optional)</label>
+                                        <input id="department" name="department">
+                                    </div>
+                                    <div class="field-row">
+                                        <label for="designation">Designation (Optional)</label>
+                                        <input id="designation" name="designation">
+                                    </div>
+                                </div>
+                                <div class="field-row">
+                                    <label for="mobile">Mobile (Optional)</label>
+                                    <input id="mobile" name="mobile" inputmode="tel">
+                                </div>
+                            `}
+                        ` : ""}
+                        <div class="form-actions">
+                            <button class="primary-btn" type="submit">${isSignup ? "Create Account" : "Login"}</button>
+                            <span class="brand-subtitle">${isAdmin ? "Using Admin tab" : "Using Requester tab"}</span>
+                        </div>
+                    </form>
+                    ${message ? `<div class="status-message ${isError ? "error" : "success"}">${escapeHtml(message)}</div>` : ""}
+                </div>
             </section>
         </main>
     `;
@@ -834,8 +873,11 @@ function renderAuth(message = "", isError = false) {
         button.addEventListener("click", () => {
             const input = document.getElementById(button.dataset.togglePassword);
             input.type = input.type === "password" ? "text" : "password";
-            button.textContent = input.type === "password" ? "Show" : "Hide";
+            button.innerHTML = input.type === "password" ? EYE_OPEN_SVG : EYE_CLOSED_SVG;
         });
+    });
+    appRoot.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+        button.addEventListener("click", toggleTheme);
     });
     document.getElementById("auth-form").addEventListener("submit", submitAuthForm);
 }
@@ -1103,6 +1145,192 @@ function bellIconSvg() {
     `;
 }
 
+function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") || "light";
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+        localStorage.setItem(STORAGE_KEYS.theme, theme);
+    } catch (error) {
+        // Ignored
+    }
+    updateThemeToggleIcon(theme);
+}
+
+function toggleTheme() {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    applyTheme(next);
+}
+
+function updateThemeToggleIcon(theme) {
+    const dark = theme === "dark";
+    document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
+        btn.innerHTML = dark ? sunIconSvg() : moonIconSvg();
+    });
+}
+
+function initTheme() {
+    let theme = "light";
+    try {
+        theme = localStorage.getItem(STORAGE_KEYS.theme) || "light";
+    } catch (error) {
+        theme = "light";
+    }
+    applyTheme(theme);
+}
+
+function greetingForNow() {
+    const hour = new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "numeric",
+        hour12: false,
+    }).format(new Date());
+    const h = Number(hour);
+    if (h >= 5 && h < 12) return "Good Morning";
+    if (h >= 12 && h < 17) return "Good Afternoon";
+    return "Good Evening";
+}
+
+function cleanUserNamePart(value) {
+    const text = String(value ?? "").trim();
+    if (!text || text.includes("@")) {
+        return "";
+    }
+    return text.split(/\s+/)[0];
+}
+
+function userFullName() {
+    const user = state.user || {};
+    const joined = [user.first_name, user.last_name]
+        .map((part) => String(part ?? "").trim())
+        .filter((part) => part && !part.includes("@"))
+        .join(" ");
+    if (joined) {
+        return joined;
+    }
+    const name = String(user.name ?? "").trim();
+    if (name && !name.includes("@")) {
+        return name;
+    }
+    const fromName = [user.first_name, user.last_name]
+        .map((part) => String(part ?? "").trim())
+        .filter(Boolean)
+        .join(" ");
+    return fromName || name;
+}
+
+function userFirstName() {
+    const user = state.user || {};
+    return cleanUserNamePart(user.first_name) || cleanUserNamePart(user.name);
+}
+
+function userDisplayName() {
+    return userFullName() || String(state.user?.email ?? "").trim() || "User";
+}
+
+function sunIconSvg() {
+    return `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+    `;
+}
+
+function moonIconSvg() {
+    return `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+    `;
+}
+
+function buildingsIconSvg() {
+    return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="4" y="3" width="6" height="18" rx="1"></rect>
+            <rect x="14" y="7" width="6" height="14" rx="1"></rect>
+        </svg>
+    `;
+}
+
+function roomsIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+        </svg>
+    `;
+}
+
+function checkIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+    `;
+}
+
+function lockIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+    `;
+}
+
+function calendarIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+    `;
+}
+
+function chevronLeftSvg() {
+    return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+    `;
+}
+
+function chevronRightSvg() {
+    return `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+    `;
+}
+
+function roomIconSvg() {
+    return `
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M3 21h18"></path>
+            <path d="M5 21V7l7-4 7 4v14"></path>
+            <path d="M9 21v-4h6v4"></path>
+            <line x1="9" y1="10" x2="9" y2="10"></line>
+            <line x1="15" y1="10" x2="15" y2="10"></line>
+        </svg>
+    `;
+}
+
 function brandLogoHtml() {
     return `<img class="brand-logo" src="/static/webapp/mainlogo.jpeg" alt="Room Booking logo">`;
 }
@@ -1117,7 +1345,7 @@ function renderDashboard() {
                     <div class="brand-mark">${brandLogoHtml()}</div>
                     <div>
                         <h1>Room Booking</h1>
-                        <p>${escapeHtml(state.user?.name || state.user?.email || "User")} - ${escapeHtml(roleLabel)}</p>
+                        <p>${escapeHtml(userDisplayName())} - ${escapeHtml(roleLabel)}</p>
                     </div>
                 </div>
                 <nav class="toolbar-menu" aria-label="Main navigation">
@@ -1131,6 +1359,9 @@ function renderDashboard() {
                         ${bellIconSvg()}
                         <span id="workflow-notification-badge" class="notification-badge" hidden>0</span>
                     </button>
+                    <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme" title="Toggle dark mode">
+                        ${currentTheme() === "dark" ? sunIconSvg() : moonIconSvg()}
+                    </button>
                     <button class="menu-btn" data-logout>Logout</button>
                 </nav>
             </div>
@@ -1143,6 +1374,9 @@ function renderDashboard() {
         });
     });
     appRoot.querySelector("[data-notification-bell]").addEventListener("click", openWorkflowNotificationSummary);
+    appRoot.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+        button.addEventListener("click", toggleTheme);
+    });
     appRoot.querySelector("[data-logout]").addEventListener("click", logout);
     updateWorkflowNotificationBell();
     loadWorkflowNotificationCounts();
@@ -1359,23 +1593,104 @@ function renderCurrentView() {
     markWorkflowNotificationViewRead(state.view);
 }
 
+function renderStatsStrip() {
+    const strip = document.getElementById("stats-strip");
+    const group = currentCalendarGroup();
+    if (!strip) {
+        return;
+    }
+    const setStat = (id, value) => {
+        const node = strip.querySelector(id);
+        if (node) {
+            node.textContent = value;
+        }
+    };
+    if (!group) {
+        setStat("#stat-total", "0");
+        setStat("#stat-available", "0");
+        setStat("#stat-booked", "0");
+        setStat("#stat-prefix", state.prefix);
+        return;
+    }
+    const days = group.calendar || [];
+    const todayStr = todayIso();
+    const dayMap = Object.fromEntries(days.map((d) => [String(d.date).slice(0, 10), d]));
+    const selectedDay = state.rangeStart ? dayMap[state.rangeStart] || null : null;
+    const todayDay = dayMap[todayStr] || null;
+    const futureDay = days.find((d) => !isPastCalendarDate(d.date)) || null;
+    const sample = selectedDay || todayDay || futureDay || days[0];
+    const total = Math.max(0, Number(group.total_rooms || sample?.total_rooms || 0));
+    const avail = Math.max(0, Number(sample?.available_rooms || 0));
+    const booked = Math.max(0, total - avail);
+    const occupiedPercent = total > 0 ? Math.round((booked / total) * 100) : 0;
+    setStat("#stat-total", total);
+    setStat("#stat-available", avail);
+    setStat("#stat-booked", `${booked} (${occupiedPercent}%)`);
+    setStat("#stat-prefix", state.prefix);
+}
+
+function jumpToTodayMonth() {
+    const [year, month] = todayIso().split("-").map(Number);
+    state.calendarMonth = month;
+    state.calendarYear = year;
+    loadCalendar();
+}
+
 function renderCalendarView() {
+    const firstName = userFirstName();
     viewRoot().innerHTML = `
         <div class="section-header">
             <div>
-                <h2>Calendar</h2>
-                <p>${isAdminLike() ? "Full room availability and booking details." : "Requester-safe availability with no private booking details."}</p>
+                <div class="welcome-line">
+                    <h2>${firstName ? `${greetingForNow()}, ${escapeHtml(firstName)}` : "Room Availability Calendar"}</h2>
+                </div>
+                <p>${isAdminLike() ? "Manage room availability and booking requests across all buildings." : "Browse room availability and place your booking requests."}</p>
             </div>
             ${isAdminLike()
-                ? `<button class="primary-btn" id="calendar-create-booking">Create Booking</button>`
-                : `<button class="primary-btn" id="request-booking-btn" disabled>Request Booking</button>`}
+                ? `<button class="primary-btn" id="calendar-create-booking"><span style="font-size:16px;margin-right:6px;">+</span>New Booking</button>`
+                : `<button class="primary-btn" id="request-booking-btn" disabled><span style="font-size:16px;margin-right:6px;">+</span>Request Booking</button>`}
+        </div>
+        <div class="stats-strip" id="stats-strip">
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(15,111,191,0.12);color:var(--blue);">${roomsIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-total">-</span>
+                    <span class="stat-label">Total Rooms</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(34,197,94,0.15);color:#16a34a;">${checkIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-available">-</span>
+                    <span class="stat-label">Available</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(239,68,68,0.12);color:#dc2626;">${lockIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-booked">-</span>
+                    <span class="stat-label">Booked</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon" style="background:rgba(250,204,21,0.15);color:#ca8a04;">${calendarIconSvg()}</span>
+                <div class="stat-body">
+                    <span class="stat-value" id="stat-prefix">-</span>
+                    <span class="stat-label">Building</span>
+                </div>
+            </div>
         </div>
         <div class="calendar-layout">
             <section class="surface calendar-panel">
                 <div class="calendar-controls">
-                    <button class="outline-btn" id="prev-month">Previous</button>
+                    <div class="calendar-nav-group">
+                        <button class="month-nav-btn" id="prev-month" aria-label="Previous month">${chevronLeftSvg()}</button>
+                    </div>
                     <div class="month-title" id="month-title"></div>
-                    <button class="outline-btn" id="next-month">Next</button>
+                    <div class="calendar-nav-group calendar-nav-group-end">
+                        <button class="month-nav-btn today-btn" id="today-month-btn">Today</button>
+                        <button class="month-nav-btn" id="next-month" aria-label="Next month">${chevronRightSvg()}</button>
+                    </div>
                 </div>
                 <div class="building-tabs" id="building-tabs"></div>
                 <div class="calendar-grid" id="calendar-grid"></div>
@@ -1393,6 +1708,7 @@ function renderCalendarView() {
     `;
     document.getElementById("prev-month").addEventListener("click", () => changeMonth(-1));
     document.getElementById("next-month").addEventListener("click", () => changeMonth(1));
+    document.getElementById("today-month-btn").addEventListener("click", () => jumpToTodayMonth());
     document.getElementById("calendar-grid").addEventListener("click", handleCalendarBlankClick);
     if (isAdminLike()) {
         document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminAvailableRoomsChooser());
@@ -1612,6 +1928,7 @@ function drawBuildingTabs() {
             drawBuildingTabs();
             drawCalendar();
             renderCalendarSide();
+            renderStatsStrip();
         });
     });
 }
@@ -1652,6 +1969,7 @@ async function loadCalendar({ silent = false } = {}) {
             grid.innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
         }
     }
+    renderStatsStrip();
 }
 
 function currentCalendarGroup() {
@@ -1731,6 +2049,7 @@ function handleDateClick(dateValue) {
         }
         drawCalendar();
         loadAdminDateDetails(dateValue);
+        renderStatsStrip();
         return;
     }
     if (!state.rangeStart || (state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd)) {
@@ -1744,6 +2063,7 @@ function handleDateClick(dateValue) {
     }
     drawCalendar();
     renderCalendarSide();
+    renderStatsStrip();
 }
 
 function handleCalendarBlankClick(event) {
@@ -1760,6 +2080,7 @@ function clearCalendarSelection() {
     state.rangeEnd = "";
     drawCalendar();
     renderCalendarSide();
+    renderStatsStrip();
 }
 
 function renderCalendarSide(content = "") {
@@ -5730,6 +6051,7 @@ function closeModal() {
 }
 
 async function boot() {
+    initTheme();
     const savedUser = localStorage.getItem(STORAGE_KEYS.user);
     if (savedUser) {
         try {

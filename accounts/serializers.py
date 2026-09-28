@@ -33,6 +33,8 @@ def user_display_name(user):
 
 class AuthUserSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
+    first_name = serializers.SerializerMethodField()
+    last_name = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
     approval_status = serializers.SerializerMethodField()
     remarks = serializers.SerializerMethodField()
@@ -45,6 +47,8 @@ class AuthUserSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "first_name",
+            "last_name",
             "email",
             "role",
             "approval_status",
@@ -56,6 +60,12 @@ class AuthUserSerializer(serializers.ModelSerializer):
 
     def get_name(self, obj):
         return user_display_name(obj)
+
+    def get_first_name(self, obj):
+        return (obj.first_name or "").strip()
+
+    def get_last_name(self, obj):
+        return (obj.last_name or "").strip()
 
     def get_role(self, obj):
         return get_user_profile(obj).role

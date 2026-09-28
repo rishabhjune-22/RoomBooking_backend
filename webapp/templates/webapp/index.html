@@ -6,6 +6,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Room Booking</title>
     <link rel="icon" type="image/jpeg" href="{% static 'webapp/mainlogo.jpeg' %}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('roomBookingWebTheme');
+                if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            } catch (e) {}
+        })();
+    </script>
     <link rel="stylesheet" href="{% static 'webapp/styles.css' %}?v={{ static_version }}">
 </head>
 <body>
