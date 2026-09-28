@@ -4,9 +4,9 @@ __pycache__/
 *.pem
 *service-account*.json
 db.sqlite3
-.env
-.env.*
 !.env.example
 !.env.staging.example
 .idea/
 roombooking-*.json
+config.bat
+node_modules

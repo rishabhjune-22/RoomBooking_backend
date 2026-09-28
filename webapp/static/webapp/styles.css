@@ -151,17 +151,17 @@ button:disabled {
 }
 
 .hero-brand-mark {
-    width: 80px;
-    height: 80px;
-    margin: 0 auto 28px;
+    width: 90px;
+    height: 90px;
+    margin: 0 auto 24px;
     display: grid;
     place-items: center;
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    background: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28), 0 4px 12px rgba(15, 111, 191, 0.15);
     overflow: hidden;
+    padding: 6px;
     animation: heroFloat 3s ease-in-out infinite;
 }
 
@@ -174,7 +174,10 @@ button:disabled {
     width: 100%;
     height: 100%;
     object-fit: contain;
-    padding: 6px;
+    display: block;
+    border-radius: 14px;
+    background: #ffffff;
+    padding: 0;
 }
 
 .hero-title {
@@ -231,6 +234,34 @@ button:disabled {
 .login-card {
     width: min(440px, 100%);
     animation: slideUp 0.4s ease-out;
+}
+
+.auth-brand-badge {
+    width: 64px;
+    height: 64px;
+    margin: 0 0 20px;
+    display: grid;
+    place-items: center;
+    border-radius: 16px;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 20px rgba(15, 111, 191, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    padding: 4px;
+}
+
+.auth-brand-badge .brand-logo {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    border-radius: 12px;
+    background: #ffffff;
+}
+
+html[data-theme="dark"] .auth-brand-badge {
+    background: #ffffff;
+    border-color: rgba(255, 255, 255, 0.18);
 }
 
 @keyframes slideUp {
