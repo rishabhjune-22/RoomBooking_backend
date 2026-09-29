@@ -1345,7 +1345,7 @@ function renderDashboard() {
                     <div class="brand-mark">${brandLogoHtml()}</div>
                     <div>
                         <h1>Room Booking</h1>
-                        <p>${escapeHtml(userDisplayName())} - ${escapeHtml(roleLabel)}</p>
+                        <button class="topbar-identity" type="button" data-edit-profile title="Edit your name">${escapeHtml(userDisplayName())} - ${escapeHtml(roleLabel)}</button>
                     </div>
                 </div>
                 <nav class="toolbar-menu" aria-label="Main navigation">
@@ -1374,6 +1374,7 @@ function renderDashboard() {
         });
     });
     appRoot.querySelector("[data-notification-bell]").addEventListener("click", openWorkflowNotificationSummary);
+    appRoot.querySelector("[data-edit-profile]")?.addEventListener("click", openProfileModal);
     appRoot.querySelectorAll("[data-theme-toggle]").forEach((button) => {
         button.addEventListener("click", toggleTheme);
     });
@@ -1381,6 +1382,76 @@ function renderDashboard() {
     updateWorkflowNotificationBell();
     loadWorkflowNotificationCounts();
     renderCurrentView();
+}
+
+function profileNamePart(value) {
+    const text = String(value ?? "").trim();
+    return text.includes("@") ? "" : text;
+}
+
+function openProfileModal() {
+    const user = state.user || {};
+    const firstName = profileNamePart(user.first_name);
+    const lastName = profileNamePart(user.last_name);
+    openActionModal({
+        title: "Edit Profile",
+        confirmText: "Save Changes",
+        confirmClass: "primary-btn",
+        body: `
+            <div class="field-grid">
+                <div class="two-col">
+                    <div class="field-row">
+                        <label for="profile-first-name">First name *</label>
+                        <input id="profile-first-name" type="text" value="${htmlValue(firstName)}" autocomplete="given-name" required>
+                    </div>
+                    <div class="field-row">
+                        <label for="profile-last-name">Last name</label>
+                        <input id="profile-last-name" type="text" value="${htmlValue(lastName)}" autocomplete="family-name">
+                    </div>
+                </div>
+                <div class="field-row">
+                    <label>Email</label>
+                    <input value="${htmlValue(user.email)}" readonly>
+                </div>
+                <div class="two-col">
+                    <div class="field-row">
+                        <label for="profile-department">Department</label>
+                        <input id="profile-department" type="text" value="${htmlValue(user.department)}">
+                    </div>
+                    <div class="field-row">
+                        <label for="profile-designation">Designation</label>
+                        <input id="profile-designation" type="text" value="${htmlValue(user.designation)}">
+                    </div>
+                </div>
+                <div class="field-row">
+                    <label for="profile-mobile">Mobile</label>
+                    <input id="profile-mobile" type="text" inputmode="tel" value="${htmlValue(user.mobile)}">
+                </div>
+            </div>
+        `,
+        onBind: () => {
+            document.getElementById("profile-first-name")?.focus();
+        },
+        onConfirm: saveProfile,
+    });
+}
+
+async function saveProfile() {
+    const payload = {
+        first_name: document.getElementById("profile-first-name").value.trim(),
+        last_name: document.getElementById("profile-last-name").value.trim(),
+        department: document.getElementById("profile-department").value.trim(),
+        designation: document.getElementById("profile-designation").value.trim(),
+        mobile: document.getElementById("profile-mobile").value.trim(),
+    };
+    if (!payload.first_name) {
+        throw new Error("First name is required.");
+    }
+    const updated = await apiFetch("/api/auth/me/", { method: "PATCH", body: payload });
+    state.user = updated;
+    localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(updated));
+    renderDashboard();
+    toast("Profile updated successfully.");
 }
 
 async function loadWorkflowNotificationCounts({ markCurrentViewRead = true, viewId = state.view } = {}) {

@@ -20,6 +20,7 @@ from .serializers import (
     AuthUserSerializer,
     LoginSerializer,
     LogoutSerializer,
+    ProfileUpdateSerializer,
     SignupSerializer,
 )
 from .roles import (
@@ -160,6 +161,20 @@ class MeView(APIView):
         return api_success(
             "User fetched successfully.",
             AuthUserSerializer(request.user).data,
+        )
+
+    def patch(self, request):
+        serializer = ProfileUpdateSerializer(
+            instance=request.user,
+            data=request.data,
+        )
+        if not serializer.is_valid():
+            return serializer_error_response(serializer, "Profile could not be updated.")
+
+        user = serializer.save()
+        return api_success(
+            "Profile updated successfully.",
+            AuthUserSerializer(user).data,
         )
 
 

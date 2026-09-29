@@ -254,6 +254,52 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class ProfileUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150, trim_whitespace=True)
+    last_name = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+    designation = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+    department = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+    mobile = serializers.CharField(
+        max_length=20,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+
+    def validate_first_name(self, value):
+        if not value:
+            raise serializers.ValidationError("First name is required.")
+        return value
+
+    def update(self, instance, validated_data):
+        user = instance
+        user.first_name = validated_data["first_name"]
+        user.last_name = validated_data.get("last_name", "")
+        user.save(update_fields=["first_name", "last_name"])
+
+        profile = get_user_profile(user)
+        profile.designation = validated_data.get("designation", profile.designation)
+        profile.department = validated_data.get("department", profile.department)
+        profile.mobile = validated_data.get("mobile", profile.mobile)
+        profile.save(update_fields=["designation", "department", "mobile", "updated_at"])
+        return user
+
+
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
 

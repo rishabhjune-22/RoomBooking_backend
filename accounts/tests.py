@@ -362,6 +362,74 @@ class AuthApiTests(TestCase):
         self.assertEqual(authenticated.json()["data"]["remarks"], "")
         self.assertNotIn("rejection_reason", authenticated.json()["data"])
 
+    def test_me_patch_updates_name_and_profile_fields(self):
+        user = User.objects.create_user(
+            username="nameless@example.com",
+            email="nameless@example.com",
+            password="StrongPass123",
+        )
+        set_user_role(user, ROLE_REQUESTER)
+        token = str(RefreshToken.for_user(user).access_token)
+
+        self.assertEqual(user.get_full_name(), "")
+
+        response = self.client.patch(
+            reverse("auth-me"),
+            data={
+                "first_name": "Rishabh",
+                "last_name": "Kumar",
+                "department": "Accounts",
+                "designation": "Officer",
+                "mobile": "9876543210",
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()["data"]
+        self.assertEqual(data["name"], "Rishabh Kumar")
+        self.assertEqual(data["first_name"], "Rishabh")
+        self.assertEqual(data["last_name"], "Kumar")
+        self.assertEqual(data["department"], "Accounts")
+        self.assertEqual(data["designation"], "Officer")
+        self.assertEqual(data["mobile"], "9876543210")
+
+        user.refresh_from_db()
+        profile = get_user_profile(user)
+        self.assertEqual(user.get_full_name(), "Rishabh Kumar")
+        self.assertEqual(profile.department, "Accounts")
+        self.assertEqual(profile.designation, "Officer")
+        self.assertEqual(profile.mobile, "9876543210")
+
+    def test_me_patch_requires_first_name(self):
+        user = User.objects.create_user(
+            username="nameless@example.com",
+            email="nameless@example.com",
+            password="StrongPass123",
+        )
+        set_user_role(user, ROLE_REQUESTER)
+        token = str(RefreshToken.for_user(user).access_token)
+
+        response = self.client.patch(
+            reverse("auth-me"),
+            data={"first_name": "   "},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("first_name", response.json()["errors"])
+
+    def test_me_patch_requires_token(self):
+        response = self.client.patch(
+            reverse("auth-me"),
+            data={"first_name": "Rishabh"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_role_specific_login_rejects_mismatch(self):
         requester_signup = self.client.post(
             reverse("auth-requester-signup"),

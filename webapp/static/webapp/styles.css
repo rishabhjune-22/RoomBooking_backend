@@ -675,6 +675,32 @@ html[data-theme="dark"] .auth-brand-badge {
     white-space: nowrap;
 }
 
+.topbar-identity {
+    display: block;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: left;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: color 0.15s ease;
+}
+
+.topbar-identity:hover,
+.topbar-identity:focus-visible {
+    color: #fff;
+    text-decoration: underline;
+}
+
 .toolbar-menu {
     display: flex;
     align-items: center;
@@ -3305,7 +3331,8 @@ html[data-theme="dark"] .auth-brand-badge {
         font-size: 18px;
     }
 
-    .topbar-title p {
+    .topbar-title p,
+    .topbar-identity {
         font-size: 12px;
     }
 
@@ -3400,7 +3427,8 @@ html[data-theme="dark"] .auth-brand-badge {
         line-height: 1.25;
     }
 
-    .topbar-title p {
+    .topbar-title p,
+    .topbar-identity {
         font-size: 11px;
         line-height: 1.4;
         margin-top: 2px;
@@ -3755,7 +3783,8 @@ html[data-theme="dark"] .auth-brand-badge {
         line-height: 1.25;
     }
 
-    .topbar-title p {
+    .topbar-title p,
+    .topbar-identity {
         font-size: 10px;
         line-height: 1.4;
         margin-top: 2px;
@@ -4103,7 +4132,8 @@ html[data-theme="dark"] .auth-brand-badge {
         line-height: 1.25;
     }
 
-    .topbar-title p {
+    .topbar-title p,
+    .topbar-identity {
         font-size: 9px;
         line-height: 1.4;
         margin-top: 2px;
