@@ -1700,11 +1700,21 @@ function renderStatsStrip() {
     setStat("#stat-prefix", state.prefix);
 }
 
-function jumpToTodayMonth() {
-    const [year, month] = todayIso().split("-").map(Number);
+async function jumpToTodayMonth() {
+    const today = todayIso();
+    const [year, month] = today.split("-").map(Number);
     state.calendarMonth = month;
     state.calendarYear = year;
-    loadCalendar();
+    state.selectedDate = today;
+    state.rangeStart = today;
+    state.rangeEnd = today;
+    await loadCalendar({ silent: true });
+    if (isAdminLike()) {
+        loadAdminDateDetails(today);
+    } else {
+        renderCalendarSide();
+    }
+    renderStatsStrip();
 }
 
 function renderCalendarView() {
@@ -2082,6 +2092,7 @@ function drawCalendar() {
         return;
     }
     const daysByDate = Object.fromEntries(group.calendar.map((day) => [day.date, day]));
+    const todayStr = todayIso();
     const firstDay = new Date(state.calendarYear, state.calendarMonth - 1, 1).getDay();
     const daysInMonth = new Date(state.calendarYear, state.calendarMonth, 0).getDate();
     const cells = [];
@@ -2093,8 +2104,9 @@ function drawCalendar() {
         const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
         const item = daysByDate[dateValue];
         const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        const isToday = dateValue === todayStr;
         cells.push(`
-            <button class="day-cell ${availabilityClass(item)} ${selectedClass}" type="button" data-date="${dateValue}">
+            <button class="day-cell ${availabilityClass(item)} ${selectedClass}${isToday ? " is-today" : ""}" type="button" data-date="${dateValue}">
                 <span class="day-number">${day}</span>
                 <span class="availability-note">${item ? `${item.available_rooms}/${item.total_rooms} rooms` : "No rooms"}</span>
             </button>
