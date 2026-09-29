@@ -3166,16 +3166,18 @@ function renderBookingsView() {
             </section>
         ` : `
             <section class="surface filter-panel">
-                <div>
-                    <p class="filter-label">Status</p>
-                    ${filterTabs(state.bookingStatusFilter, statusTabs)}
+                <div class="filter-toolbar">
+                    <div>
+                        <p class="filter-label">Status</p>
+                        ${filterTabs(state.bookingStatusFilter, statusTabs)}
+                    </div>
+                    ${state.bookingViewMode === "cards" ? `
+                    <div class="bulk-booking-actions">
+                        <button class="outline-btn" id="generate-selected-mail-template" type="button" disabled>Generate Email Template</button>
+                        <button class="danger-btn" id="delete-selected-bookings" type="button" disabled>Delete Selected</button>
+                    </div>
+                    ` : ""}
                 </div>
-                ${state.bookingViewMode === "cards" ? `
-                <div class="bulk-booking-actions">
-                    <button class="outline-btn" id="generate-selected-mail-template" type="button" disabled>Generate Email Template</button>
-                    <button class="danger-btn" id="delete-selected-bookings" type="button" disabled>Delete Selected</button>
-                </div>
-                ` : ""}
                 <div class="filter-grid">
                     <div class="field-row">
                         <label for="booking-search">Search</label>

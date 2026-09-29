@@ -1136,21 +1136,64 @@ html[data-theme="dark"] .auth-brand-badge {
     font-weight: 900;
 }
 
+.filter-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.filter-toolbar .filter-label {
+    margin: 0 0 8px;
+}
+
 .filter-grid {
     display: grid;
-    grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
+    grid-template-columns: minmax(200px, 1.5fr) minmax(150px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
     gap: 12px;
     align-items: end;
 }
 
 .filter-actions {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.filter-grid .field-row input,
+.filter-grid .field-row select {
+    height: 45px;
+}
+
+.filter-actions button {
+    white-space: nowrap;
+    height: 45px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bulk-booking-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
 }
 
 .charge-filter-grid {
-    grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(150px, 1fr)) auto;
+    grid-template-columns: minmax(200px, 1.4fr) repeat(5, minmax(140px, 1fr)) auto;
+}
+
+.charge-filter-grid .filter-actions {
+    min-width: 180px;
+}
+
+.field-row input[type="search"] {
+    -webkit-appearance: none;
+    appearance: none;
 }
 
 .calendar-layout {
@@ -1487,6 +1530,7 @@ html[data-theme="dark"] .auth-brand-badge {
 
 .sheet-shell {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
 }
 
@@ -1587,10 +1631,15 @@ html[data-theme="dark"] .auth-brand-badge {
     width: 100%;
     max-width: 100%;
     max-height: 66vh;
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: auto;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--surface);
+}
+
+.sheet-scrollbar-top {
+    display: none;
 }
 
 .excel-table {
@@ -3285,6 +3334,16 @@ html[data-theme="dark"] .auth-brand-badge {
     background: var(--blue);
     color: #fff;
     font-weight: 900;
+}
+
+@media (min-width: 1025px) and (max-width: 1279px) {
+    .charge-filter-grid {
+        grid-template-columns: repeat(3, minmax(180px, 1fr)) minmax(180px, auto);
+    }
+
+    .charge-filter-grid .field-row:nth-child(1) {
+        grid-column: span 2;
+    }
 }
 
 @media (max-width: 1024px) {
