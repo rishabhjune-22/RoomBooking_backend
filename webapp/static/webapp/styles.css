@@ -196,6 +196,15 @@ button:disabled {
     gap: 8px;
 }
 
+.password-match-status {
+    min-height: 18px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.password-match-status.unmet { color: var(--red); }
+.password-match-status.met { color: var(--green); }
+
 .ghost-btn,
 .outline-btn,
 .primary-btn,

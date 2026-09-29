@@ -1821,12 +1821,11 @@ async function openAdminBookingRequestDetails(request) {
             apiFetch(`/api/admin/booking-requests/${request.id}/`),
             fetchRooms(),
         ]);
-        const isPending = detail.status === "pending";
         openActionModal({
             title: "Create Booking From Request",
             body: adminBookingFormHtml(detail, "request"),
             wide: true,
-            footerHtml: reviewFooterHtml(isPending, adminReviewRemarksHtml()),
+            footerHtml: reviewFooterHtml(detail.status, adminReviewRemarksHtml()),
             onBind: () => {
                 bindAdminBookingForm(rooms, detail.preferred_room || "", detail.preferred_prefix || state.prefix);
                 document.querySelectorAll("[data-review-action]").forEach((button) => {

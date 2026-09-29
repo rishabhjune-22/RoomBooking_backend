@@ -18,7 +18,8 @@ import { adminRequestsPageHtml, myRequestsPageHtml } from "./request-view.js";
 import { detailPanelHtml, rowsForUser, summaryHtml } from "./workflow-notifications.js";
 import { bookingMailTemplateContent, shareLinkContent, shareOptionsContent } from "./modal.js";
 import { reviewFooterHtml } from "./request-view.js";
-import { buildRequesterBookingPayload } from "./requester-booking-form.js";
+import { passwordsMatch } from "./auth-view.js";
+import { buildRequesterBookingPayload, renderRequesterBookingForm } from "./requester-booking-form.js";
 
 test("charges recalculate for stay length, shifts, room type, and nationality", () => {
     assert.equal(inclusiveStayDays("2026-10-01", "2026-10-03"), 3);
@@ -27,6 +28,12 @@ test("charges recalculate for stay length, shifts, room type, and nationality", 
     assert.equal(calculateRoomChargeAmount({ prefix: "Gamma", has_attached_bath: false }, "", 2), 2600);
     assert.equal(calculateRoomChargeAmount({ prefix: "Gamma", has_attached_bath: false }, "", 2, "foreigner"), 3600);
     assert.equal(calculateRoomChargeAmount({ prefix: "Delta" }, "Delta", 2), null);
+});
+
+test("password confirmation reports only whether values match", () => {
+    assert.equal(passwordsMatch("1", "1"), true);
+    assert.equal(passwordsMatch("anything", "different"), false);
+    assert.equal(passwordsMatch("", ""), false);
 });
 
 test("sheet rooms filter by building and sort by configured building then room number", () => {
@@ -75,6 +82,25 @@ test("requester payload preserves form state and disables unchecked dependent va
     assert.equal(payload.attender_morning_shift, true);
     assert.equal(payload.attender_evening_shift, false);
     assert.equal(payload.visitor_nationality, "indian");
+});
+
+test("correction-required requester form allows arrival and departure date edits", () => {
+    const helpers = {
+        arrival: { date: "2026-10-01", time: "10:00" },
+        departure: { date: "2026-10-03", time: "18:00" },
+        user: { name: "Requester", email: "requester@example.test" },
+        budgetHead: { individual: "", instituteHead: "", projectHead: "" },
+        escapeHtml: (value) => String(value ?? ""),
+        htmlValue: (value) => String(value ?? ""),
+        formatDateOnly: (value) => value,
+    };
+    const correctionHtml = renderRequesterBookingForm({ status: "correction_required" }, helpers);
+    const pendingHtml = renderRequesterBookingForm({ status: "pending" }, helpers);
+
+    assert.match(correctionHtml, /id="req-arrival-date" type="date"/);
+    assert.match(correctionHtml, /id="req-departure-date" type="date"/);
+    assert.match(pendingHtml, /id="req-arrival-date" type="hidden"/);
+    assert.match(pendingHtml, /id="req-departure-date" type="hidden"/);
 });
 
 test("admin payload enforces required fields and dependent charge state", () => {
@@ -160,8 +186,10 @@ test("modal content preserves clipboard, sharing, and review action hooks", () =
     assert.match(mail.body, /id="booking-mail-preview"/);
     assert.match(shareLinkContent({ url: "https:\/\/example.test" }, "booking", helpers), /id="open-share-link"/);
     assert.match(shareOptionsContent(), /id="share-validity"/);
-    assert.match(reviewFooterHtml(true, `<textarea id="admin-review-remarks"></textarea>`), /data-review-action="approve"/);
-    assert.doesNotMatch(reviewFooterHtml(false, ""), /data-review-action="approve"/);
+    assert.match(reviewFooterHtml("pending", `<textarea id="admin-review-remarks"></textarea>`), /data-review-action="approve"/);
+    assert.match(reviewFooterHtml("correction_required", ""), /data-review-action="approve"/);
+    assert.doesNotMatch(reviewFooterHtml("correction_required", ""), /data-review-action="sendBack"/);
+    assert.doesNotMatch(reviewFooterHtml("approved", ""), /data-review-action="approve"/);
 });
 
 test("created-booking helpers preserve API fallbacks and reusable prefill state", () => {

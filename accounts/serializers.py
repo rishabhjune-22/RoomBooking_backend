@@ -1,7 +1,5 @@
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
@@ -153,16 +151,6 @@ class SignupSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "email": ["An account with this email already exists."]
             })
-
-        user = User(
-            username=attrs["email"],
-            email=attrs["email"],
-            first_name=attrs["name"],
-        )
-        try:
-            validate_password(attrs["password"], user=user)
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError({"password": list(exc.messages)}) from exc
 
         return attrs
 

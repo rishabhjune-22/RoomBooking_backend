@@ -345,6 +345,17 @@ class WorkflowNotificationCountView(APIView):
             items["booking_requests"] = booking_request_items(booking_request_qs)
             counts["booking_requests"] = len(items["booking_requests"])
 
+            requester_account_qs = UserProfile.objects.filter(
+                role=ROLE_REQUESTER,
+                approval_status=UserProfile.APPROVAL_PENDING,
+            ).select_related("user")
+            items["requester_accounts"] = account_items(
+                requester_account_qs,
+                "requester_account",
+                "Requester account",
+            )
+            counts["requester_accounts"] = len(items["requester_accounts"])
+
         if profile.role == ROLE_SUPERADMIN:
             admin_account_qs = UserProfile.objects.filter(
                 role=ROLE_ADMIN,
@@ -561,7 +572,7 @@ class SuperadminAccountRequestRejectView(AccountApprovalActionMixin, APIView):
 
 class SuperadminAccountRequestDeleteView(AccountApprovalActionMixin, APIView):
     permission_classes = [IsSuperAdminRole]
-    allowed_roles = (ROLE_ADMIN,)
+    allowed_roles = (ROLE_ADMIN, ROLE_REQUESTER)
     not_found_message = "Account request not found."
 
     def delete(self, request, pk):

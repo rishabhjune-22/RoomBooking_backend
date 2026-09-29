@@ -2273,6 +2273,8 @@ class BookingRequestWorkflowTests(TestCase):
         response = self.client.patch(
             reverse("requester-booking-request-detail", kwargs={"pk": booking_request.pk}),
             data={
+                "arrival_at": iso(utc_dt(2026, 7, 3, 10, 0)),
+                "departure_at": iso(utc_dt(2026, 7, 4, 18, 0)),
                 "visitor_mobile": "9123456789",
                 "purpose_of_visit": "Corrected purpose",
             },
@@ -2286,6 +2288,8 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertIsNone(booking_request.reviewed_at)
         self.assertEqual(booking_request.visitor_mobile, "9123456789")
         self.assertEqual(booking_request.purpose_of_visit, "Corrected purpose")
+        self.assertEqual(booking_request.arrival_at, utc_dt(2026, 7, 3, 10, 0))
+        self.assertEqual(booking_request.departure_at, utc_dt(2026, 7, 4, 18, 0))
         self.assertEqual(booking_request.admin_remarks, "")
         self.assertEqual(response.json()["data"]["status"], BookingRequest.STATUS_PENDING)
         self.assertEqual(response.json()["data"]["admin_remarks"], "")
@@ -2317,6 +2321,29 @@ class BookingRequestWorkflowTests(TestCase):
         self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
         booking_request.refresh_from_db()
         self.assertEqual(booking_request.status, BookingRequest.STATUS_APPROVED)
+        self.assertIsNotNone(booking_request.approved_booking)
+
+    def test_admin_can_approve_correction_required_request_without_resubmission(self):
+        booking_request = BookingRequest.objects.create(
+            requester=self.requester,
+            status=BookingRequest.STATUS_CORRECTION_REQUIRED,
+            reviewed_by=self.admin,
+            reviewed_at=utc_dt(2026, 7, 1, 13, 0),
+            admin_remarks="Correction no longer required.",
+            **self.request_model_kwargs(),
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = bearer_token(self.admin)
+
+        response = self.client.post(
+            reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
+            data={"room": self.room.id, "remarks": "Approved without requester changes."},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        booking_request.refresh_from_db()
+        self.assertEqual(booking_request.status, BookingRequest.STATUS_APPROVED)
+        self.assertEqual(booking_request.admin_remarks, "Approved without requester changes.")
         self.assertIsNotNone(booking_request.approved_booking)
 
     def test_approve_rechecks_availability(self):
@@ -2695,24 +2722,8 @@ class BookingApiIntegrationTests(TestCase):
         )
         self.assertEqual(signup.status_code, status.HTTP_201_CREATED)
         requester_user = User.objects.get(email="integration-requester@example.com")
-        self.assertEqual(requester_user.profile.approval_status, APPROVAL_PENDING)
+        self.assertEqual(requester_user.profile.approval_status, APPROVAL_APPROVED)
 
-        login_before = self.client.post(
-            reverse("auth-requester-login"),
-            data={"email": requester_user.email, "password": "StrongPass123"},
-            content_type="application/json",
-        )
-        self.assertEqual(login_before.status_code, status.HTTP_400_BAD_REQUEST)
-
-        self.authenticate(admin_token)
-        approve = self.client.post(
-            reverse("admin-requester-account-approve", kwargs={"pk": requester_user.profile.pk}),
-            data={},
-            content_type="application/json",
-        )
-        self.assertEqual(approve.status_code, status.HTTP_200_OK)
-
-        self.clear_auth()
         login_after = self.client.post(
             reverse("auth-requester-login"),
             data={"email": requester_user.email, "password": "StrongPass123"},

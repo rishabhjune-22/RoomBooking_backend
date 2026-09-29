@@ -81,10 +81,12 @@ export function requestActions(request) {
     };
 }
 
-export function reviewFooterHtml(isPending, remarksHtml) {
+export function reviewFooterHtml(status, remarksHtml) {
+    const isPending = status === "pending";
+    const canApprove = isPending || status === "correction_required";
     return `<div class="review-footer-stack"><div><div class="form-section-title">Review Remarks</div>${remarksHtml}</div>
-        <div class="review-action-row">${isPending ? `<button class="success-btn" type="button" data-review-action="approve">Approve</button>
-            <button class="danger-btn" type="button" data-review-action="reject">Reject</button>
+        <div class="review-action-row">${canApprove ? `<button class="success-btn" type="button" data-review-action="approve">Approve</button>` : ""}
+            ${isPending ? `<button class="danger-btn" type="button" data-review-action="reject">Reject</button>
             <button class="warn-btn" type="button" data-review-action="sendBack">Send Back</button>` : ""}
             <button class="danger-btn" type="button" data-review-action="delete">Delete Request</button></div></div>`;
 }

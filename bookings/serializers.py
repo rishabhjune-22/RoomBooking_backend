@@ -312,6 +312,18 @@ class BookingSerializer(serializers.ModelSerializer):
     def validate_attender_fields(self, attrs):
         instance = self.instance
 
+        # A partial update of unrelated booking fields must not normalize legacy
+        # attender values. Doing so creates spurious audit entries (and silently
+        # mutates data) whenever an older booking is edited.
+        attender_fields = {
+            "attender_required",
+            "attender_morning_shift",
+            "attender_morning_chargeable",
+            "attender_evening_shift",
+        }
+        if instance is not None and not attender_fields.intersection(attrs):
+            return
+
         attender_required = attrs.get(
             "attender_required",
             getattr(instance, "attender_required", False)

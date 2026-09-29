@@ -2,18 +2,23 @@ export function renderRequesterBookingForm(existing, { arrival, departure, user,
     const requestorName = user?.name || existing?.requestor_name || "";
     const requestorEmail = existing?.requestor_email || user?.email || "";
     const requesterMorningChargeable = existing?.attender_morning_chargeable !== false;
+    const canEditDates = existing?.status === "correction_required";
+    const arrivalDateField = canEditDates
+        ? `<input id="req-arrival-date" type="date" value="${htmlValue(arrival.date)}" required>`
+        : `<input id="req-arrival-date" type="hidden" value="${htmlValue(arrival.date)}"><input value="${htmlValue(formatDateOnly(arrival.date))}" readonly>`;
+    const departureDateField = canEditDates
+        ? `<input id="req-departure-date" type="date" value="${htmlValue(departure.date)}" required>`
+        : `<input id="req-departure-date" type="hidden" value="${htmlValue(departure.date)}"><input value="${htmlValue(formatDateOnly(departure.date))}" readonly>`;
     return `
             <form id="request-form" class="field-grid">
                 <div class="form-section-title">Room Preference</div>
-                <input id="req-arrival-date" type="hidden" value="${htmlValue(arrival.date)}">
-                <input id="req-departure-date" type="hidden" value="${htmlValue(departure.date)}">
                 <div class="field-row"><label for="req-room-preference-note">Room preference note (Optional)</label><textarea id="req-room-preference-note" placeholder="Example: Ground floor room, attached bathroom, or any other preference">${escapeHtml(existing?.room_preference_note || "")}</textarea></div>
 
                 <div class="form-section-title">Stay Details</div>
                 <div class="two-col">
-                    <div class="field-row"><label>Arrival *</label><input value="${htmlValue(formatDateOnly(arrival.date))}" readonly></div>
+                    <div class="field-row"><label for="req-arrival-date">Arrival *</label>${arrivalDateField}</div>
                     <div class="field-row"><label>Arrival time *</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                    <div class="field-row"><label>Departure *</label><input value="${htmlValue(formatDateOnly(departure.date))}" readonly></div>
+                    <div class="field-row"><label for="req-departure-date">Departure *</label>${departureDateField}</div>
                     <div class="field-row"><label>Departure time *</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
                 </div>
 

@@ -122,24 +122,22 @@ class AuthApiTests(TestCase):
         self.assertEqual(body["message"], "Email: An account with this email already exists.")
         self.assertIn("email", body["errors"])
 
-    def test_signup_weak_password_message_explains_reason(self):
+    def test_signup_accepts_short_password_when_confirmation_matches(self):
         response = self.client.post(
             reverse("auth-requester-signup"),
             data={
                 "name": "Requester One",
                 "email": "weak-password@example.com",
-                "password": "short",
-                "confirm_password": "short",
+                "password": "1",
+                "confirm_password": "1",
             },
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         body = response.json()
-        self.assertFalse(body["success"])
-        self.assertTrue(body["message"].startswith("Password: "))
-        self.assertIn("too short", body["message"])
-        self.assertIn("password", body["errors"])
+        self.assertTrue(body["success"])
+        self.assertTrue(User.objects.get(email="weak-password@example.com").check_password("1"))
 
     def test_admin_signup_with_rejected_existing_account_is_rejected_as_duplicate(self):
         legacy = User.objects.create_user(
@@ -666,79 +664,29 @@ class AccountApprovalApiTests(TestCase):
         self.assertTrue(User.objects.filter(pk=target_superadmin.pk).exists())
         self.assertTrue(UserProfile.objects.filter(pk=target_superadmin_profile.pk).exists())
 
-    def test_admin_can_approve_and_reject_requesters_only(self):
+    def test_removed_requester_approval_routes_return_not_found(self):
         admin = self.create_approved_admin()
         requester = self.create_pending_requester()
         requester_profile = get_user_profile(requester)
-        other_admin = User.objects.create_user(
-            username="other-admin@example.com",
-            email="other-admin@example.com",
-            password="StrongPass123",
-            first_name="Other Admin",
-        )
-        other_admin_profile = set_user_role(
-            other_admin,
-            ROLE_ADMIN,
-            approval_status=APPROVAL_PENDING,
-        )
         self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(admin)
 
         approve_response = self.client.post(
-            reverse("admin-requester-account-approve", kwargs={"pk": requester_profile.pk}),
+            f"/api/admin/requester-accounts/{requester_profile.pk}/approve/",
             data={},
             content_type="application/json",
         )
-        admin_response = self.client.post(
-            reverse("admin-requester-account-approve", kwargs={"pk": other_admin_profile.pk}),
-            data={},
-            content_type="application/json",
-        )
-
-        self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
-        self.assertIn("remarks", approve_response.json()["data"])
-        self.assertNotIn("rejection_reason", approve_response.json()["data"])
-        requester_profile.refresh_from_db()
-        self.assertEqual(requester_profile.approval_status, APPROVAL_APPROVED)
-        self.assertEqual(admin_response.status_code, status.HTTP_404_NOT_FOUND)
-
-        rejected = self.create_pending_requester(email="reject-requester@example.com")
-        rejected_profile = get_user_profile(rejected)
         reject_response = self.client.post(
-            reverse("admin-requester-account-reject", kwargs={"pk": rejected_profile.pk}),
+            f"/api/admin/requester-accounts/{requester_profile.pk}/reject/",
             data={"remarks": "Incomplete details."},
             content_type="application/json",
         )
-        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
-        rejected_profile.refresh_from_db()
-        rejected.refresh_from_db()
-        self.assertTrue(User.objects.filter(pk=rejected.pk).exists())
-        self.assertTrue(UserProfile.objects.filter(pk=rejected_profile.pk).exists())
-        self.assertEqual(rejected_profile.approval_status, APPROVAL_REJECTED)
-        self.assertEqual(rejected_profile.rejection_reason, "Incomplete details.")
-        self.assertFalse(rejected.is_active)
 
-        login_after_reject = self.client.post(
-            reverse("auth-requester-login"),
-            data={"email": "reject-requester@example.com", "password": "StrongPass123"},
-            content_type="application/json",
-        )
-        self.assertEqual(login_after_reject.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("account is rejected", login_after_reject.json()["message"].lower())
+        self.assertEqual(approve_response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(reject_response.status_code, status.HTTP_404_NOT_FOUND)
+        requester_profile.refresh_from_db()
+        self.assertEqual(requester_profile.approval_status, APPROVAL_PENDING)
 
-        signup_again = self.client.post(
-            reverse("auth-requester-signup"),
-            data={
-                "name": "Requester User",
-                "email": "reject-requester@example.com",
-                "password": "StrongPass123",
-                "confirm_password": "StrongPass123",
-            },
-            content_type="application/json",
-        )
-        self.assertEqual(signup_again.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("email", signup_again.json()["errors"])
-
-    def test_reject_approved_accounts_marks_rejected_and_deactivates(self):
+    def test_reject_approved_admin_marks_rejected_and_deactivates(self):
         superadmin = self.create_superadmin()
         approved_admin = User.objects.create_user(
             username="approved-admin@example.com",
@@ -751,44 +699,19 @@ class AccountApprovalApiTests(TestCase):
             ROLE_ADMIN,
             approval_status=APPROVAL_APPROVED,
         )
-        approved_requester = User.objects.create_user(
-            username="approved-requester@example.com",
-            email="approved-requester@example.com",
-            password="StrongPass123",
-            first_name="Approved Requester",
-        )
-        approved_requester_profile = set_user_role(
-            approved_requester,
-            ROLE_REQUESTER,
-            approval_status=APPROVAL_APPROVED,
-        )
-
         self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(superadmin)
         admin_response = self.client.post(
             reverse("superadmin-account-request-reject", kwargs={"pk": approved_admin_profile.pk}),
             data={"remarks": "Do not reject approved."},
             content_type="application/json",
         )
-        requester_response = self.client.post(
-            reverse("admin-requester-account-reject", kwargs={"pk": approved_requester_profile.pk}),
-            data={"remarks": "Do not reject approved."},
-            content_type="application/json",
-        )
-
         self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(requester_response.status_code, status.HTTP_200_OK)
         self.assertTrue(User.objects.filter(pk=approved_admin.pk).exists())
-        self.assertTrue(User.objects.filter(pk=approved_requester.pk).exists())
         self.assertTrue(UserProfile.objects.filter(pk=approved_admin_profile.pk).exists())
-        self.assertTrue(UserProfile.objects.filter(pk=approved_requester_profile.pk).exists())
         approved_admin_profile.refresh_from_db()
-        approved_requester_profile.refresh_from_db()
         approved_admin.refresh_from_db()
-        approved_requester.refresh_from_db()
         self.assertEqual(approved_admin_profile.approval_status, APPROVAL_REJECTED)
-        self.assertEqual(approved_requester_profile.approval_status, APPROVAL_REJECTED)
         self.assertFalse(approved_admin.is_active)
-        self.assertFalse(approved_requester.is_active)
 
     def test_superadmin_reject_is_not_allowed_for_superadmin_account(self):
         superadmin = self.create_superadmin()
@@ -810,26 +733,23 @@ class AccountApprovalApiTests(TestCase):
         self.assertTrue(User.objects.filter(pk=target_superadmin.pk).exists())
         self.assertTrue(UserProfile.objects.filter(pk=target_profile.pk).exists())
 
-    def test_account_lists_include_rejected_accounts(self):
-        admin = self.create_approved_admin()
-        rejected_requester = self.create_pending_requester(email="legacy-rejected@example.com")
-        requester_profile = get_user_profile(rejected_requester)
-        requester_profile.approval_status = APPROVAL_REJECTED
-        requester_profile.save(update_fields=["approval_status"])
-        approved_requester = self.create_pending_requester(email="visible-requester@example.com")
-        approved_requester_profile = get_user_profile(approved_requester)
-        approved_requester_profile.approval_status = APPROVAL_APPROVED
-        approved_requester_profile.save(update_fields=["approval_status"])
+    def test_admin_account_list_includes_rejected_accounts(self):
+        superadmin = self.create_superadmin()
+        rejected_admin = self.create_approved_admin(email="legacy-rejected@example.com")
+        rejected_profile = get_user_profile(rejected_admin)
+        rejected_profile.approval_status = APPROVAL_REJECTED
+        rejected_profile.save(update_fields=["approval_status"])
+        self.create_approved_admin(email="visible-admin@example.com")
 
-        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(admin)
-        response = self.client.get(reverse("admin-requester-account-list"))
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(superadmin)
+        response = self.client.get(reverse("superadmin-account-request-list"))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.json()["data"])
         self.assertIn("remarks", response.json()["data"][0])
         self.assertNotIn("rejection_reason", response.json()["data"][0])
         emails = [item["email"] for item in response.json()["data"]]
-        self.assertIn("visible-requester@example.com", emails)
+        self.assertIn("visible-admin@example.com", emails)
         self.assertIn("legacy-rejected@example.com", emails)
 
     def test_workflow_notification_counts_are_role_aware(self):

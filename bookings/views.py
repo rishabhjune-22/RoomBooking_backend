@@ -1939,9 +1939,12 @@ class AdminBookingRequestApproveView(APIView):
             pk=pk,
         )
         mark_booking_request_seen(booking_request, request.user)
-        if booking_request.status != BookingRequest.STATUS_PENDING:
+        if booking_request.status not in {
+            BookingRequest.STATUS_PENDING,
+            BookingRequest.STATUS_CORRECTION_REQUIRED,
+        }:
             return api_error(
-                "Only pending booking requests can be approved.",
+                "Only pending or correction-required booking requests can be approved.",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 

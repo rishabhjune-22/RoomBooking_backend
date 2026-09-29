@@ -1,3 +1,7 @@
+export function passwordsMatch(password = "", confirmation = "") {
+    return Boolean(confirmation) && password === confirmation;
+}
+
 export function createAuthView({ root, state, apiFetch, escapeHtml, onAuthenticated }) {
     function render(message = "", isError = false) {
         const isSignup = state.authMode === "signup";
@@ -24,7 +28,7 @@ export function createAuthView({ root, state, apiFetch, escapeHtml, onAuthentica
                             <div class="password-wrap"><input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required><button class="outline-btn" type="button" data-toggle-password="password">Show</button></div>
                         </div>
                         ${isSignup ? `
-                            <div class="field-row"><label for="confirm_password">Confirm password *</label><div class="password-wrap"><input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required><button class="outline-btn" type="button" data-toggle-password="confirm_password">Show</button></div></div>
+                            <div class="field-row"><label for="confirm_password">Confirm password *</label><div class="password-wrap"><input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required><button class="outline-btn" type="button" data-toggle-password="confirm_password">Show</button></div><div id="password-match-status" class="password-match-status" aria-live="polite"></div></div>
                             ${state.authRole === "admin" ? `<div class="field-row"><label for="admin_code">Admin invite code *</label><input id="admin_code" name="admin_code" autocomplete="off" required></div>` : `
                                 <div class="two-col"><div class="field-row"><label for="department">Department (Optional)</label><input id="department" name="department"></div><div class="field-row"><label for="designation">Designation (Optional)</label><input id="designation" name="designation"></div></div>
                                 <div class="field-row"><label for="mobile">Mobile (Optional)</label><input id="mobile" name="mobile" inputmode="tel"></div>
@@ -49,6 +53,22 @@ export function createAuthView({ root, state, apiFetch, escapeHtml, onAuthentica
             input.type = input.type === "password" ? "text" : "password";
             button.textContent = input.type === "password" ? "Show" : "Hide";
         }));
+        if (isSignup) {
+            const passwordInput = document.getElementById("password");
+            const confirmInput = document.getElementById("confirm_password");
+            const updatePasswordMatch = () => {
+                const status = document.getElementById("password-match-status");
+                if (!confirmInput.value) {
+                    status.className = "password-match-status";
+                    status.textContent = "";
+                    return;
+                }
+                const matches = passwordsMatch(passwordInput.value, confirmInput.value);
+                status.className = `password-match-status ${matches ? "met" : "unmet"}`;
+                status.textContent = matches ? "Passwords match." : "Passwords do not match.";
+            };
+            [passwordInput, confirmInput].forEach((input) => input.addEventListener("input", updatePasswordMatch));
+        }
         root.querySelector("#auth-form").addEventListener("submit", submit);
     }
 
