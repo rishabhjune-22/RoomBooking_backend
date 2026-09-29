@@ -1407,6 +1407,10 @@ html[data-theme="dark"] .auth-brand-badge {
     transition: opacity 0.2s ease;
 }
 
+html[data-theme="dark"] .day-cell::before {
+    display: none;
+}
+
 .day-cell:hover:not(.empty):not(.past-date)::before {
     opacity: 1;
 }
