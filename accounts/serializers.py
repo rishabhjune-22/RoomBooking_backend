@@ -167,6 +167,7 @@ class SignupSerializer(serializers.Serializer):
         return attrs
 
     def create(self, validated_data):
+        role = validated_data.get("role", ROLE_ADMIN)
         user = User.objects.create_user(
             username=validated_data["email"],
             email=validated_data["email"],
@@ -175,8 +176,10 @@ class SignupSerializer(serializers.Serializer):
         )
         set_user_role(
             user,
-            validated_data.get("role", ROLE_ADMIN),
-            approval_status=APPROVAL_PENDING,
+            role,
+            approval_status=(
+                APPROVAL_APPROVED if role == ROLE_REQUESTER else APPROVAL_PENDING
+            ),
             designation=validated_data.get("designation", ""),
             department=validated_data.get("department", ""),
             mobile=validated_data.get("mobile", ""),

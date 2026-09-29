@@ -850,8 +850,10 @@ async function submitAuthForm(event) {
     try {
         const data = await apiFetch(endpoint, { method: "POST", body }, false);
         if (state.authMode === "signup") {
-            const roleName = state.authRole === "admin" ? "admin" : "requester";
-            renderAuth(`Your ${roleName} account was created and is pending approval.`, false);
+            const message = state.authRole === "admin"
+                ? "Your admin account was created and is pending approval."
+                : "Your requester account was created. You can log in now.";
+            renderAuth(message, false);
             return;
         }
         setTokens(data);
@@ -939,7 +941,6 @@ function menuItems() {
             ["calendar", "Home / Calendar"],
             ["bookings", "Bookings"],
             ["bookingRequests", "Booking Requests"],
-            ["requesters", "Manage Requesters"],
         ];
         if (isSuperadmin()) {
             items.push(["accounts", "User Profiles"]);
@@ -957,9 +958,6 @@ function workflowNotificationCountForView(viewId) {
     if (viewId === "bookingRequests") {
         return counts.booking_requests || 0;
     }
-    if (viewId === "requesters") {
-        return counts.requester_accounts || 0;
-    }
     if (viewId === "accounts") {
         return counts.admin_accounts || 0;
     }
@@ -972,9 +970,6 @@ function workflowNotificationCountForView(viewId) {
 function workflowNotificationCategoriesForView(viewId) {
     if (viewId === "bookingRequests") {
         return ["booking_requests"];
-    }
-    if (viewId === "requesters") {
-        return ["requester_accounts"];
     }
     if (viewId === "accounts") {
         return ["admin_accounts"];
@@ -1199,14 +1194,6 @@ function workflowNotificationRows() {
             description: "Pending booking requests waiting for review.",
             details: workflowNotificationDetailsForView("bookingRequests").slice(0, 3),
         });
-        rows.push({
-            view: "requesters",
-            title: "Manage Requesters",
-            count: counts.requester_accounts || 0,
-            rawCount: rawCounts.requester_accounts || 0,
-            description: "Pending requester accounts waiting for approval.",
-            details: workflowNotificationDetailsForView("requesters").slice(0, 3),
-        });
     }
     if (isSuperadmin()) {
         rows.push({
@@ -1347,8 +1334,6 @@ function renderCurrentView() {
         renderBookingsView();
     } else if (state.view === "bookingRequests") {
         renderBookingRequestsView();
-    } else if (state.view === "requesters") {
-        renderRequesterAccountsView();
     } else if (state.view === "accounts") {
         renderSuperadminAccountsView();
     } else if (state.view === "myRequests") {
@@ -5028,7 +5013,7 @@ function renderSuperadminAccountsView() {
         <div class="section-header">
             <div>
                 <h2>User Profiles</h2>
-                <p>Simple Mode account management for admin and requester users.</p>
+                <p>Manage administrator accounts and approval requests.</p>
             </div>
             <button class="outline-btn" id="refresh-superadmin-accounts">Refresh</button>
         </div>

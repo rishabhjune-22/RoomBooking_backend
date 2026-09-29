@@ -90,7 +90,8 @@ class AuthApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         user_data = response.json()["data"]["user"]
         self.assertEqual(user_data["role"], "requester")
-        self.assertEqual(user_data["approval_status"], APPROVAL_PENDING)
+        self.assertEqual(user_data["approval_status"], APPROVAL_APPROVED)
+        self.assertIn("log in now", response.json()["message"].lower())
         self.assertEqual(user_data["remarks"], "")
         self.assertNotIn("rejection_reason", user_data)
         self.assertEqual(user_data["department"], "CSE")
@@ -970,7 +971,7 @@ class AccountApprovalApiTests(TestCase):
         self.assertIn("correction", first_item["title"].lower())
         self.assertIn("approved", second_item["title"].lower())
 
-    def test_requester_signup_creates_pending_account(self):
+    def test_requester_signup_creates_approved_account(self):
         response = self.client.post(
             reverse("auth-requester-signup"),
             data={
@@ -984,16 +985,26 @@ class AccountApprovalApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         requester = User.objects.get(email="pending-requester@example.com")
-        self.assertEqual(get_user_profile(requester).approval_status, APPROVAL_PENDING)
+        self.assertEqual(get_user_profile(requester).approval_status, APPROVAL_APPROVED)
 
-    def test_requester_cannot_approve_accounts_and_pending_cannot_access_protected_api(self):
+        login_response = self.client.post(
+            reverse("auth-requester-login"),
+            data={
+                "email": "pending-requester@example.com",
+                "password": "StrongPass123",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+
+    def test_requester_approval_endpoint_removed_and_pending_cannot_access_protected_api(self):
         requester = self.create_pending_requester()
         self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(requester)
 
-        approval_response = self.client.get(reverse("admin-requester-account-list"))
+        approval_response = self.client.get("/api/admin/requester-accounts/")
         protected_response = self.client.get(reverse("requester-booking-request-list"))
 
-        self.assertEqual(approval_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(approval_response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(protected_response.status_code, status.HTTP_403_FORBIDDEN)
 
 
