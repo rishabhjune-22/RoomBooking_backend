@@ -100,7 +100,6 @@ const state = {
     chargeSheetSelectedId: "",
     chargeSheetScrollLeft: 0,
     bookingRequestFilter: "pending",
-    requesterAccountFilter: "pending",
     superadminAccountRoleFilter: "all",
     superadminAccountStatusFilter: "pending",
     myRequestFilter: "all",
@@ -458,33 +457,6 @@ function selectedScheduleFromCalendar() {
     return { arrivalDate, departureDate };
 }
 
-function requesterRoomSelection(room = null, prefix = state.prefix) {
-    if (!room) {
-        return {
-            roomId: "",
-            roomName: `${prefix} - No specific room selected`,
-            prefix,
-            availabilityStatus: "",
-            availableFrom: "",
-        };
-    }
-    const roomPrefix = room.prefix || prefix;
-    const roomId = room.roomId || room.room_id || room.id || "";
-    return {
-        roomId,
-        roomName: roomLabel({
-            id: roomId,
-            prefix: roomPrefix,
-            selection_label: room.selectionLabel || room.selection_label || room.roomName,
-            room_name: room.roomName || room.room_name,
-            number: room.room_number || room.number,
-        }),
-        prefix: roomPrefix,
-        availabilityStatus: room.availabilityStatus || room.availability_status || "",
-        availableFrom: room.availableFrom || room.available_from || room.available_from_time || "",
-    };
-}
-
 function parseDisplayTimeTo24(value) {
     const text = String(value || "").trim();
     const match = text.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
@@ -752,6 +724,10 @@ function toast(message, type = "success") {
 const EYE_OPEN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
 const EYE_CLOSED_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
 
+function passwordsMatch(password = "", confirmation = "") {
+    return Boolean(confirmation) && password === confirmation;
+}
+
 function renderAuth(message = "", isError = false) {
     const isSignup = state.authMode === "signup";
     const isAdmin = state.authRole === "admin";
@@ -823,6 +799,7 @@ function renderAuth(message = "", isError = false) {
                                     <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
                                     <button class="outline-btn icon-only-btn" type="button" data-toggle-password="confirm_password" aria-label="Toggle password visibility">${EYE_OPEN_SVG}</button>
                                 </div>
+                                <div id="password-match-status" class="password-match-status" aria-live="polite"></div>
                             </div>
                             ${isAdmin ? `
                                 <div class="field-row">
@@ -876,6 +853,25 @@ function renderAuth(message = "", isError = false) {
             button.innerHTML = input.type === "password" ? EYE_OPEN_SVG : EYE_CLOSED_SVG;
         });
     });
+    if (isSignup) {
+        const passwordInput = document.getElementById("password");
+        const confirmInput = document.getElementById("confirm_password");
+        const updatePasswordMatch = () => {
+            const status = document.getElementById("password-match-status");
+            if (!status) {
+                return;
+            }
+            if (!confirmInput.value) {
+                status.className = "password-match-status";
+                status.textContent = "";
+                return;
+            }
+            const matches = passwordsMatch(passwordInput.value, confirmInput.value);
+            status.className = `password-match-status ${matches ? "met" : "unmet"}`;
+            status.textContent = matches ? "Passwords match." : "Passwords do not match.";
+        };
+        [passwordInput, confirmInput].forEach((input) => input.addEventListener("input", updatePasswordMatch));
+    }
     appRoot.querySelectorAll("[data-theme-toggle]").forEach((button) => {
         button.addEventListener("click", toggleTheme);
     });
@@ -892,8 +888,10 @@ async function submitAuthForm(event) {
     try {
         const data = await apiFetch(endpoint, { method: "POST", body }, false);
         if (state.authMode === "signup") {
-            const roleName = state.authRole === "admin" ? "admin" : "requester";
-            renderAuth(`Your ${roleName} account was created and is pending approval.`, false);
+            const message = state.authRole === "admin"
+                ? "Your admin account was created and is pending approval."
+                : "Your requester account was created. You can log in now.";
+            renderAuth(message, false);
             return;
         }
         setTokens(data);
@@ -981,7 +979,6 @@ function menuItems() {
             ["calendar", "Home / Calendar"],
             ["bookings", "Bookings"],
             ["bookingRequests", "Booking Requests"],
-            ["requesters", "Manage Requesters"],
         ];
         if (isSuperadmin()) {
             items.push(["accounts", "User Profiles"]);
@@ -999,9 +996,6 @@ function workflowNotificationCountForView(viewId) {
     if (viewId === "bookingRequests") {
         return counts.booking_requests || 0;
     }
-    if (viewId === "requesters") {
-        return counts.requester_accounts || 0;
-    }
     if (viewId === "accounts") {
         return counts.admin_accounts || 0;
     }
@@ -1014,9 +1008,6 @@ function workflowNotificationCountForView(viewId) {
 function workflowNotificationCategoriesForView(viewId) {
     if (viewId === "bookingRequests") {
         return ["booking_requests"];
-    }
-    if (viewId === "requesters") {
-        return ["requester_accounts"];
     }
     if (viewId === "accounts") {
         return ["admin_accounts"];
@@ -1504,14 +1495,6 @@ function workflowNotificationRows() {
             description: "Pending booking requests waiting for review.",
             details: workflowNotificationDetailsForView("bookingRequests").slice(0, 3),
         });
-        rows.push({
-            view: "requesters",
-            title: "Manage Requesters",
-            count: counts.requester_accounts || 0,
-            rawCount: rawCounts.requester_accounts || 0,
-            description: "Pending requester accounts waiting for approval.",
-            details: workflowNotificationDetailsForView("requesters").slice(0, 3),
-        });
     }
     if (isSuperadmin()) {
         rows.push({
@@ -1652,8 +1635,6 @@ function renderCurrentView() {
         renderBookingsView();
     } else if (state.view === "bookingRequests") {
         renderBookingRequestsView();
-    } else if (state.view === "requesters") {
-        renderRequesterAccountsView();
     } else if (state.view === "accounts") {
         renderSuperadminAccountsView();
     } else if (state.view === "myRequests") {
@@ -1725,7 +1706,7 @@ function renderCalendarView() {
                 <div class="welcome-line">
                     <h2>${firstName ? `${greetingForNow()}, ${escapeHtml(firstName)}` : "Room Availability Calendar"}</h2>
                 </div>
-                <p>${isAdminLike() ? "Manage room availability and booking requests across all buildings." : "Browse room availability and place your booking requests."}</p>
+                <p>${isAdminLike() ? "Manage room availability and booking requests across all buildings." : "Select your requested arrival and departure dates."}</p>
             </div>
             ${isAdminLike()
                 ? `<button class="primary-btn" id="calendar-create-booking"><span style="font-size:16px;margin-right:6px;">+</span>New Booking</button>`
@@ -1773,14 +1754,14 @@ function renderCalendarView() {
                         <button class="month-nav-btn" id="next-month" aria-label="Next month">${chevronRightSvg()}</button>
                     </div>
                 </div>
-                <div class="building-tabs" id="building-tabs"></div>
+                ${isAdminLike() ? `<div class="building-tabs" id="building-tabs"></div>` : ""}
                 <div class="calendar-grid" id="calendar-grid"></div>
-                <div class="legend">
+                ${isAdminLike() ? `<div class="legend">
                     <span class="legend-item"><span class="dot open"></span> Available</span>
                     <span class="legend-item"><span class="dot half"></span> Half Available</span>
                     <span class="legend-item"><span class="dot low"></span> Less Than Half</span>
                     <span class="legend-item"><span class="dot full"></span> Full</span>
-                </div>
+                </div>` : ""}
             </section>
             <aside class="surface side-panel" id="calendar-side">
                 <div class="loading-state">Loading calendar...</div>
@@ -1794,9 +1775,11 @@ function renderCalendarView() {
     if (isAdminLike()) {
         document.getElementById("calendar-create-booking").addEventListener("click", () => openAdminAvailableRoomsChooser());
     } else {
-        document.getElementById("request-booking-btn").addEventListener("click", () => openRequesterAvailableRoomsChooser());
+        document.getElementById("request-booking-btn").addEventListener("click", () => openRequestForm());
     }
-    drawBuildingTabs();
+    if (isAdminLike()) {
+        drawBuildingTabs();
+    }
     loadCalendar();
 }
 
@@ -2038,9 +2021,14 @@ async function loadCalendar({ silent = false } = {}) {
     if (!silent) {
         grid.innerHTML = `<div class="loading-state" style="grid-column:1 / -1">Loading availability...</div>`;
     }
-    const endpoint = isAdminLike()
-        ? `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`
-        : `/api/requester/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
+    if (!isAdminLike()) {
+        state.availability = null;
+        drawRequesterCalendar();
+        renderCalendarSide();
+        renderStatsStrip();
+        return;
+    }
+    const endpoint = `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
     try {
         state.availability = await apiFetch(endpoint);
         drawCalendar();
@@ -2082,7 +2070,40 @@ function isInSelectedRange(dateValue) {
     return dateValue >= state.rangeStart && dateValue <= state.rangeEnd;
 }
 
+function drawRequesterCalendar() {
+    const grid = document.getElementById("calendar-grid");
+    if (!grid) {
+        return;
+    }
+    const todayStr = todayIso();
+    const firstDay = new Date(state.calendarYear, state.calendarMonth - 1, 1).getDay();
+    const daysInMonth = new Date(state.calendarYear, state.calendarMonth, 0).getDate();
+    const cells = [];
+    WEEKDAYS.forEach((day) => cells.push(`<div class="weekday">${day}</div>`));
+    for (let index = 0; index < firstDay; index += 1) {
+        cells.push(`<button class="day-cell empty" type="button" tabindex="-1"></button>`);
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
+        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        const isToday = dateValue === todayStr;
+        cells.push(`
+            <button class="day-cell requester-date ${selectedClass}${isToday ? " is-today" : ""}" type="button" data-date="${dateValue}">
+                <span class="day-number">${day}</span>
+            </button>
+        `);
+    }
+    grid.innerHTML = cells.join("");
+    grid.querySelectorAll("[data-date]").forEach((button) => {
+        button.addEventListener("click", () => handleDateClick(button.dataset.date));
+    });
+}
+
 function drawCalendar() {
+    if (!isAdminLike()) {
+        drawRequesterCalendar();
+        return;
+    }
     const grid = document.getElementById("calendar-grid");
     const group = currentCalendarGroup();
     if (!grid || !group) {
@@ -2172,7 +2193,7 @@ function renderCalendarSide(content = "") {
         return;
     }
     const group = currentCalendarGroup();
-    if (!group) {
+    if (isAdminLike() && !group) {
         side.innerHTML = `<div class="empty-state">No building data.</div>`;
         return;
     }
@@ -2196,7 +2217,6 @@ function renderCalendarSide(content = "") {
                 <h3 style="margin:0 0 6px">Request Schedule</h3>
                 <p class="item-meta">Select one date for same-day request or select another date for a range.</p>
             </div>
-            <div class="detail-row"><span class="detail-label">Building</span><span class="detail-value">${escapeHtml(state.prefix)}</span></div>
             <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
         </div>
     `;
@@ -4166,9 +4186,12 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     const departure = source.departure_at ? indiaParts(source.departure_at) : { date: selectedEnd, time: "18:00" };
     const prefix = source.preferred_prefix || source.prefix || state.prefix || BUILDINGS[0];
     const budgetHead = normalizedBudgetHeadFields(source);
-    const roomPreferenceNoteField = context === "request"
-        ? `<input id="admin-room-note" value="${htmlValue(source.room_preference_note)}" readonly>`
-        : `<input id="admin-room-note" value="" disabled aria-readonly="true">`;
+    const roomPreferencePanel = context === "request" ? `
+        <div class="requester-room-preference" role="note">
+            <strong>Requester Room Preference</strong>
+            <span>${escapeHtml(source.room_preference_note || "No preference provided")}</span>
+        </div>
+    ` : "";
     const requestMeta = source.id && context === "request" ? `
         <div class="form-section-title">Request Review</div>
         <div class="two-col">
@@ -4189,12 +4212,12 @@ function adminBookingFormHtml(source = {}, context = "booking") {
             <div class="form-section-title">Visitor Details</div>
             <div class="two-col">
                 <div class="field-row"><label for="admin-prefix">Building *</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+                ${roomPreferencePanel}
                 <div class="field-row"><label for="admin-room">Room No *</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
                 <div class="field-row"><label for="admin-arrival-date">Check-In date *</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
                 <div class="field-row"><label for="admin-arrival-time">Check-In time *</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
                 <div class="field-row"><label for="admin-departure-date">Check-Out date *</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
                 <div class="field-row"><label for="admin-departure-time">Check-Out time *</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
-                <div class="field-row"><label for="admin-room-note">Room preference note (Optional)</label>${roomPreferenceNoteField}</div>
                 <div class="field-row"><label for="admin-visitor-name">Visitor name *</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
                 <div class="field-row"><label for="admin-visitor-designation">Visitor designation (Optional)</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
                 <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation (Optional)</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>
@@ -5030,6 +5053,7 @@ async function openAdminBookingRequestDetails(request) {
             fetchRooms(),
         ]);
         const isPending = detail.status === "pending";
+        const canApprove = isPending || detail.status === "correction_required";
         openActionModal({
             title: "Create Booking From Request",
             body: adminBookingFormHtml(detail, "request"),
@@ -5041,8 +5065,8 @@ async function openAdminBookingRequestDetails(request) {
                         ${adminReviewRemarksHtml()}
                     </div>
                     <div class="review-action-row">
+                        ${canApprove ? `<button class="success-btn" type="button" data-review-action="approve">Approve</button>` : ""}
                         ${isPending ? `
-                            <button class="success-btn" type="button" data-review-action="approve">Approve</button>
                             <button class="danger-btn" type="button" data-review-action="reject">Reject</button>
                             <button class="warn-btn" type="button" data-review-action="sendBack">Send Back</button>
                         ` : ""}
@@ -5125,8 +5149,9 @@ function openBookingRequestDetails(request) {
     openDetailsModal("Booking Request Details", bookingRequestDetailRows(request));
 }
 
-function bookingRequestDetailRows(request) {
+function bookingRequestDetailRows(request, options = {}) {
     const budgetHead = normalizedBudgetHeadFields(request);
+    const requesterView = options.requesterView === true;
     return [
         { section: "Request Status" },
         ["ID", request.id],
@@ -5138,8 +5163,10 @@ function bookingRequestDetailRows(request) {
         { section: "Schedule & Room" },
         ["Arrival", formatDateTime(request.arrival_at)],
         ["Departure", formatDateTime(request.departure_at)],
-        ["Building preference", request.preferred_prefix],
-        ["Preferred room", request.preferred_room_name || "No specific room"],
+        ...(!requesterView ? [
+            ["Building preference", request.preferred_prefix],
+            ["Preferred room", request.preferred_room_name || "No specific room"],
+        ] : []),
         ["Room note", request.room_preference_note],
         { section: "Visitor Details" },
         ["Visitor name", request.visitor_name],
@@ -5175,214 +5202,6 @@ function bookingRequestDetailRows(request) {
     ];
 }
 
-function renderRequesterAccountsView() {
-    const tabs = [["all", "All"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]];
-    viewRoot().innerHTML = `
-        <div class="section-header">
-            <div>
-                <h2>Manage Requesters</h2>
-                <p>Approve or reject requester accounts.</p>
-            </div>
-            <button class="outline-btn" id="refresh-requesters">Refresh</button>
-        </div>
-        ${filterTabs(state.requesterAccountFilter, tabs)}
-        <section class="surface side-panel">
-            <div id="requesters-list" class="card-list"><div class="loading-state">Loading requester accounts...</div></div>
-        </section>
-    `;
-    bindFilterTabs(viewRoot(), (filter) => {
-        state.requesterAccountFilter = filter;
-        renderRequesterAccountsView();
-    });
-    document.getElementById("refresh-requesters").addEventListener("click", loadRequesterAccounts);
-    loadRequesterAccounts();
-}
-
-async function loadRequesterAccounts() {
-    const list = document.getElementById("requesters-list");
-    list.innerHTML = `<div class="loading-state">Loading requester accounts...</div>`;
-    const statusParam = state.requesterAccountFilter === "all" ? "" : `?status=${state.requesterAccountFilter}`;
-    try {
-        const rows = await apiFetch(`/api/admin/requester-accounts/${statusParam}`);
-        if (!rows.length) {
-            list.innerHTML = `<div class="empty-state">No requester accounts found.</div>`;
-            loadWorkflowNotificationCounts();
-            return;
-        }
-        list.innerHTML = rows.map((account) => `
-            <article class="item-card" data-account-id="${account.id}">
-                <div class="item-main">
-                    <div>
-                        <h3 class="item-title">${escapeHtml(account.name || account.email)}</h3>
-                        <p class="item-meta">${escapeHtml(account.department || "No department")} - ${escapeHtml(account.designation || "No designation")}</p>
-                    </div>
-                    <span class="status-chip ${account.approval_status}">${titleCase(account.approval_status)}</span>
-                </div>
-            </article>
-        `).join("");
-        list.querySelectorAll("[data-account-id]").forEach((card) => {
-            const account = rows.find((item) => String(item.id) === card.dataset.accountId);
-            bindRequesterAccountCard(card, account);
-        });
-        loadWorkflowNotificationCounts();
-    } catch (error) {
-        list.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
-    }
-}
-
-function bindRequesterAccountCard(card, account) {
-    if (!card || !account) {
-        return;
-    }
-    let longPressTimer = null;
-    let quickActionOpened = false;
-    const clearLongPress = () => {
-        if (longPressTimer) {
-            window.clearTimeout(longPressTimer);
-            longPressTimer = null;
-        }
-    };
-    const openQuickActions = () => {
-        clearLongPress();
-        quickActionOpened = true;
-        openRequesterAccountQuickActions(account);
-    };
-
-    card.tabIndex = 0;
-    card.addEventListener("click", () => {
-        if (quickActionOpened) {
-            quickActionOpened = false;
-            return;
-        }
-        openAccountDetails(account);
-    });
-    card.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        openQuickActions();
-    });
-    card.addEventListener("pointerdown", (event) => {
-        if (event.button !== 0) {
-            return;
-        }
-        quickActionOpened = false;
-        clearLongPress();
-        longPressTimer = window.setTimeout(openQuickActions, 650);
-    });
-    ["pointerup", "pointerleave", "pointercancel"].forEach((eventName) => {
-        card.addEventListener(eventName, clearLongPress);
-    });
-    card.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            openAccountDetails(account);
-        }
-    });
-}
-
-function accountActionButtonsHtml(account, compact = false) {
-    const actions = [];
-    if (account.approval_status === "pending") {
-        actions.push(`<button class="success-btn" data-account-action="approve" data-id="${account.id}">Approve</button>`);
-        actions.push(`<button class="danger-btn" data-account-action="reject" data-id="${account.id}">Reject</button>`);
-    } else if (account.approval_status === "approved") {
-        actions.push(`<button class="danger-btn" data-account-action="reject" data-id="${account.id}">Reject</button>`);
-    } else if (account.approval_status === "rejected") {
-        actions.push(`<button class="success-btn" data-account-action="approve" data-id="${account.id}">Approve Again</button>`);
-    }
-    if (!actions.length) {
-        return "";
-    }
-    return `<div class="card-actions ${compact ? "inline-card-actions" : ""}">${actions.join("")}</div>`;
-}
-
-function openAccountDetails(account) {
-    const detailsHtml = `<div class="details-list">${[
-        ["Name", account.name],
-        ["Email", account.email],
-        ["Role", titleCase(account.role)],
-        ["Status", titleCase(account.approval_status)],
-        ["Department", account.department],
-        ["Designation", account.designation],
-        ["Mobile", account.mobile],
-        ["Approved by", account.approved_by_name],
-        ["Approved at", formatDateTime(account.approved_at)],
-        ["Remarks", account.remarks],
-    ].map(([label, value]) => `
-        <div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>
-    `).join("")}</div>`;
-    openActionModal({
-        title: "Requester Account",
-        body: detailsHtml,
-        confirmText: "Close",
-        confirmClass: "outline-btn",
-        footerHtml: `
-            <button class="outline-btn" type="button" data-close-modal>Close</button>
-            ${accountActionButtonsHtml(account, true)}
-        `,
-        onBind: () => {
-            document.querySelectorAll(".modal-footer [data-account-action]").forEach((button) => {
-                button.addEventListener("click", (event) => {
-                    event.stopPropagation();
-                    closeModal();
-                    handleAccountAction(button.dataset.accountAction, account);
-                });
-            });
-        },
-    });
-}
-
-function openRequesterAccountQuickActions(account) {
-    const detailsHtml = `<div class="details-list">${[
-        ["Name", account.name],
-        ["Email", account.email],
-        ["Department", account.department],
-        ["Designation", account.designation],
-    ].map(([label, value]) => `
-        <div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(valueOrDash(value))}</span></div>
-    `).join("")}</div>`;
-    openActionModal({
-        title: "Quick Actions",
-        body: detailsHtml,
-        confirmText: "Close",
-        confirmClass: "outline-btn",
-        footerHtml: `
-            <button class="outline-btn" type="button" data-close-modal>Close</button>
-            ${accountActionButtonsHtml(account, true)}
-        `,
-        onBind: () => {
-            document.querySelectorAll(".modal-footer [data-account-action]").forEach((button) => {
-                button.addEventListener("click", (event) => {
-                    event.stopPropagation();
-                    closeModal();
-                    handleAccountAction(button.dataset.accountAction, account);
-                });
-            });
-        },
-    });
-}
-
-function handleAccountAction(action, account) {
-    if (action === "approve") {
-        openActionModal({
-            title: "Approve Requester Account",
-            body: `<p class="item-meta">Approve ${escapeHtml(account.name || account.email)}?</p>`,
-            confirmText: "Approve",
-            confirmClass: "success-btn",
-            onConfirm: async () => {
-                await apiFetch(`/api/admin/requester-accounts/${account.id}/approve/`, { method: "POST", body: {} });
-                toast("Requester account approved.");
-                loadRequesterAccounts();
-            },
-        });
-    } else if (action === "reject") {
-        openRemarksModal("Reject Requester Account", "Reject", "danger-btn", async (remarks) => {
-            await apiFetch(`/api/admin/requester-accounts/${account.id}/reject/`, { method: "POST", body: { remarks } });
-            toast("Requester account rejected.");
-            loadRequesterAccounts();
-        });
-    }
-}
-
 function renderSuperadminAccountsView() {
     if (!isSuperadmin()) {
         navigateToView("calendar", true);
@@ -5392,7 +5211,7 @@ function renderSuperadminAccountsView() {
         <div class="section-header">
             <div>
                 <h2>User Profiles</h2>
-                <p>Simple Mode account management for admin and requester users.</p>
+                <p>Manage administrator accounts and approval requests.</p>
             </div>
             <button class="outline-btn" id="refresh-superadmin-accounts">Refresh</button>
         </div>
@@ -5403,7 +5222,6 @@ function renderSuperadminAccountsView() {
                     <select id="simple-account-role">
                         <option value="all" ${state.superadminAccountRoleFilter === "all" ? "selected" : ""}>All</option>
                         <option value="admin" ${state.superadminAccountRoleFilter === "admin" ? "selected" : ""}>Admin</option>
-                        <option value="requester" ${state.superadminAccountRoleFilter === "requester" ? "selected" : ""}>Requester</option>
                     </select>
                 </div>
                 <div class="field-row">
@@ -5467,7 +5285,7 @@ function superadminAccountEmptyText() {
     const status = state.superadminAccountStatusFilter;
     const role = state.superadminAccountRoleFilter;
     if (role === "all" && status === "all") {
-        return "No admin or requester profiles found.";
+        return "No user profiles found.";
     }
     const roleText = role === "all" ? "accounts" : `${role} accounts`;
     if (status === "all") {
@@ -5620,7 +5438,7 @@ async function loadMyRequests() {
                 <div class="item-main">
                     <div>
                         <h3 class="item-title">${escapeHtml(request.visitor_name || "Booking request")}</h3>
-                        <p class="item-meta">${formatDateRange(request)} - ${escapeHtml(request.preferred_room_name || request.preferred_prefix || "No room preference")}</p>
+                        <p class="item-meta">${formatDateRange(request)} - ${escapeHtml(request.room_preference_note || "No room preference")}</p>
                         ${request.admin_remarks ? `<p class="item-meta">Remarks: ${escapeHtml(request.admin_remarks)}</p>` : ""}
                     </div>
                     <span class="status-chip ${request.status}">${titleCase(request.status)}</span>
@@ -5642,41 +5460,42 @@ function openMyRequestDetails(request) {
     }
     const canEdit = request.status === "pending" || request.status === "correction_required";
     const editText = request.status === "correction_required" ? "Edit & Resubmit" : "Edit";
+    const canPullBack = Boolean(request.can_pull_back);
     openActionModal({
         title: `Booking Request #${request.id}`,
-        body: detailsRowsHtml(bookingRequestDetailRows(request)),
+        body: detailsRowsHtml(bookingRequestDetailRows(request, { requesterView: true })),
         wide: true,
         footerHtml: `
             <button class="outline-btn" type="button" data-close-modal>Close</button>
-            ${canEdit ? `<button class="primary-btn" type="button" id="my-request-edit">${editText}</button>` : ""}
-            <button class="danger-btn" type="button" id="my-request-delete">Delete Request</button>
+            ${!canPullBack && canEdit ? `<button class="primary-btn" type="button" id="my-request-edit">${editText}</button>` : ""}
+            ${canPullBack ? `<button class="danger-btn" type="button" id="my-request-pull-back">Pull Back Request</button>` : ""}
         `,
         onBind: () => {
             document.getElementById("my-request-edit")?.addEventListener("click", () => {
                 closeModal();
                 openRequestForm(request);
             });
-            document.getElementById("my-request-delete")?.addEventListener("click", () => openDeleteMyRequestModal(request));
+            document.getElementById("my-request-pull-back")?.addEventListener("click", () => openPullBackMyRequestModal(request));
         },
     });
 }
 
-function openDeleteMyRequestModal(request) {
+function openPullBackMyRequestModal(request) {
     openActionModal({
-        title: "Delete Request",
+        title: "Pull Back Request",
         body: `
-            <p class="item-meta">Are you sure you want to delete this request?</p>
+            <p class="item-meta">Are you sure you want to pull back and delete this request? This cannot be undone.</p>
             <div class="field-row">
                 <label for="delete-my-request-remarks">Remarks (Optional)</label>
-                <textarea id="delete-my-request-remarks" placeholder="Optional deletion remarks"></textarea>
+                <textarea id="delete-my-request-remarks" placeholder="Optional pull-back remarks"></textarea>
             </div>
         `,
-        confirmText: "Delete Request",
+        confirmText: "Pull Back Request",
         confirmClass: "danger-btn",
         onConfirm: async () => {
             const remarks = document.getElementById("delete-my-request-remarks")?.value?.trim() || "";
             await apiFetch(`/api/requester/booking-requests/${request.id}/delete/`, { method: "DELETE", body: { remarks } });
-            toast("Request deleted successfully.");
+            toast("Request pulled back.");
             await loadMyRequests();
         },
     });
@@ -5766,67 +5585,7 @@ async function openAdminAvailableRoomsChooser(options = {}) {
     }
 }
 
-async function openRequesterAvailableRoomsChooser() {
-    const { arrivalDate, departureDate } = requesterSelectedSchedule();
-    if (!arrivalDate) {
-        toast("Select an arrival date first.", "error");
-        return;
-    }
-    if (!departureDate) {
-        toast("Select a departure date first.", "error");
-        return;
-    }
-    if (departureDate < arrivalDate) {
-        toast("Departure date cannot be before arrival date.", "error");
-        return;
-    }
-    openActionModal({
-        title: "Available Rooms",
-        body: `<div class="loading-state">Loading available rooms...</div>`,
-        footerHtml: `<button class="outline-btn" type="button" data-close-modal>Close</button>`,
-    });
-
-    try {
-        const data = await apiFetch(`/api/requester/available-rooms-range/?arrival_date=${arrivalDate}&departure_date=${departureDate}&prefix=${encodeURIComponent(state.prefix)}`);
-        const rooms = data?.rooms || [];
-        const body = document.querySelector(".modal-body");
-        if (!body) {
-            return;
-        }
-        if (!rooms.length) {
-            body.innerHTML = `<div class="empty-state">No rooms are available for the selected range.</div>`;
-            return;
-        }
-        body.innerHTML = `
-            <p class="item-meta">Select a preferred room for your booking request.</p>
-            <div class="available-room-list">
-                ${rooms.map((room, index) => {
-                    const selection = requesterRoomSelection(room, data?.prefix || state.prefix);
-                    return `
-                        <button class="available-room-card" type="button" data-room-index="${index}">
-                            <span class="available-room-title">${escapeHtml(selection.roomName)}</span>
-                            <span class="available-room-status ${room.availability_status === "partial" ? "partial" : "available"}">${escapeHtml(availableRoomStatusText(room))}</span>
-                        </button>
-                    `;
-                }).join("")}
-            </div>
-        `;
-        body.querySelectorAll("[data-room-index]").forEach((button) => {
-            button.addEventListener("click", () => {
-                const room = rooms[Number(button.dataset.roomIndex)];
-                closeModal();
-                openRequestForm(null, requesterRoomSelection(room, data?.prefix || state.prefix));
-            });
-        });
-    } catch (error) {
-        const body = document.querySelector(".modal-body");
-        if (body) {
-            body.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Could not load available rooms. Please try again.")}</div>`;
-        }
-    }
-}
-
-async function openRequestForm(existing = null, selectedRoom = null) {
+async function openRequestForm(existing = null) {
     const editing = Boolean(existing);
     const arrival = editing ? indiaParts(existing.arrival_at) : { date: state.rangeStart || todayIso(), time: "10:00" };
     const departure = editing ? indiaParts(existing.departure_at) : { date: state.rangeEnd || state.rangeStart || todayIso(), time: "18:00" };
@@ -5835,17 +5594,7 @@ async function openRequestForm(existing = null, selectedRoom = null) {
         arrival.date = calendarSchedule.arrivalDate;
         departure.date = calendarSchedule.departureDate;
     }
-    const prefix = editing ? (existing.preferred_prefix || state.prefix) : (selectedRoom?.prefix || state.prefix);
-    const existingHasRoom = Boolean(existing?.preferred_room || existing?.preferred_room_name);
-    const roomSelection = editing && existingHasRoom
-        ? requesterRoomSelection({
-            id: existing.preferred_room,
-            room_id: existing.preferred_room,
-            room_name: existing.preferred_room_name,
-            selection_label: existing.preferred_room_name,
-            prefix,
-        }, prefix)
-        : requesterRoomSelection(selectedRoom, prefix);
+    const editingDatesLocked = editing && existing.status !== "correction_required";
     const requestorName = state.user?.name || existing?.requestor_name || "";
     const requestorEmail = existing?.requestor_email || state.user?.email || "";
     const budgetHead = normalizedBudgetHeadFields(existing || {});
@@ -5854,21 +5603,14 @@ async function openRequestForm(existing = null, selectedRoom = null) {
         title: editing ? "Edit Request" : "Request Booking",
         body: `
             <form id="request-form" class="field-grid">
-                <div class="form-section-title">Room Details</div>
-                <input id="req-arrival-date" type="hidden" value="${htmlValue(arrival.date)}">
-                <input id="req-departure-date" type="hidden" value="${htmlValue(departure.date)}">
-                <input id="req-prefix" type="hidden" value="${htmlValue(prefix)}">
-                <input id="req-room" type="hidden" value="${htmlValue(roomSelection.roomId)}">
-                <div class="two-col">
-                    <div class="field-row"><label>Room *</label><input value="${htmlValue(roomSelection.roomName)}" readonly></div>
-                    <div class="field-row"><label>Building *</label><input value="${htmlValue(prefix)}" readonly></div>
-                </div>
+                <div class="form-section-title">Room Preference</div>
+                <div class="field-row"><label>Room preference (if any)</label><textarea id="req-room-preference-note" placeholder="e.g. East Wing, specific floor, preferred room...">${escapeHtml(existing?.room_preference_note || "")}</textarea></div>
 
                 <div class="form-section-title">Stay Details</div>
                 <div class="two-col">
-                    <div class="field-row"><label>Arrival *</label><input value="${htmlValue(formatDateOnly(arrival.date))}" readonly></div>
+                    <div class="field-row"><label>Arrival *</label><input id="req-arrival-date" type="date" value="${htmlValue(arrival.date)}" ${editingDatesLocked ? "readonly" : ""} required></div>
                     <div class="field-row"><label>Arrival time *</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                    <div class="field-row"><label>Departure *</label><input value="${htmlValue(formatDateOnly(departure.date))}" readonly></div>
+                    <div class="field-row"><label>Departure *</label><input id="req-departure-date" type="date" value="${htmlValue(departure.date)}" ${editingDatesLocked ? "readonly" : ""} required></div>
                     <div class="field-row"><label>Departure time *</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
                 </div>
 
@@ -5966,8 +5708,7 @@ async function submitRequesterRequest(existing = null) {
     const payload = {
         arrival_at: arrivalAt,
         departure_at: departureAt,
-        preferred_prefix: document.getElementById("req-prefix").value,
-        preferred_room: document.getElementById("req-room").value || null,
+        room_preference_note: document.getElementById("req-room-preference-note").value.trim(),
         visitor_name: document.getElementById("req-visitor-name").value.trim(),
         visitor_designation: document.getElementById("req-visitor-designation").value.trim(),
         visitor_organisation: document.getElementById("req-visitor-organisation").value.trim(),

@@ -13,7 +13,7 @@ from backend.responses import api_error, api_success, serializer_error_response
 from bookings.models import BookingRequest
 
 from .models import UserProfile
-from .permissions import IsAdminOrSuperAdminRole, IsApprovedUser, IsSuperAdminRole
+from .permissions import IsApprovedUser, IsSuperAdminRole
 from .serializers import (
     AccountApprovalActionSerializer,
     AccountRequestSerializer,
@@ -104,7 +104,7 @@ class SignupView(APIView):
         if profile.role == ROLE_ADMIN:
             message = "Account created successfully. Please wait for superadmin approval."
         else:
-            message = "Account created successfully. Please wait for approval."
+            message = "Account created successfully. You can log in now."
         return api_success(
             message,
             signup_payload(user),
@@ -357,17 +357,18 @@ class WorkflowNotificationCountView(APIView):
                     is_deleted=False,
                 )
             )
+            items["booking_requests"] = booking_request_items(booking_request_qs)
+            counts["booking_requests"] = len(items["booking_requests"])
+
             requester_account_qs = UserProfile.objects.filter(
                 role=ROLE_REQUESTER,
                 approval_status=UserProfile.APPROVAL_PENDING,
             ).select_related("user")
-            items["booking_requests"] = booking_request_items(booking_request_qs)
             items["requester_accounts"] = account_items(
                 requester_account_qs,
                 "requester_account",
                 "Requester account",
             )
-            counts["booking_requests"] = len(items["booking_requests"])
             counts["requester_accounts"] = len(items["requester_accounts"])
 
         if profile.role == ROLE_SUPERADMIN:
@@ -443,7 +444,7 @@ class AccountRequestQueryMixin:
 
 class SuperadminAccountRequestListView(AccountRequestQueryMixin, APIView):
     permission_classes = [IsSuperAdminRole]
-    allowed_roles = (ROLE_ADMIN, ROLE_REQUESTER)
+    allowed_roles = (ROLE_ADMIN,)
 
     def get(self, request):
         return api_success(
@@ -454,7 +455,7 @@ class SuperadminAccountRequestListView(AccountRequestQueryMixin, APIView):
 
 class SuperadminAccountRequestDetailView(AccountRequestQueryMixin, APIView):
     permission_classes = [IsSuperAdminRole]
-    allowed_roles = (ROLE_ADMIN, ROLE_REQUESTER)
+    allowed_roles = (ROLE_ADMIN,)
 
     def get(self, request, pk):
         profile = self.get_queryset(request).filter(pk=pk).first()
@@ -462,33 +463,6 @@ class SuperadminAccountRequestDetailView(AccountRequestQueryMixin, APIView):
             return api_error("Account request not found.", status_code=status.HTTP_404_NOT_FOUND)
         return api_success(
             "Account request fetched successfully.",
-            AccountRequestSerializer(profile).data,
-        )
-
-
-class AdminRequesterAccountListView(AccountRequestQueryMixin, APIView):
-    permission_classes = [IsAdminOrSuperAdminRole]
-    allowed_roles = (ROLE_REQUESTER,)
-    default_role = ROLE_REQUESTER
-
-    def get(self, request):
-        return api_success(
-            "Requester accounts fetched successfully.",
-            AccountRequestSerializer(self.get_queryset(request), many=True).data,
-        )
-
-
-class AdminRequesterAccountDetailView(AccountRequestQueryMixin, APIView):
-    permission_classes = [IsAdminOrSuperAdminRole]
-    allowed_roles = (ROLE_REQUESTER,)
-    default_role = ROLE_REQUESTER
-
-    def get(self, request, pk):
-        profile = self.get_queryset(request).filter(pk=pk).first()
-        if profile is None:
-            return api_error("Requester account not found.", status_code=status.HTTP_404_NOT_FOUND)
-        return api_success(
-            "Requester account fetched successfully.",
             AccountRequestSerializer(profile).data,
         )
 
@@ -595,7 +569,7 @@ class AccountApprovalActionMixin:
 
 class SuperadminAccountRequestApproveView(AccountApprovalActionMixin, APIView):
     permission_classes = [IsSuperAdminRole]
-    allowed_roles = (ROLE_ADMIN, ROLE_REQUESTER)
+    allowed_roles = (ROLE_ADMIN,)
     success_message = "Account approved successfully."
 
     def post(self, request, pk):
@@ -604,7 +578,7 @@ class SuperadminAccountRequestApproveView(AccountApprovalActionMixin, APIView):
 
 class SuperadminAccountRequestRejectView(AccountApprovalActionMixin, APIView):
     permission_classes = [IsSuperAdminRole]
-    allowed_roles = (ROLE_ADMIN, ROLE_REQUESTER)
+    allowed_roles = (ROLE_ADMIN,)
     success_message = "Account rejected successfully."
 
     def post(self, request, pk):
@@ -618,23 +592,3 @@ class SuperadminAccountRequestDeleteView(AccountApprovalActionMixin, APIView):
 
     def delete(self, request, pk):
         return self.delete_profile(request, pk)
-
-
-class AdminRequesterAccountApproveView(AccountApprovalActionMixin, APIView):
-    permission_classes = [IsAdminOrSuperAdminRole]
-    allowed_roles = (ROLE_REQUESTER,)
-    not_found_message = "Requester account not found."
-    success_message = "Requester account approved successfully."
-
-    def post(self, request, pk):
-        return self.approve_profile(request, pk)
-
-
-class AdminRequesterAccountRejectView(AccountApprovalActionMixin, APIView):
-    permission_classes = [IsAdminOrSuperAdminRole]
-    allowed_roles = (ROLE_REQUESTER,)
-    not_found_message = "Requester account not found."
-    success_message = "Requester account rejected successfully."
-
-    def post(self, request, pk):
-        return self.reject_profile(request, pk)

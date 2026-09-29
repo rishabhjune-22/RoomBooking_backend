@@ -312,6 +312,18 @@ class BookingSerializer(serializers.ModelSerializer):
     def validate_attender_fields(self, attrs):
         instance = self.instance
 
+        # A partial update of unrelated booking fields must not normalize legacy
+        # attender values. Doing so creates spurious audit entries (and silently
+        # mutates data) whenever an older booking is edited.
+        attender_fields = {
+            "attender_required",
+            "attender_morning_shift",
+            "attender_morning_chargeable",
+            "attender_evening_shift",
+        }
+        if instance is not None and not attender_fields.intersection(attrs):
+            return
+
         attender_required = attrs.get(
             "attender_required",
             getattr(instance, "attender_required", False)
@@ -823,6 +835,8 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
     approved_booking_id = serializers.SerializerMethodField()
     assigned_room_name = serializers.SerializerMethodField()
     reviewed_by_name = serializers.SerializerMethodField()
+    admin_seen_by_name = serializers.SerializerMethodField()
+    can_pull_back = serializers.SerializerMethodField()
     remarks = serializers.CharField(source="delete_reason", read_only=True)
 
     class Meta:
@@ -837,6 +851,10 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "reviewed_at",
             "reviewed_by",
             "reviewed_by_name",
+            "admin_seen_at",
+            "admin_seen_by",
+            "admin_seen_by_name",
+            "can_pull_back",
             "admin_remarks",
             "approved_booking_id",
             "assigned_room_name",
@@ -885,6 +903,10 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             "reviewed_at",
             "reviewed_by",
             "reviewed_by_name",
+            "admin_seen_at",
+            "admin_seen_by",
+            "admin_seen_by_name",
+            "can_pull_back",
             "admin_remarks",
             "approved_booking_id",
             "assigned_room_name",
@@ -924,10 +946,27 @@ class BookingRequestBaseSerializer(serializers.ModelSerializer):
             return ""
         return user.get_full_name().strip() or user.email or user.username
 
+    def get_admin_seen_by_name(self, obj):
+        user = getattr(obj, "admin_seen_by", None)
+        if not user:
+            return ""
+        return user.get_full_name().strip() or user.email or user.username
+
+    def get_can_pull_back(self, obj):
+        return (
+            not obj.is_deleted
+            and obj.status == BookingRequest.STATUS_PENDING
+            and obj.admin_seen_at is None
+            and obj.reviewed_at is None
+        )
+
 
 class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
     class Meta(BookingRequestBaseSerializer.Meta):
-        read_only_fields = BookingRequestBaseSerializer.Meta.read_only_fields
+        read_only_fields = BookingRequestBaseSerializer.Meta.read_only_fields + [
+            "preferred_prefix",
+            "preferred_room",
+        ]
         extra_kwargs = {
             "visitor_name": {
                 "required": True,
@@ -952,7 +991,11 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
             "budget_head_department_name": {"required": False, "allow_blank": True},
             "budget_head_project_code": {"required": False, "allow_blank": True},
             "preferred_prefix": {"required": False, "allow_blank": True},
-            "room_preference_note": {"required": False, "allow_blank": True},
+            "room_preference_note": {
+                "required": False,
+                "allow_blank": True,
+                "trim_whitespace": True,
+            },
             "requestor_name": {"required": False, "allow_blank": True},
             "requestor_designation": {"required": False, "allow_blank": True},
             "requestor_department": {"required": False, "allow_blank": True},
@@ -968,6 +1011,8 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
 
     def validate(self, attrs):
         instance = self.instance
+        attrs["preferred_room"] = None
+        attrs["preferred_prefix"] = ""
         arrival_at = attrs.get("arrival_at", getattr(instance, "arrival_at", None))
         departure_at = attrs.get("departure_at", getattr(instance, "departure_at", None))
 
@@ -1015,7 +1060,12 @@ class RequesterBookingRequestCreateSerializer(BookingRequestBaseSerializer):
 
 
 class RequesterBookingRequestListSerializer(BookingRequestBaseSerializer):
-    pass
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data.pop("preferred_room", None)
+        data.pop("preferred_room_name", None)
+        data.pop("preferred_prefix", None)
+        return data
 
 
 class AdminBookingRequestSerializer(BookingRequestBaseSerializer):

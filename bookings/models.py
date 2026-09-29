@@ -302,6 +302,14 @@ class BookingRequest(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
     )
+    admin_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    admin_seen_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="seen_booking_requests",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     admin_remarks = models.TextField(blank=True, default="")
     approved_booking = models.OneToOneField(
         Booking,

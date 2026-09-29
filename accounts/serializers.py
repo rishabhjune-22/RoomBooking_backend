@@ -1,7 +1,5 @@
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
@@ -164,19 +162,10 @@ class SignupSerializer(serializers.Serializer):
                 "email": ["An account with this email already exists."]
             })
 
-        user = User(
-            username=attrs["email"],
-            email=attrs["email"],
-            first_name=attrs["name"],
-        )
-        try:
-            validate_password(attrs["password"], user=user)
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError({"password": list(exc.messages)}) from exc
-
         return attrs
 
     def create(self, validated_data):
+        role = validated_data.get("role", ROLE_ADMIN)
         user = User.objects.create_user(
             username=validated_data["email"],
             email=validated_data["email"],
@@ -185,8 +174,10 @@ class SignupSerializer(serializers.Serializer):
         )
         set_user_role(
             user,
-            validated_data.get("role", ROLE_ADMIN),
-            approval_status=APPROVAL_PENDING,
+            role,
+            approval_status=(
+                APPROVAL_APPROVED if role == ROLE_REQUESTER else APPROVAL_PENDING
+            ),
             designation=validated_data.get("designation", ""),
             department=validated_data.get("department", ""),
             mobile=validated_data.get("mobile", ""),

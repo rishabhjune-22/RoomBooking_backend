@@ -22,9 +22,11 @@ def web_static_version():
     if configured_version:
         return configured_version
 
+    static_root = settings.BASE_DIR / "webapp/static/webapp"
     asset_paths = [
-        settings.BASE_DIR / "webapp/static/webapp/app.js",
-        settings.BASE_DIR / "webapp/static/webapp/styles.css",
+        *static_root.rglob("*.js"),
+        *static_root.rglob("*.mjs"),
+        *static_root.rglob("*.css"),
         settings.BASE_DIR / "webapp/templates/webapp/index.html",
     ]
     mtimes = [path.stat().st_mtime_ns for path in asset_paths if path.exists()]

@@ -431,6 +431,15 @@ html[data-theme="dark"] .auth-brand-badge {
     color: var(--ink);
 }
 
+.password-match-status {
+    min-height: 18px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.password-match-status.unmet { color: var(--red); }
+.password-match-status.met { color: var(--green); }
+
 .ghost-btn,
 .outline-btn,
 .primary-btn,
@@ -2543,6 +2552,26 @@ html[data-theme="dark"] .auth-brand-badge {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+}
+
+.requester-room-preference {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 5px;
+    padding: 12px 14px;
+    border: 1px solid #e0a800;
+    border-radius: 10px;
+    background: #fff3b0;
+    color: #5d4700;
+    overflow-wrap: anywhere;
+}
+
+.requester-room-preference strong {
+    font-size: 13px;
+}
+
+.requester-room-preference span {
+    font-size: 14px;
 }
 
 .booking-form {

@@ -249,6 +249,15 @@ def soft_delete_booking_request(booking_request, user, remarks=""):
     return True
 
 
+def mark_booking_request_seen(booking_request, user):
+    if booking_request.admin_seen_at is not None:
+        return False
+    booking_request.admin_seen_at = timezone.now()
+    booking_request.admin_seen_by = user
+    booking_request.save(update_fields=["admin_seen_at", "admin_seen_by"])
+    return True
+
+
 def soft_delete_source_request_for_booking(booking, user):
     try:
         booking_request = booking.source_request
@@ -1699,14 +1708,6 @@ class AvailableRoomsByDateRangeView(APIView):
         )
 
 
-class RequesterAvailabilityCalendarView(RoomAvailabilityCalendarView):
-    permission_classes = [IsRequesterRole]
-
-
-class RequesterAvailableRoomsByDateRangeView(AvailableRoomsByDateRangeView):
-    permission_classes = [IsRequesterRole]
-
-
 class RequesterBookingRequestListCreateView(APIView):
     permission_classes = [IsRequesterRole]
     throttle_classes = [ScopedRateThrottle]
@@ -1715,7 +1716,13 @@ class RequesterBookingRequestListCreateView(APIView):
     def get(self, request):
         queryset = (
             BookingRequest.objects
-            .select_related("requester", "preferred_room", "approved_booking__room", "reviewed_by")
+            .select_related(
+                "requester",
+                "preferred_room",
+                "approved_booking__room",
+                "reviewed_by",
+                "admin_seen_by",
+            )
             .filter(requester=request.user)
             .filter(is_deleted=False)
             .order_by("-requested_at")
@@ -1756,6 +1763,7 @@ class RequesterBookingRequestDetailView(APIView):
                 "preferred_room",
                 "approved_booking__room",
                 "reviewed_by",
+                "admin_seen_by",
             ),
             pk=pk,
             requester=request.user,
@@ -1831,6 +1839,15 @@ class RequesterBookingRequestDeleteView(APIView):
                 "Booking request is already deleted.",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+        if (
+            booking_request.status != BookingRequest.STATUS_PENDING
+            or booking_request.admin_seen_at is not None
+            or booking_request.reviewed_at is not None
+        ):
+            return api_error(
+                "This request has already been seen by an administrator and can no longer be pulled back.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
 
         serializer = BookingRequestDeleteSerializer(data=request.data)
         if not serializer.is_valid():
@@ -1857,7 +1874,13 @@ class AdminBookingRequestListView(APIView):
     def get(self, request):
         queryset = (
             BookingRequest.objects
-            .select_related("requester", "preferred_room", "approved_booking__room", "reviewed_by")
+            .select_related(
+                "requester",
+                "preferred_room",
+                "approved_booking__room",
+                "reviewed_by",
+                "admin_seen_by",
+            )
             .all()
             .order_by("-requested_at")
         )
@@ -1884,17 +1907,20 @@ class AdminBookingRequestDetailView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_read"
 
+    @transaction.atomic
     def get(self, request, pk):
         booking_request = get_object_or_404(
-            BookingRequest.objects.select_related(
+            BookingRequest.objects.select_for_update().select_related(
                 "requester",
                 "preferred_room",
                 "approved_booking__room",
                 "reviewed_by",
+                "admin_seen_by",
             ),
             pk=pk,
             is_deleted=False,
         )
+        mark_booking_request_seen(booking_request, request.user)
         return api_success(
             "Booking request fetched successfully.",
             AdminBookingRequestSerializer(booking_request).data,
@@ -1912,9 +1938,13 @@ class AdminBookingRequestApproveView(APIView):
             BookingRequest.objects.select_for_update().select_related("requester"),
             pk=pk,
         )
-        if booking_request.status != BookingRequest.STATUS_PENDING:
+        mark_booking_request_seen(booking_request, request.user)
+        if booking_request.status not in {
+            BookingRequest.STATUS_PENDING,
+            BookingRequest.STATUS_CORRECTION_REQUIRED,
+        }:
             return api_error(
-                "Only pending booking requests can be approved.",
+                "Only pending or correction-required booking requests can be approved.",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1978,6 +2008,7 @@ class AdminBookingRequestRejectView(APIView):
             BookingRequest.objects.select_for_update().select_related("requester"),
             pk=pk,
         )
+        mark_booking_request_seen(booking_request, request.user)
         if booking_request.status != BookingRequest.STATUS_PENDING:
             return api_error(
                 "Only pending booking requests can be rejected.",
@@ -2062,6 +2093,7 @@ class AdminBookingRequestSendBackView(APIView):
             BookingRequest.objects.select_for_update().select_related("requester"),
             pk=pk,
         )
+        mark_booking_request_seen(booking_request, request.user)
         if booking_request.status != BookingRequest.STATUS_PENDING:
             return api_error(
                 "Only pending booking requests can be sent back for correction.",
