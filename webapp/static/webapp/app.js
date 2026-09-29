@@ -1700,7 +1700,7 @@ function renderCalendarView() {
                 : `<button class="primary-btn" id="request-booking-btn" disabled><span style="font-size:16px;margin-right:6px;">+</span>Request Booking</button>`}
         </div>
         <div class="calendar-layout">
-            <section class="surface calendar-panel">
+            <section class="surface calendar-panel ${isAdminLike() ? "" : "requester-calendar"}">
                 <div class="calendar-controls">
                     <div class="calendar-nav-group">
                         <button class="month-nav-btn" id="prev-month" aria-label="Previous month">${chevronLeftSvg()}</button>
@@ -1718,7 +1718,12 @@ function renderCalendarView() {
                     <span class="legend-item"><span class="dot half"></span> Half Available</span>
                     <span class="legend-item"><span class="dot low"></span> Less Than Half</span>
                     <span class="legend-item"><span class="dot full"></span> Full</span>
-                </div>` : ""}
+                </div>` : `<div class="requester-legend">
+                    <span class="legend-item"><span class="dot dot-today"></span> Today</span>
+                    <span class="legend-item"><span class="dot dot-selected"></span> Selected</span>
+                    <span class="legend-item"><span class="dot dot-range"></span> In Range</span>
+                    <span class="legend-item"><span class="dot dot-past"></span> Past</span>
+                </div>`}
             </section>
             <aside class="surface side-panel" id="calendar-side">
                 <div class="loading-state">Loading calendar...</div>
@@ -2035,15 +2040,28 @@ function drawRequesterCalendar() {
     const cells = [];
     WEEKDAYS.forEach((day) => cells.push(`<div class="weekday">${day}</div>`));
     for (let index = 0; index < firstDay; index += 1) {
-        cells.push(`<button class="day-cell empty" type="button" tabindex="-1"></button>`);
+        cells.push(`<div class="day-cell empty"></div>`);
     }
+    const hasRange = state.rangeStart && state.rangeEnd;
     for (let day = 1; day <= daysInMonth; day += 1) {
         const dateValue = isoDate(state.calendarYear, state.calendarMonth, day);
-        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        const isPast = dateValue < todayStr;
         const isToday = dateValue === todayStr;
+        const selectedClass = isInSelectedRange(dateValue) ? "in-range" : "";
+        const isStart = hasRange && dateValue === state.rangeStart;
+        const isEnd = hasRange && dateValue === state.rangeEnd;
+        const isSingle = hasRange && state.rangeStart === state.rangeEnd && dateValue === state.rangeStart;
+        let statusClass = "";
+        if (isPast) {
+            statusClass = "past-date";
+        } else if (isToday) {
+            statusClass = "is-today";
+        }
+        const rangePosition = isStart ? "range-start" : isEnd ? "range-end" : isSingle ? "range-single" : (selectedClass ? "in-range" : "");
         cells.push(`
-            <button class="day-cell requester-date ${selectedClass}${isToday ? " is-today" : ""}" type="button" data-date="${dateValue}">
+            <button class="day-cell requester-date ${statusClass} ${selectedClass} ${rangePosition}" type="button" data-date="${dateValue}" ${isPast ? "disabled" : ""}>
                 <span class="day-number">${day}</span>
+                <span class="day-status"></span>
             </button>
         `);
     }
