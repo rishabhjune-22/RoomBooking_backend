@@ -361,6 +361,30 @@ function formatDateRange(item) {
     return `${formatDateTime(item.arrival_at)} to ${formatDateTime(item.departure_at)}`;
 }
 
+function format12Hour(value) {
+    const match = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+    if (!match) {
+        return String(value || "");
+    }
+    let hour = Number(match[1]) % 24;
+    const minute = match[2];
+    const meridiem = hour >= 12 ? "PM" : "AM";
+    hour = hour % 12 || 12;
+    return `${hour}:${minute} ${meridiem}`;
+}
+
+function overnightCount(arrivalDate, departureDate) {
+    if (!arrivalDate || !departureDate) {
+        return 0;
+    }
+    const start = Date.parse(`${arrivalDate}T09:00:00+05:30`);
+    const end = Date.parse(`${departureDate}T09:00:00+05:30`);
+    if (Number.isNaN(start) || Number.isNaN(end)) {
+        return 0;
+    }
+    return Math.max(0, Math.round((end - start) / 86400000));
+}
+
 function isPastDateTime(value) {
     if (!value) {
         return false;
@@ -1645,42 +1669,6 @@ function renderCurrentView() {
     markWorkflowNotificationViewRead(state.view);
 }
 
-function renderStatsStrip() {
-    const strip = document.getElementById("stats-strip");
-    const group = currentCalendarGroup();
-    if (!strip) {
-        return;
-    }
-    const setStat = (id, value) => {
-        const node = strip.querySelector(id);
-        if (node) {
-            node.textContent = value;
-        }
-    };
-    if (!group) {
-        setStat("#stat-total", "0");
-        setStat("#stat-available", "0");
-        setStat("#stat-booked", "0");
-        setStat("#stat-prefix", state.prefix);
-        return;
-    }
-    const days = group.calendar || [];
-    const todayStr = todayIso();
-    const dayMap = Object.fromEntries(days.map((d) => [String(d.date).slice(0, 10), d]));
-    const selectedDay = state.rangeStart ? dayMap[state.rangeStart] || null : null;
-    const todayDay = dayMap[todayStr] || null;
-    const futureDay = days.find((d) => !isPastCalendarDate(d.date)) || null;
-    const sample = selectedDay || todayDay || futureDay || days[0];
-    const total = Math.max(0, Number(group.total_rooms || sample?.total_rooms || 0));
-    const avail = Math.max(0, Number(sample?.available_rooms || 0));
-    const booked = Math.max(0, total - avail);
-    const occupiedPercent = total > 0 ? Math.round((booked / total) * 100) : 0;
-    setStat("#stat-total", total);
-    setStat("#stat-available", avail);
-    setStat("#stat-booked", `${booked} (${occupiedPercent}%)`);
-    setStat("#stat-prefix", state.prefix);
-}
-
 async function jumpToTodayMonth() {
     const today = todayIso();
     const [year, month] = today.split("-").map(Number);
@@ -1695,7 +1683,6 @@ async function jumpToTodayMonth() {
     } else {
         renderCalendarSide();
     }
-    renderStatsStrip();
 }
 
 function renderCalendarView() {
@@ -1709,38 +1696,8 @@ function renderCalendarView() {
                 <p>${isAdminLike() ? "Manage room availability and booking requests across all buildings." : "Select your requested arrival and departure dates."}</p>
             </div>
             ${isAdminLike()
-                ? `<button class="primary-btn" id="calendar-create-booking"><span style="font-size:16px;margin-right:6px;">+</span>New Booking</button>`
+                ? `<button class="primary-btn" id="calendar-create-booking" disabled><span style="font-size:16px;margin-right:6px;">+</span>New Booking</button>`
                 : `<button class="primary-btn" id="request-booking-btn" disabled><span style="font-size:16px;margin-right:6px;">+</span>Request Booking</button>`}
-        </div>
-        <div class="stats-strip" id="stats-strip">
-            <div class="stat-card">
-                <span class="stat-icon" style="background:rgba(15,111,191,0.12);color:var(--blue);">${roomsIconSvg()}</span>
-                <div class="stat-body">
-                    <span class="stat-value" id="stat-total">-</span>
-                    <span class="stat-label">Total Rooms</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <span class="stat-icon" style="background:rgba(34,197,94,0.15);color:#16a34a;">${checkIconSvg()}</span>
-                <div class="stat-body">
-                    <span class="stat-value" id="stat-available">-</span>
-                    <span class="stat-label">Available</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <span class="stat-icon" style="background:rgba(239,68,68,0.12);color:#dc2626;">${lockIconSvg()}</span>
-                <div class="stat-body">
-                    <span class="stat-value" id="stat-booked">-</span>
-                    <span class="stat-label">Booked</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <span class="stat-icon" style="background:rgba(250,204,21,0.15);color:#ca8a04;">${calendarIconSvg()}</span>
-                <div class="stat-body">
-                    <span class="stat-value" id="stat-prefix">-</span>
-                    <span class="stat-label">Building</span>
-                </div>
-            </div>
         </div>
         <div class="calendar-layout">
             <section class="surface calendar-panel">
@@ -1992,7 +1949,6 @@ function drawBuildingTabs() {
             drawBuildingTabs();
             drawCalendar();
             renderCalendarSide();
-            renderStatsStrip();
         });
     });
 }
@@ -2025,7 +1981,6 @@ async function loadCalendar({ silent = false } = {}) {
         state.availability = null;
         drawRequesterCalendar();
         renderCalendarSide();
-        renderStatsStrip();
         return;
     }
     const endpoint = `/api/bookings/availability/?month=${state.calendarMonth}&year=${state.calendarYear}`;
@@ -2038,7 +1993,6 @@ async function loadCalendar({ silent = false } = {}) {
             grid.innerHTML = `<div class="empty-state" style="grid-column:1 / -1">${escapeHtml(error.message)}</div>`;
         }
     }
-    renderStatsStrip();
 }
 
 function currentCalendarGroup() {
@@ -2153,7 +2107,6 @@ function handleDateClick(dateValue) {
         }
         drawCalendar();
         loadAdminDateDetails(dateValue);
-        renderStatsStrip();
         return;
     }
     if (!state.rangeStart || (state.rangeStart && state.rangeEnd && state.rangeStart !== state.rangeEnd)) {
@@ -2167,7 +2120,6 @@ function handleDateClick(dateValue) {
     }
     drawCalendar();
     renderCalendarSide();
-    renderStatsStrip();
 }
 
 function handleCalendarBlankClick(event) {
@@ -2184,13 +2136,20 @@ function clearCalendarSelection() {
     state.rangeEnd = "";
     drawCalendar();
     renderCalendarSide();
-    renderStatsStrip();
 }
 
 function renderCalendarSide(content = "") {
     const side = document.getElementById("calendar-side");
     if (!side) {
         return;
+    }
+    const requestButton = document.getElementById("request-booking-btn");
+    if (requestButton) {
+        requestButton.disabled = !state.rangeStart;
+    }
+    const createBookingButton = document.getElementById("calendar-create-booking");
+    if (createBookingButton) {
+        createBookingButton.disabled = !state.rangeStart;
     }
     const group = currentCalendarGroup();
     if (isAdminLike() && !group) {
@@ -2220,10 +2179,6 @@ function renderCalendarSide(content = "") {
             <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
         </div>
     `;
-    const requestButton = document.getElementById("request-booking-btn");
-    if (requestButton) {
-        requestButton.disabled = !state.rangeStart;
-    }
 }
 
 async function loadAdminDateDetails(dateValue) {
@@ -5599,32 +5554,83 @@ async function openRequestForm(existing = null) {
     const requestorEmail = existing?.requestor_email || state.user?.email || "";
     const budgetHead = normalizedBudgetHeadFields(existing || {});
     const requesterMorningChargeable = existing?.attender_morning_chargeable !== false;
+    const nights = overnightCount(arrival.date, departure.date);
     openActionModal({
         title: editing ? "Edit Request" : "Request Booking",
         body: `
-            <form id="request-form" class="field-grid">
-                <div class="form-section-title">Room Preference</div>
-                <div class="field-row"><label>Room preference (if any)</label><textarea id="req-room-preference-note" placeholder="e.g. East Wing, specific floor, preferred room...">${escapeHtml(existing?.room_preference_note || "")}</textarea></div>
-
-                <div class="form-section-title">Stay Details</div>
-                <div class="two-col">
-                    <div class="field-row"><label>Arrival *</label><input id="req-arrival-date" type="date" value="${htmlValue(arrival.date)}" ${editingDatesLocked ? "readonly" : ""} required></div>
-                    <div class="field-row"><label>Arrival time *</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                    <div class="field-row"><label>Departure *</label><input id="req-departure-date" type="date" value="${htmlValue(departure.date)}" ${editingDatesLocked ? "readonly" : ""} required></div>
-                    <div class="field-row"><label>Departure time *</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+            <form id="request-form" class="field-grid booking-form request-form" novalidate>
+                <div class="booking-summary-bar request-summary-bar">
+                    <div class="booking-summary-main">
+                        <div class="booking-summary-icon">${calendarIconSvg()}</div>
+                        <div class="booking-summary-text">
+                            <div class="booking-summary-label">Stay duration</div>
+                            <div class="booking-summary-route">
+                                <span class="bs-date">${formatDateOnly(arrival.date)}</span>
+                                <span class="bs-arrow">${chevronRightSvg()}</span>
+                                <span class="bs-date">${formatDateOnly(departure.date)}</span>
+                            </div>
+                            <div class="booking-summary-meta">
+                                <span class="bs-chip">${nights} night${nights === 1 ? "" : "s"}</span>
+                                <span class="bs-chip">In ${format12Hour(arrival.time)}</span>
+                                <span class="bs-chip">Out ${format12Hour(departure.time)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    ${editing ? `<span class="bs-chip request-lock-chip">${editingDatesLocked ? `Locked · ${titleCase(existing.status)}` : "Dates editable"}</span>` : ""}
                 </div>
 
-                <div class="form-section-title">Visitor Details</div>
-                <div class="two-col">
-                    <div class="field-row"><label>Visitor name *</label><input id="req-visitor-name" value="${escapeHtml(existing?.visitor_name || "")}" required></div>
-                    <div class="field-row"><label>Designation (Optional)</label><input id="req-visitor-designation" value="${escapeHtml(existing?.visitor_designation || "")}"></div>
-                    <div class="field-row"><label>Organisation (Optional)</label><input id="req-visitor-organisation" value="${escapeHtml(existing?.visitor_organisation || "")}"></div>
-                    <div class="field-row"><label>Gender (Optional)</label><select id="req-visitor-gender">
-                        <option value="" ${!existing?.visitor_gender ? "selected" : ""}>Select gender (Optional)</option>
-                        <option value="Male" ${existing?.visitor_gender === "Male" ? "selected" : ""}>Male</option>
-                        <option value="Female" ${existing?.visitor_gender === "Female" ? "selected" : ""}>Female</option>
-                        <option value="Other" ${existing?.visitor_gender === "Other" ? "selected" : ""}>Other</option>
-                    </select></div>
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <div class="form-card-icon">${roomsIconSvg()}</div>
+                        <div class="form-card-title-wrap">
+                            <h4>Room preference</h4>
+                            <small>Anything specific? Building, floor or a particular room.</small>
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="req-room-preference-note">Room preference (if any)</label>
+                        <textarea id="req-room-preference-note" maxlength="500" placeholder="e.g. East Wing, ground floor, room near the elevator...">${escapeHtml(existing?.room_preference_note || "")}</textarea>
+                    </div>
+                </div>
+
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <div class="form-card-icon">${calendarIconSvg()}</div>
+                        <div class="form-card-title-wrap">
+                            <h4>Arrival & departure</h4>
+                            <small>${editingDatesLocked ? "Dates are locked by the admin for this request." : "Select your check-in and check-out schedule."}</small>
+                        </div>
+                    </div>
+                    <div class="two-col">
+                        <div class="field-row"><label for="req-arrival-date">Check-in date *</label><input id="req-arrival-date" type="date" value="${htmlValue(arrival.date)}" ${editingDatesLocked ? "readonly" : ""} required></div>
+                        <div class="field-row"><label for="req-arrival-time">Check-in time *</label><input id="req-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
+                        <div class="field-row"><label for="req-departure-date">Check-out date *</label><input id="req-departure-date" type="date" value="${htmlValue(departure.date)}" ${editingDatesLocked ? "readonly" : ""} required></div>
+                        <div class="field-row"><label for="req-departure-time">Check-out time *</label><input id="req-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+                    </div>
+                </div>
+
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <div class="form-card-icon">${checkIconSvg()}</div>
+                        <div class="form-card-title-wrap">
+                            <h4>Visitor details</h4>
+                            <small>Who is visiting and why.</small>
+                        </div>
+                    </div>
+                    <div class="two-col">
+                        <div class="field-row"><label for="req-visitor-name">Visitor name *</label><input id="req-visitor-name" value="${escapeHtml(existing?.visitor_name || "")}" required></div>
+                        <div class="field-row"><label for="req-visitor-designation">Designation (Optional)</label><input id="req-visitor-designation" value="${escapeHtml(existing?.visitor_designation || "")}"></div>
+                        <div class="field-row"><label for="req-visitor-organisation">Organisation (Optional)</label><input id="req-visitor-organisation" value="${escapeHtml(existing?.visitor_organisation || "")}"></div>
+                        <div class="field-row"><label for="req-visitor-gender">Gender (Optional)</label><select id="req-visitor-gender">
+                            <option value="" ${!existing?.visitor_gender ? "selected" : ""}>Select gender (Optional)</option>
+                            <option value="Male" ${existing?.visitor_gender === "Male" ? "selected" : ""}>Male</option>
+                            <option value="Female" ${existing?.visitor_gender === "Female" ? "selected" : ""}>Female</option>
+                            <option value="Other" ${existing?.visitor_gender === "Other" ? "selected" : ""}>Other</option>
+                        </select></div>
+                        <div class="field-row"><label for="req-visitor-mobile">Visitor mobile (Optional)</label><input id="req-visitor-mobile" inputmode="tel" value="${escapeHtml(existing?.visitor_mobile || "")}"></div>
+                        <div class="field-row"><label for="req-visitor-email">Visitor email (Optional)</label><input id="req-visitor-email" type="email" value="${escapeHtml(existing?.visitor_email || "")}"></div>
+                    </div>
+                    <div class="field-row"><label for="req-purpose">Purpose of visit (Optional)</label><textarea id="req-purpose" maxlength="1000">${escapeHtml(existing?.purpose_of_visit || "")}</textarea></div>
                     <div class="field-row"><label>Guest nationality (Optional)</label>
                         <div class="radio-list compact-radio-list">
                             <label class="check-row"><input name="req-visitor-nationality" type="radio" value="indian" ${existing?.visitor_nationality === "indian" ? "checked" : ""}> Indian</label>
@@ -5632,49 +5638,77 @@ async function openRequestForm(existing = null) {
                         </div>
                         <button class="outline-btn compact-btn" id="req-clear-visitor-nationality" type="button">Clear Selection</button>
                     </div>
-                    <div class="field-row"><label>Visitor mobile (Optional)</label><input id="req-visitor-mobile" value="${escapeHtml(existing?.visitor_mobile || "")}"></div>
-                    <div class="field-row"><label>Visitor email (Optional)</label><input id="req-visitor-email" type="email" value="${escapeHtml(existing?.visitor_email || "")}"></div>
-                </div>
-                <div class="field-row"><label>Purpose of visit (Optional)</label><textarea id="req-purpose">${escapeHtml(existing?.purpose_of_visit || "")}</textarea></div>
-
-                <div class="form-section-title">Visitor Category (Optional)</div>
-                <div class="radio-list">
-                    <label class="check-row"><input name="req-visitor-category" type="radio" value="institute_guest" ${existing?.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
-                    <label class="check-row"><input name="req-visitor-category" type="radio" value="conference_workshop_guest" ${existing?.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
-                    <label class="check-row"><input name="req-visitor-category" type="radio" value="other_guest" ${existing?.visitor_category === "other_guest" ? "checked" : ""}> Other Guest</label>
-                    <button class="outline-btn compact-btn" id="req-clear-visitor-category" type="button">Clear Selection</button>
+                    <div class="field-row"><label>Visitor category (Optional)</label>
+                        <div class="radio-list">
+                            <label class="check-row"><input name="req-visitor-category" type="radio" value="institute_guest" ${existing?.visitor_category === "institute_guest" ? "checked" : ""}> Institute Guest (Official Institute Guest)</label>
+                            <label class="check-row"><input name="req-visitor-category" type="radio" value="conference_workshop_guest" ${existing?.visitor_category === "conference_workshop_guest" ? "checked" : ""}> Conference / Workshop Guest</label>
+                            <label class="check-row"><input name="req-visitor-category" type="radio" value="other_guest" ${existing?.visitor_category === "other_guest" ? "checked" : ""}> Other Guest</label>
+                            <button class="outline-btn compact-btn" id="req-clear-visitor-category" type="button">Clear Selection</button>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-section-title">Budget Head (Optional)</div>
-                <div class="budget-head-group">
-                    <label class="check-row"><input id="req-budget-individual" data-requester-budget-head-field="req-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
-                    <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="req-budget-name">Name (Optional)</label><input id="req-budget-name" placeholder="Name (Optional)" value="${htmlValue(budgetHead.individual)}"></div>
-                    <label class="check-row"><input id="req-budget-institute-head" data-requester-budget-head-field="req-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
-                    <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="req-budget-department">Department Name (Optional)</label><input id="req-budget-department" placeholder="Department Name (Optional)" value="${htmlValue(budgetHead.instituteHead)}"></div>
-                    <label class="check-row"><input id="req-budget-project-head" data-requester-budget-head-field="req-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
-                    <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="req-budget-project-code">Project code (Optional)</label><input id="req-budget-project-code" placeholder="Project code (Optional)" value="${htmlValue(budgetHead.projectHead)}"></div>
-                    <button class="outline-btn compact-btn budget-clear-btn" id="req-clear-budget-head" type="button">Clear Budget Head</button>
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <div class="form-card-icon">${lockIconSvg()}</div>
+                        <div class="form-card-title-wrap">
+                            <h4>Budget head</h4>
+                            <small>Optional — charge the stay to a budget head.</small>
+                        </div>
+                    </div>
+                    <div class="budget-head-group">
+                        <div class="budget-option">
+                            <label class="check-row"><input id="req-budget-individual" data-requester-budget-head-field="req-budget-name" type="checkbox" ${budgetHead.individual ? "checked" : ""}> Individual</label>
+                            <div class="field-row budget-head-input" ${budgetHead.individual ? "" : "hidden"}><label for="req-budget-name">Name (Optional)</label><input id="req-budget-name" placeholder="Name (Optional)" value="${htmlValue(budgetHead.individual)}"></div>
+                        </div>
+                        <div class="budget-option">
+                            <label class="check-row"><input id="req-budget-institute-head" data-requester-budget-head-field="req-budget-department" type="checkbox" ${budgetHead.instituteHead ? "checked" : ""}> Institute Head</label>
+                            <div class="field-row budget-head-input" ${budgetHead.instituteHead ? "" : "hidden"}><label for="req-budget-department">Department name (Optional)</label><input id="req-budget-department" placeholder="Department Name (Optional)" value="${htmlValue(budgetHead.instituteHead)}"></div>
+                        </div>
+                        <div class="budget-option">
+                            <label class="check-row"><input id="req-budget-project-head" data-requester-budget-head-field="req-budget-project-code" type="checkbox" ${budgetHead.projectHead ? "checked" : ""}> Project Head</label>
+                            <div class="field-row budget-head-input" ${budgetHead.projectHead ? "" : "hidden"}><label for="req-budget-project-code">Project code (Optional)</label><input id="req-budget-project-code" placeholder="Project code (Optional)" value="${htmlValue(budgetHead.projectHead)}"></div>
+                        </div>
+                        <button class="outline-btn compact-btn budget-clear-btn" id="req-clear-budget-head" type="button">Clear Budget Head</button>
+                    </div>
                 </div>
 
-                <div class="form-section-title">Attender Requirement (Optional)</div>
-                <label style="display:flex;gap:8px;align-items:center;font-weight:800"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required (Optional)</label>
-                <div class="field-row"><label>Shift(s) * (if attender required) - Attender charges Rs 850 per chargeable shift per day</label></div>
-                <div class="two-col">
-                    <label style="display:flex;gap:8px;align-items:center"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}> Morning shift (7 AM - 3 PM)</label>
-                    <label style="display:flex;gap:8px;align-items:center"><input id="req-evening" type="checkbox" ${existing?.attender_evening_shift ? "checked" : ""}> Evening shift (3 PM - 11 PM)</label>
-                </div>
-                <div id="req-morning-chargeability" class="radio-list compact-radio-list">
-                    <label class="check-row"><input name="req-morning-chargeable" type="radio" value="yes" ${requesterMorningChargeable ? "checked" : ""}> Morning shift chargeable</label>
-                    <label class="check-row"><input name="req-morning-chargeable" type="radio" value="no" ${requesterMorningChargeable ? "" : "checked"}> Morning shift non-chargeable</label>
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <div class="form-card-icon">${moonIconSvg()}</div>
+                        <div class="form-card-title-wrap">
+                            <h4>Attender requirement</h4>
+                            <small>Optional — attender charges Rs 850 per chargeable shift per day.</small>
+                        </div>
+                    </div>
+                    <div class="attender-stack">
+                        <label class="check-row"><input id="req-attender" type="checkbox" ${existing?.attender_required ? "checked" : ""}> Attender required</label>
+                        <div class="shift-pills two-cols">
+                            <label class="check-row"><input id="req-morning" type="checkbox" ${existing?.attender_morning_shift ? "checked" : ""}><span class="shift-pill-label">Morning shift<small>7 AM - 3 PM</small></span></label>
+                            <label class="check-row"><input id="req-evening" type="checkbox" ${existing?.attender_evening_shift ? "checked" : ""}><span class="shift-pill-label">Evening shift<small>3 PM - 11 PM</small></span></label>
+                        </div>
+                        <div id="req-morning-chargeability" class="radio-list compact-radio-list">
+                            <label class="check-row"><input name="req-morning-chargeable" type="radio" value="yes" ${requesterMorningChargeable ? "checked" : ""}> Morning shift chargeable</label>
+                            <label class="check-row"><input name="req-morning-chargeable" type="radio" value="no" ${requesterMorningChargeable ? "" : "checked"}> Morning shift non-chargeable</label>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-section-title">Requester Details</div>
-                <div class="two-col">
-                    <div class="field-row"><label>Requester name (Optional)</label><input id="req-requestor-name" value="${escapeHtml(requestorName)}" disabled aria-readonly="true"></div>
-                    <div class="field-row"><label>Department (Optional)</label><input id="req-requestor-department" value="${escapeHtml(existing?.requestor_department || state.user?.department || "")}"></div>
-                    <div class="field-row"><label>Designation (Optional)</label><input id="req-requestor-designation" value="${escapeHtml(existing?.requestor_designation || state.user?.designation || "")}"></div>
-                    <div class="field-row"><label>Mobile (Optional)</label><input id="req-requestor-mobile" value="${escapeHtml(existing?.requestor_mobile || state.user?.mobile || "")}"></div>
-                    <div class="field-row"><label>Email (Optional)</label><input id="req-requestor-email" type="email" value="${escapeHtml(requestorEmail)}" readonly></div>
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <div class="form-card-icon">${buildingsIconSvg()}</div>
+                        <div class="form-card-title-wrap">
+                            <h4>Requester details</h4>
+                            <small>Your details — auto-filled from your profile.</small>
+                        </div>
+                    </div>
+                    <div class="two-col">
+                        <div class="field-row"><label for="req-requestor-name">Requester name</label><input id="req-requestor-name" value="${escapeHtml(requestorName)}" disabled aria-readonly="true"></div>
+                        <div class="field-row"><label for="req-requestor-email">Email</label><input id="req-requestor-email" type="email" value="${escapeHtml(requestorEmail)}" readonly></div>
+                        <div class="field-row"><label for="req-requestor-department">Department (Optional)</label><input id="req-requestor-department" value="${escapeHtml(existing?.requestor_department || state.user?.department || "")}"></div>
+                        <div class="field-row"><label for="req-requestor-designation">Designation (Optional)</label><input id="req-requestor-designation" value="${escapeHtml(existing?.requestor_designation || state.user?.designation || "")}"></div>
+                        <div class="field-row"><label for="req-requestor-mobile">Mobile (Optional)</label><input id="req-requestor-mobile" inputmode="tel" value="${escapeHtml(existing?.requestor_mobile || state.user?.mobile || "")}"></div>
+                    </div>
                 </div>
             </form>
         `,
@@ -5683,6 +5717,34 @@ async function openRequestForm(existing = null) {
         onBind: () => {
             bindRequesterAttenderRequirement();
             bindRequesterBudgetHeadFields();
+            const updateSummaryBar = () => {
+                const bar = document.querySelector(".request-summary-bar");
+                if (!bar) return;
+                const arrivalDate = document.getElementById("req-arrival-date")?.value;
+                const departureDate = document.getElementById("req-departure-date")?.value;
+                const arrivalTime = document.getElementById("req-arrival-time")?.value;
+                const departureTime = document.getElementById("req-departure-time")?.value;
+                if (!arrivalDate || !departureDate || !arrivalTime || !departureTime) return;
+                const nights = overnightCount(arrivalDate, departureDate);
+                const route = bar.querySelector(".booking-summary-route");
+                if (route) {
+                    const dates = route.querySelectorAll(".bs-date");
+                    if (dates[0]) dates[0].textContent = formatDateOnly(arrivalDate);
+                    if (dates[1]) dates[1].textContent = formatDateOnly(departureDate);
+                }
+                const meta = bar.querySelector(".booking-summary-meta");
+                if (meta) {
+                    const chips = meta.querySelectorAll(".bs-chip");
+                    if (chips[0]) chips[0].textContent = `${nights} night${nights === 1 ? "" : "s"}`;
+                    if (chips[1]) chips[1].textContent = `In ${format12Hour(arrivalTime)}`;
+                    if (chips[2]) chips[2].textContent = `Out ${format12Hour(departureTime)}`;
+                }
+            };
+            ["req-arrival-date", "req-arrival-time", "req-departure-date", "req-departure-time"].forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener("change", updateSummaryBar);
+            });
+            updateSummaryBar();
         },
         onConfirm: async () => submitRequesterRequest(existing),
     });
