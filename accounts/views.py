@@ -12,7 +12,8 @@ from django.utils import timezone
 from backend.responses import api_error, api_success, serializer_error_response
 from bookings.models import BookingRequest
 
-from .models import UserProfile
+from .models import UserProfile, WorkflowNotification
+from .notification_service import create_notification
 from .permissions import IsApprovedUser, IsSuperAdminRole
 from .serializers import (
     AccountApprovalActionSerializer,
@@ -202,10 +203,197 @@ class LogoutView(APIView):
         return api_success("Logged out successfully.", None)
 
 
+def ensure_current_workflow_notifications(user):
+    profile = get_user_profile(user)
+    if profile.role in {ROLE_ADMIN, ROLE_SUPERADMIN}:
+        pending_booking_requests = BookingRequest.objects.select_related("requester").filter(
+            status=BookingRequest.STATUS_PENDING,
+            is_deleted=False,
+        )
+        pending_booking_request_ids = list(
+            pending_booking_requests.values_list("pk", flat=True)
+        )
+        WorkflowNotification.objects.filter(
+            user=user,
+            category=WorkflowNotification.CATEGORY_BOOKING_REQUESTS,
+        ).exclude(related_object_id__in=pending_booking_request_ids).delete()
+        for booking_request in pending_booking_requests:
+            requester_name = (
+                booking_request.requester.get_full_name()
+                or booking_request.requester.email
+                or booking_request.requester.username
+            )
+            create_notification(
+                user=user,
+                category=WorkflowNotification.CATEGORY_BOOKING_REQUESTS,
+                event_key=f"booking-request:{booking_request.pk}:submitted:{booking_request.requested_at.isoformat()}",
+                title="Booking request submitted",
+                message=f"{requester_name} submitted a request for {booking_request.visitor_name or 'a visitor'}.",
+                target_view="bookingRequests",
+                related_object_type="booking_request",
+                related_object_id=booking_request.pk,
+            )
+
+        pending_requester_profiles = UserProfile.objects.select_related("user").filter(
+            role=ROLE_REQUESTER,
+            approval_status=UserProfile.APPROVAL_PENDING,
+        )
+        pending_requester_profile_ids = list(
+            pending_requester_profiles.values_list("pk", flat=True)
+        )
+        WorkflowNotification.objects.filter(
+            user=user,
+            category=WorkflowNotification.CATEGORY_REQUESTER_ACCOUNTS,
+            read_at__isnull=True,
+        ).exclude(related_object_id__in=pending_requester_profile_ids).update(
+            read_at=timezone.now()
+        )
+        for account_profile in pending_requester_profiles:
+            create_notification(
+                user=user,
+                category=WorkflowNotification.CATEGORY_REQUESTER_ACCOUNTS,
+                event_key=f"requester-account:{account_profile.pk}:pending:{int(account_profile.updated_at.timestamp())}",
+                title="Requester account approval pending",
+                message=f"{account_profile.user.get_full_name() or account_profile.user.email} is waiting for approval.",
+                target_view="accounts" if profile.role == ROLE_SUPERADMIN else "bookingRequests",
+                related_object_type="user_profile",
+                related_object_id=account_profile.pk,
+            )
+
+    if profile.role == ROLE_SUPERADMIN:
+        pending_admin_profiles = UserProfile.objects.select_related("user").filter(
+            role=ROLE_ADMIN,
+            approval_status=UserProfile.APPROVAL_PENDING,
+        )
+        pending_admin_profile_ids = list(
+            pending_admin_profiles.values_list("pk", flat=True)
+        )
+        WorkflowNotification.objects.filter(
+            user=user,
+            category=WorkflowNotification.CATEGORY_ADMIN_ACCOUNTS,
+            read_at__isnull=True,
+        ).exclude(related_object_id__in=pending_admin_profile_ids).update(
+            read_at=timezone.now()
+        )
+        for account_profile in pending_admin_profiles:
+            create_notification(
+                user=user,
+                category=WorkflowNotification.CATEGORY_ADMIN_ACCOUNTS,
+                event_key=f"admin-account:{account_profile.pk}:pending:{int(account_profile.updated_at.timestamp())}",
+                title="Admin account approval pending",
+                message=f"{account_profile.user.get_full_name() or account_profile.user.email} is waiting for approval.",
+                target_view="accounts",
+                related_object_type="user_profile",
+                related_object_id=account_profile.pk,
+            )
+
+    if profile.role == ROLE_REQUESTER:
+        reviewed = BookingRequest.objects.filter(
+            requester=user,
+            status__in=[
+                BookingRequest.STATUS_APPROVED,
+                BookingRequest.STATUS_REJECTED,
+                BookingRequest.STATUS_CORRECTION_REQUIRED,
+            ],
+            is_deleted=False,
+        )
+        for booking_request in reviewed:
+            marker = booking_request.reviewed_at or booking_request.requested_at
+            create_notification(
+                user=user,
+                category=WorkflowNotification.CATEGORY_MY_REQUESTS,
+                event_key=f"booking-request:{booking_request.pk}:{booking_request.status}:{marker.isoformat()}",
+                title=f"Booking request {booking_request.get_status_display().lower()}",
+                message=f"{booking_request.visitor_name or 'Your booking request'} was {booking_request.get_status_display().lower()}. Remarks: {booking_request.admin_remarks or 'No remarks provided.'}",
+                target_view="myRequests",
+                related_object_type="booking_request",
+                related_object_id=booking_request.pk,
+            )
+        deleted_by_admin = (
+            BookingRequest.objects
+            .filter(requester=user, is_deleted=True)
+            .exclude(deleted_by=user)
+            .exclude(deleted_by__isnull=True)
+        )
+        for booking_request in deleted_by_admin:
+            marker = booking_request.deleted_at or booking_request.requested_at
+            create_notification(
+                user=user,
+                category=WorkflowNotification.CATEGORY_MY_REQUESTS,
+                event_key=f"booking-request:{booking_request.pk}:deleted:{marker.isoformat()}",
+                title="Booking request deleted",
+                message=f"Your booking request for {booking_request.visitor_name or 'the selected dates'} was deleted. Remarks: {booking_request.delete_reason or 'No remarks provided.'}",
+                target_view="myRequests",
+                related_object_type="booking_request",
+                related_object_id=booking_request.pk,
+            )
+
+    collapse_superseded_workflow_notifications(user)
+
+
+def collapse_superseded_workflow_notifications(user):
+    unread = (
+        WorkflowNotification.objects
+        .filter(user=user, read_at__isnull=True)
+        .exclude(related_object_id__isnull=True)
+        .order_by("category", "related_object_type", "related_object_id", "-created_at", "-id")
+    )
+    seen = set()
+    superseded_ids = []
+    for notification in unread:
+        identity = (
+            notification.category,
+            notification.related_object_type,
+            notification.related_object_id,
+        )
+        if identity in seen:
+            superseded_ids.append(notification.pk)
+        else:
+            seen.add(identity)
+    if superseded_ids:
+        WorkflowNotification.objects.filter(pk__in=superseded_ids).update(
+            read_at=timezone.now()
+        )
+
+
+def notification_payload(user):
+    categories = [choice[0] for choice in WorkflowNotification.CATEGORY_CHOICES]
+    queryset = WorkflowNotification.objects.filter(user=user)
+    items = {category: [] for category in categories}
+    counts = {category: 0 for category in categories}
+    for notification in queryset[:100]:
+        items[notification.category].append({
+            "id": notification.related_object_id or notification.id,
+            "notification_id": notification.id,
+            "key": notification.event_key,
+            "title": notification.title,
+            "message": notification.message,
+            "target_view": notification.target_view,
+            "related_object_type": notification.related_object_type,
+            "related_object_id": notification.related_object_id,
+            "created_at": notification.created_at,
+            "read_at": notification.read_at,
+            "is_read": notification.read_at is not None,
+        })
+    unread = queryset.filter(read_at__isnull=True)
+    for category in categories:
+        counts[category] = unread.filter(category=category).count()
+    counts["total"] = sum(counts.values())
+    counts["items"] = items
+    return counts
+
+
 class WorkflowNotificationCountView(APIView):
     permission_classes = [IsApprovedUser]
 
     def get(self, request):
+        ensure_current_workflow_notifications(request.user)
+        return api_success(
+            "Workflow notifications fetched successfully.",
+            notification_payload(request.user),
+        )
+
+        # Legacy dynamic notification assembly retained below for migration history.
         profile = get_user_profile(request.user)
         counts = {
             "booking_requests": 0,
@@ -412,6 +600,31 @@ class WorkflowNotificationCountView(APIView):
         counts["total"] = sum(counts.values())
         counts["items"] = items
         return api_success("Workflow notification counts fetched successfully.", counts)
+
+
+class WorkflowNotificationMarkReadView(APIView):
+    permission_classes = [IsApprovedUser]
+
+    def post(self, request):
+        queryset = WorkflowNotification.objects.filter(user=request.user, read_at__isnull=True)
+        categories = request.data.get("categories", []) if isinstance(request.data, dict) else []
+        notification_ids = request.data.get("ids", []) if isinstance(request.data, dict) else []
+        if categories:
+            allowed = {choice[0] for choice in WorkflowNotification.CATEGORY_CHOICES}
+            normalized = [value for value in categories if value in allowed]
+            queryset = queryset.filter(category__in=normalized)
+        elif notification_ids:
+            queryset = queryset.filter(pk__in=notification_ids)
+        else:
+            return api_error(
+                "Select notifications or categories to mark as read.",
+                errors={"categories": ["Provide at least one category or notification id."]},
+            )
+        updated = queryset.update(read_at=timezone.now())
+        return api_success(
+            "Notifications marked as read.",
+            {"updated": updated, **notification_payload(request.user)},
+        )
 
 
 class AccountRequestQueryMixin:

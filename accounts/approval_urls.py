@@ -7,6 +7,7 @@ from .views import (
     SuperadminAccountRequestListView,
     SuperadminAccountRequestRejectView,
     WorkflowNotificationCountView,
+    WorkflowNotificationMarkReadView,
 )
 
 
@@ -15,6 +16,11 @@ urlpatterns = [
         "workflow-notification-counts/",
         WorkflowNotificationCountView.as_view(),
         name="workflow-notification-counts",
+    ),
+    path(
+        "workflow-notifications/mark-read/",
+        WorkflowNotificationMarkReadView.as_view(),
+        name="workflow-notification-mark-read",
     ),
     path(
         "superadmin/account-requests/",

@@ -7,7 +7,22 @@ from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 
-from .models import UserProfile
+from .models import UserProfile, WorkflowNotification
+
+
+@admin.register(WorkflowNotification)
+class WorkflowNotificationAdmin(admin.ModelAdmin):
+    list_display = ("title", "user", "category", "created_at", "read_at")
+    list_filter = ("category", "read_at", "created_at")
+    search_fields = ("title", "message", "user__email", "event_key")
+    readonly_fields = (
+        "user", "category", "event_key", "title", "message", "target_view",
+        "related_object_type", "related_object_id", "read_at", "created_at",
+    )
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
 
 
 def ensure_superadmin(request):

@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from accounts.models import UserProfile
+from accounts.models import UserProfile, WorkflowNotification
 from accounts.roles import (
     APPROVAL_APPROVED,
     APPROVAL_PENDING,
@@ -23,6 +23,135 @@ from accounts.roles import (
 from bookings.models import BookingRequest
 
 User = get_user_model()
+
+
+class PersistentWorkflowNotificationTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="notification-admin@example.com",
+            email="notification-admin@example.com",
+            password="StrongPass123",
+        )
+        set_user_role(self.admin, ROLE_ADMIN, approval_status=APPROVAL_APPROVED)
+        self.requester = User.objects.create_user(
+            username="notification-requester@example.com",
+            email="notification-requester@example.com",
+            password="StrongPass123",
+        )
+        set_user_role(self.requester, ROLE_REQUESTER, approval_status=APPROVAL_APPROVED)
+
+    def bearer(self, user):
+        return f"Bearer {RefreshToken.for_user(user).access_token}"
+
+    def test_submission_persists_notification(self):
+        now = timezone.now()
+        with self.captureOnCommitCallbacks(execute=True):
+            booking_request = BookingRequest.objects.create(
+                requester=self.requester,
+                arrival_at=now + timedelta(days=1),
+                departure_at=now + timedelta(days=2),
+                visitor_name="Persistent Notification Visitor",
+            )
+
+        notification = WorkflowNotification.objects.get(
+            user=self.admin,
+            category=WorkflowNotification.CATEGORY_BOOKING_REQUESTS,
+        )
+        self.assertEqual(notification.related_object_id, booking_request.id)
+
+    def test_notification_count_does_not_duplicate_persisted_submission(self):
+        now = timezone.now()
+        with self.captureOnCommitCallbacks(execute=True):
+            BookingRequest.objects.create(
+                requester=self.requester,
+                arrival_at=now + timedelta(days=1),
+                departure_at=now + timedelta(days=2),
+                visitor_name="Single Notification Visitor",
+            )
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(self.admin)
+
+        response = self.client.get(reverse("workflow-notification-counts"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["data"]["booking_requests"], 1)
+        self.assertEqual(response.json()["data"]["total"], 1)
+
+    def test_processed_request_no_longer_counts_as_actionable_notification(self):
+        now = timezone.now()
+        with self.captureOnCommitCallbacks(execute=True):
+            booking_request = BookingRequest.objects.create(
+                requester=self.requester,
+                arrival_at=now + timedelta(days=1),
+                departure_at=now + timedelta(days=2),
+                visitor_name="Processed Notification Visitor",
+            )
+        booking_request.status = BookingRequest.STATUS_APPROVED
+        booking_request.reviewed_at = now
+        booking_request.save(update_fields=["status", "reviewed_at"])
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(self.admin)
+
+        response = self.client.get(reverse("workflow-notification-counts"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["data"]["booking_requests"], 0)
+        self.assertEqual(response.json()["data"]["total"], 0)
+        self.assertFalse(
+            WorkflowNotification.objects.filter(
+                user=self.admin,
+                category=WorkflowNotification.CATEGORY_BOOKING_REQUESTS,
+                related_object_id=booking_request.pk,
+            ).exists()
+        )
+
+    def test_requester_withdrawal_removes_admin_notification(self):
+        now = timezone.now()
+        with self.captureOnCommitCallbacks(execute=True):
+            booking_request = BookingRequest.objects.create(
+                requester=self.requester,
+                arrival_at=now + timedelta(days=1),
+                departure_at=now + timedelta(days=2),
+                visitor_name="Withdrawn Notification Visitor",
+            )
+        self.assertTrue(
+            WorkflowNotification.objects.filter(
+                user=self.admin,
+                related_object_id=booking_request.pk,
+            ).exists()
+        )
+
+        booking_request.is_deleted = True
+        booking_request.deleted_at = now
+        booking_request.deleted_by = self.requester
+        booking_request.save(update_fields=["is_deleted", "deleted_at", "deleted_by"])
+
+        self.assertFalse(
+            WorkflowNotification.objects.filter(
+                category=WorkflowNotification.CATEGORY_BOOKING_REQUESTS,
+                related_object_id=booking_request.pk,
+            ).exists()
+        )
+
+    def test_mark_read_is_persisted_server_side(self):
+        notification = WorkflowNotification.objects.create(
+            user=self.admin,
+            category=WorkflowNotification.CATEGORY_BOOKING_REQUESTS,
+            event_key="test-persistent-read",
+            title="Test notification",
+            message="Test message",
+            target_view="bookingRequests",
+        )
+        self.client.defaults["HTTP_AUTHORIZATION"] = self.bearer(self.admin)
+
+        response = self.client.post(
+            reverse("workflow-notification-mark-read"),
+            data={"categories": [WorkflowNotification.CATEGORY_BOOKING_REQUESTS]},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        notification.refresh_from_db()
+        self.assertIsNotNone(notification.read_at)
+        self.assertEqual(response.json()["data"]["booking_requests"], 0)
 
 
 @override_settings(ADMIN_SIGNUP_CODE="test-admin-code")

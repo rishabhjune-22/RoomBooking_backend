@@ -67,6 +67,7 @@ The expiry timer runs `manage.py expire_bookings` every minute. The command is t
 
 Google Sheet synchronization is handled by Celery through Redis. Booking create, update, and delete events enqueue `bookings.tasks.sync_google_sheet_calendar` after the database transaction commits. Keep `room-booking-celery.service` running alongside the web service, and set `CELERY_BROKER_URL` if Redis is not on `127.0.0.1:6379/0`.
 
+
 ## Reverse Proxy
 
 Use `deployment/nginx-room-booking.conf` as the starting point for TLS termination. Replace `booking.internal.example` and certificate paths, then run `nginx -t` before reload.

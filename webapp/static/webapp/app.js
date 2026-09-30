@@ -124,6 +124,7 @@ const state = {
         admin_accounts: [],
         my_requests: [],
     },
+    workflowNotificationPollTimer: null,
     latestRecentBooking: null,
 };
 
@@ -613,6 +614,10 @@ function setTokens(payload) {
 }
 
 function clearSession() {
+    if (state.workflowNotificationPollTimer) {
+        window.clearInterval(state.workflowNotificationPollTimer);
+        state.workflowNotificationPollTimer = null;
+    }
     state.access = "";
     state.refresh = "";
     state.user = null;
@@ -760,36 +765,19 @@ function renderAuth(message = "", isError = false) {
             <button class="floating-theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode">
                 ${currentTheme() === "dark" ? sunIconSvg() : moonIconSvg()}
             </button>
-            <aside class="login-hero">
-                <div class="hero-content">
-                    <div class="hero-brand-mark">${brandLogoHtml()}</div>
-                    <h1 class="hero-title">Room Booking System</h1>
-                    <p class="hero-desc">Streamline your room reservations with our intelligent booking platform.</p>
-                    <div class="hero-features">
-                        <div class="hero-feature">
-                            <div class="hero-feature-icon">&#x1F4C5;</div>
-                            <span>Real-time availability calendar</span>
-                        </div>
-                        <div class="hero-feature">
-                            <div class="hero-feature-icon">&#x2699;</div>
-                            <span>Multi-building hostel management</span>
-                        </div>
-                        <div class="hero-feature">
-                            <div class="hero-feature-icon">&#x1F512;</div>
-                            <span>Secure role-based access control</span>
-                        </div>
-                        <div class="hero-feature">
-                            <div class="hero-feature-icon">&#x1F4CA;</div>
-                            <span>Charge sheet &amp; expense tracking</span>
-                        </div>
-                    </div>
-                </div>
-            </aside>
             <section class="login-form-side">
                 <div class="login-card">
-                    <div class="auth-brand-badge">${brandLogoHtml()}</div>
-                    <h2 class="auth-welcome">${isSignup ? "Create Account" : "Welcome Back"}</h2>
-                    <p class="auth-welcome-sub">${isSignup ? "Register as Admin or Requester to get started." : "Sign in to manage your bookings."}</p>
+                    <header class="auth-heading">
+                        <div class="auth-brand-badge">${brandLogoHtml()}</div>
+                        <div>
+                            <h1 class="auth-app-title">Visitors Room Booking Application</h1>
+                            <p class="auth-app-kicker">IIT Bhilai Guest House Management</p>
+                        </div>
+                    </header>
+                    <div class="auth-intro">
+                        <h2 class="auth-welcome">${isSignup ? "Create your account" : "Welcome back"}</h2>
+                        <p class="auth-welcome-sub">${isSignup ? "Choose your role and enter your details to get started." : "Sign in to view and manage room bookings."}</p>
+                    </div>
                     <div class="segmented auth-role-tabs" role="tablist" aria-label="Role">
                         <button class="segment-btn ${isAdmin ? "active" : ""}" data-auth-role="admin">Admin</button>
                         <button class="segment-btn ${!isAdmin ? "active" : ""}" data-auth-role="requester">Requester</button>
@@ -1086,25 +1074,22 @@ function workflowNotificationItemKey(item) {
 
 function applyWorkflowNotificationPayload(payload) {
     const categories = ["booking_requests", "requester_accounts", "admin_accounts", "my_requests"];
-    const readKeys = getReadWorkflowNotificationKeys();
-    const currentKeys = new Set();
     const items = {};
     const rawCounts = {};
     const unreadCounts = {};
 
     categories.forEach((category) => {
         items[category] = normalizeWorkflowNotificationItems(category, payload);
-        const keys = items[category].map(workflowNotificationItemKey).filter(Boolean);
-        rawCounts[category] = keys.length;
-        keys.forEach((key) => currentKeys.add(key));
-        unreadCounts[category] = keys.filter((key) => !readKeys.has(key)).length;
+        rawCounts[category] = items[category].length;
+        unreadCounts[category] = Number.isFinite(Number(payload?.[category]))
+            ? Number(payload[category])
+            : items[category].filter((item) => typeof item !== "object" || !item.is_read).length;
     });
 
-    const prunedReadKeys = new Set(Array.from(readKeys).filter((key) => currentKeys.has(key)));
-    saveReadWorkflowNotificationKeys(prunedReadKeys);
-
     rawCounts.total = categories.reduce((total, category) => total + rawCounts[category], 0);
-    unreadCounts.total = categories.reduce((total, category) => total + unreadCounts[category], 0);
+    unreadCounts.total = Number.isFinite(Number(payload?.total))
+        ? Number(payload.total)
+        : categories.reduce((total, category) => total + unreadCounts[category], 0);
     state.workflowNotificationItems = items;
     state.workflowNotificationRawCounts = rawCounts;
     state.workflowNotificationCounts = unreadCounts;
@@ -1115,29 +1100,41 @@ function markWorkflowNotificationCategoriesRead(categories) {
     if (!normalizedCategories.length) {
         return;
     }
-    const readKeys = getReadWorkflowNotificationKeys();
     let changed = false;
     normalizedCategories.forEach((category) => {
         (state.workflowNotificationItems?.[category] || []).forEach((item) => {
-            const key = workflowNotificationItemKey(item);
-            if (!key) {
+            if (typeof item !== "object" || item.is_read) {
                 return;
             }
-            if (!readKeys.has(key)) {
-                readKeys.add(key);
-                changed = true;
-            }
+            item.is_read = true;
+            item.read_at = new Date().toISOString();
+            changed = true;
         });
+        state.workflowNotificationCounts[category] = 0;
     });
     if (!changed) {
         return;
     }
-    saveReadWorkflowNotificationKeys(readKeys);
-    applyWorkflowNotificationPayload({
-        items: state.workflowNotificationItems,
-    });
+    state.workflowNotificationCounts.total = Object.entries(state.workflowNotificationCounts)
+        .filter(([category]) => category !== "total")
+        .reduce((total, [, count]) => total + Number(count || 0), 0);
     updateWorkflowNotificationBell();
     updateVisibleMenuBadges();
+    apiFetch("/api/workflow-notifications/mark-read/", {
+        method: "POST",
+        body: { categories: normalizedCategories },
+    }).catch(() => loadWorkflowNotificationCounts({ markCurrentViewRead: false }));
+}
+
+function startWorkflowNotificationPolling() {
+    if (state.workflowNotificationPollTimer) {
+        window.clearInterval(state.workflowNotificationPollTimer);
+    }
+    state.workflowNotificationPollTimer = window.setInterval(() => {
+        if (!document.hidden && state.access && state.user) {
+            loadWorkflowNotificationCounts({ markCurrentViewRead: false });
+        }
+    }, 30000);
 }
 
 function markWorkflowNotificationViewRead(viewId) {
@@ -1395,6 +1392,7 @@ function renderDashboard() {
     });
     appRoot.querySelector("[data-logout]").addEventListener("click", logout);
     updateWorkflowNotificationBell();
+    startWorkflowNotificationPolling();
     loadWorkflowNotificationCounts();
     renderCurrentView();
 }
@@ -2212,7 +2210,7 @@ async function loadAdminDateDetails(dateValue) {
                 </div>
                 <div class="detail-row"><span class="detail-label">Selected range</span><span class="detail-value">${escapeHtml(selectedRangeDisplayText())}</span></div>
                 ${rows.length ? rows.map((booking) => `
-                    <article class="item-card">
+                    <article class="item-card" data-booking-id="${escapeHtml(booking.booking_id)}" role="button" tabindex="0" aria-label="View complete details for ${escapeHtml(booking.guest_name || booking.room_name || "booking")}">
                         <div class="item-main">
                             <div>
                                 <h4 class="item-title">${escapeHtml(booking.room_name)}</h4>
@@ -2224,6 +2222,17 @@ async function loadAdminDateDetails(dateValue) {
                 `).join("") : `<div class="empty-state">No bookings on this date.</div>`}
             </div>
         `);
+        const side = document.getElementById("calendar-side");
+        side?.querySelectorAll("[data-booking-id]").forEach((card) => {
+            const showDetails = () => openBookingDetails(card.dataset.bookingId);
+            card.addEventListener("click", showDetails);
+            card.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    showDetails();
+                }
+            });
+        });
     } catch (error) {
         renderCalendarSide(`<div class="empty-state">${escapeHtml(error.message)}</div>`);
     }
