@@ -4063,6 +4063,13 @@ function adminPreviousBookingAutofillHtml(source = {}, context = "booking") {
     `;
 }
 
+function formatBookingHistoryValue(entry, value) {
+    if (["arrival_at", "departure_at"].includes(entry?.field_name)) {
+        return formatDateTime(value);
+    }
+    return value;
+}
+
 async function openBookingDetails(bookingId) {
     try {
         const booking = await apiFetch(`/api/bookings/${bookingId}/`);
@@ -4115,8 +4122,8 @@ async function openBookingDetails(bookingId) {
                 ["Field", entry.field_label || entry.field_name],
                 ["Changed by", entry.edited_by_name || entry.edited_by_email],
                 ["Changed at", formatDateTime(entry.edited_at)],
-                ["Old value", entry.old_value],
-                ["New value", entry.new_value],
+                ["Old value", formatBookingHistoryValue(entry, entry.old_value)],
+                ["New value", formatBookingHistoryValue(entry, entry.new_value)],
             ]) : [["History", "No edit history."]]),
         ];
         openActionModal({
