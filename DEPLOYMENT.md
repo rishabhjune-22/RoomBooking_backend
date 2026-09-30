@@ -63,6 +63,12 @@ sudo systemctl enable --now room-booking-backup.timer
 
 Gunicorn listens on `127.0.0.1:8000` by default. Proxy API traffic to that address and serve `staticfiles/` from the reverse proxy.
 
+Production and staging use Django's static-file manifest storage. Always run
+`collectstatic` as part of a deployment so templates reference content-hashed asset
+filenames. `ROOM_BOOKING_STATIC_VERSION` is optional and acts only as an additional
+release identifier; asset content changes invalidate browser caches even when that
+value is unchanged.
+
 The expiry timer runs `manage.py expire_bookings` every minute. The command is transactional and idempotent, so retrying it is safe.
 
 Google Sheet synchronization is handled by Celery through Redis. Booking create, update, and delete events enqueue `bookings.tasks.sync_google_sheet_calendar` after the database transaction commits. Keep `room-booking-celery.service` running alongside the web service, and set `CELERY_BROKER_URL` if Redis is not on `127.0.0.1:6379/0`.

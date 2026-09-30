@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
@@ -18,19 +19,32 @@ BUILDING_ORDER = {"Delta": 0, "Gamma": 1, "Beta": 2}
 
 
 def web_static_version():
+    """Return a deterministic version that changes with the web app's contents."""
     configured_version = os.getenv("ROOM_BOOKING_STATIC_VERSION", "").strip()
-    if configured_version:
-        return configured_version
-
     static_root = settings.BASE_DIR / "webapp/static/webapp"
     asset_paths = [
-        *static_root.rglob("*.js"),
-        *static_root.rglob("*.mjs"),
-        *static_root.rglob("*.css"),
+        *(path for path in static_root.rglob("*") if path.is_file()),
         settings.BASE_DIR / "webapp/templates/webapp/index.html",
     ]
-    mtimes = [path.stat().st_mtime_ns for path in asset_paths if path.exists()]
-    return str(max(mtimes)) if mtimes else "dev"
+    existing_paths = sorted(
+        (path for path in asset_paths if path.exists()),
+        key=lambda path: path.relative_to(settings.BASE_DIR).as_posix(),
+    )
+    if not existing_paths:
+        return configured_version or "dev"
+
+    digest = hashlib.sha256()
+    if configured_version:
+        digest.update(f"release:{configured_version}\0".encode())
+    for path in existing_paths:
+        relative_path = path.relative_to(settings.BASE_DIR).as_posix()
+        digest.update(relative_path.encode())
+        digest.update(b"\0")
+        with path.open("rb") as asset_file:
+            for chunk in iter(lambda: asset_file.read(64 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
 
 
 class RoomBookingWebAppView(TemplateView):
