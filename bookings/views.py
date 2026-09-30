@@ -545,8 +545,6 @@ def booking_payload_from_request(booking_request, room):
 
 
 APPROVAL_BOOKING_OVERRIDE_FIELDS = [
-    "arrival_at",
-    "departure_at",
     "visitor_name",
     "visitor_designation",
     "visitor_organisation",

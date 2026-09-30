@@ -4168,6 +4168,7 @@ function adminBookingFormHtml(source = {}, context = "booking") {
     const departure = source.departure_at ? indiaParts(source.departure_at) : { date: selectedEnd, time: "18:00" };
     const prefix = source.preferred_prefix || source.prefix || state.prefix || BUILDINGS[0];
     const budgetHead = normalizedBudgetHeadFields(source);
+    const requestScheduleDisabled = context === "request" ? "disabled" : "";
     const roomPreferencePanel = context === "request" ? `
         <div class="requester-room-preference" role="note">
             <strong>Requester Room Preference</strong>
@@ -4196,10 +4197,10 @@ function adminBookingFormHtml(source = {}, context = "booking") {
                 <div class="field-row"><label for="admin-prefix">Building *</label><select id="admin-prefix">${BUILDINGS.map((item) => `<option value="${item}" ${item === prefix ? "selected" : ""}>${item}</option>`).join("")}</select></div>
                 ${roomPreferencePanel}
                 <div class="field-row"><label for="admin-room">Room No *</label><select id="admin-room" required><option value="">Loading rooms...</option></select></div>
-                <div class="field-row"><label for="admin-arrival-date">Check-In date *</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" required></div>
-                <div class="field-row"><label for="admin-arrival-time">Check-In time *</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" required></div>
-                <div class="field-row"><label for="admin-departure-date">Check-Out date *</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" required></div>
-                <div class="field-row"><label for="admin-departure-time">Check-Out time *</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" required></div>
+                <div class="field-row"><label for="admin-arrival-date">Check-In date *</label><input id="admin-arrival-date" type="date" value="${htmlValue(arrival.date)}" ${requestScheduleDisabled} required></div>
+                <div class="field-row"><label for="admin-arrival-time">Check-In time *</label><input id="admin-arrival-time" type="time" value="${htmlValue(arrival.time || "10:00")}" ${requestScheduleDisabled} required></div>
+                <div class="field-row"><label for="admin-departure-date">Check-Out date *</label><input id="admin-departure-date" type="date" value="${htmlValue(departure.date)}" ${requestScheduleDisabled} required></div>
+                <div class="field-row"><label for="admin-departure-time">Check-Out time *</label><input id="admin-departure-time" type="time" value="${htmlValue(departure.time || "18:00")}" ${requestScheduleDisabled} required></div>
                 <div class="field-row"><label for="admin-visitor-name">Visitor name *</label><input id="admin-visitor-name" value="${htmlValue(source.visitor_name)}" required></div>
                 <div class="field-row"><label for="admin-visitor-designation">Visitor designation (Optional)</label><input id="admin-visitor-designation" value="${htmlValue(source.visitor_designation)}"></div>
                 <div class="field-row"><label for="admin-visitor-organisation">Visitor organisation (Optional)</label><input id="admin-visitor-organisation" value="${htmlValue(source.visitor_organisation)}"></div>

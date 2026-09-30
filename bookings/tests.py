@@ -2090,6 +2090,8 @@ class BookingRequestWorkflowTests(TestCase):
             reverse("admin-booking-request-approve", kwargs={"pk": booking_request.pk}),
             data={
                 "room": self.room.id,
+                "arrival_at": iso(utc_dt(2026, 7, 5, 8, 0)),
+                "departure_at": iso(utc_dt(2026, 7, 5, 20, 0)),
                 "remarks": "Approved from form.",
                 "booking_remarks": "Guest will arrive late.",
                 "visitor_name": "Edited Visitor",
@@ -2108,6 +2110,8 @@ class BookingRequestWorkflowTests(TestCase):
         booking = booking_request.approved_booking
         self.assertIsNotNone(booking)
         self.assertEqual(booking_request.admin_remarks, "Approved from form.")
+        self.assertEqual(booking.arrival_at, booking_request.arrival_at)
+        self.assertEqual(booking.departure_at, booking_request.departure_at)
         self.assertEqual(booking.visitor_name, "Edited Visitor")
         self.assertEqual(booking.visitor_nationality, Booking.VISITOR_NATIONALITY_INDIAN)
         self.assertEqual(booking.purpose_of_visit, "Edited purpose")
