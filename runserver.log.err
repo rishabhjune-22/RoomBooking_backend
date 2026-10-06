@@ -2775,3 +2775,24 @@ INFO 2026-10-06 13:21:42,170 django.server request_id=- "GET /api/workflow-notif
 INFO 2026-10-06 13:22:06,355 django.server request_id=- - Broken pipe from ('10.50.48.142', 44366)
 INFO 2026-10-06 13:22:06,355 django.server request_id=- - Broken pipe from ('10.50.48.142', 43920)
 INFO 2026-10-06 13:22:06,355 django.server request_id=- - Broken pipe from ('10.50.48.142', 44380)
+INFO 2026-10-06 13:36:37,092 backend.requests request_id=eb6d4201545f4259a96113997393fe86 request_finished
+Not Found: /
+WARNING 2026-10-06 13:36:37,092 django.request request_id=- Not Found: /
+WARNING 2026-10-06 13:36:37,093 django.server request_id=- "GET / HTTP/1.1" 404 3071
+INFO 2026-10-06 13:36:37,383 django.server request_id=- "GET /static/webapp/styles.css?v= HTTP/1.1" 200 124582
+INFO 2026-10-06 13:36:37,475 django.server request_id=- - Broken pipe from ('10.50.27.89', 56205)
+INFO 2026-10-06 13:36:54,778 backend.requests request_id=398766b31c1d452584428a113353d07e request_finished
+INFO 2026-10-06 13:36:54,778 django.server request_id=- "GET /web/ HTTP/1.1" 200 1109
+INFO 2026-10-06 13:36:54,818 django.server request_id=- - Broken pipe from ('10.50.27.89', 63042)
+INFO 2026-10-06 13:37:31,158 backend.requests request_id=b04df87555d447a48ced1c9fcb85189a request_finished
+INFO 2026-10-06 13:37:31,159 django.server request_id=- "GET /web/ HTTP/1.1" 200 1109
+INFO 2026-10-06 13:37:31,184 django.server request_id=- "GET /static/webapp/styles.css?v=227278691860970f HTTP/1.1" 200 124741
+INFO 2026-10-06 13:37:31,273 django.server request_id=- - Broken pipe from ('10.50.27.89', 64265)
+INFO 2026-10-06 13:37:42,067 backend.requests request_id=55529983c9fc4e2690bdba73594fbfd4 request_finished
+INFO 2026-10-06 13:37:42,067 django.server request_id=- "GET /web/ HTTP/1.1" 200 1109
+INFO 2026-10-06 13:37:42,091 django.server request_id=- "GET /static/webapp/styles.css?v=227278691860970f HTTP/1.1" 200 124741
+INFO 2026-10-06 13:37:42,181 django.server request_id=- - Broken pipe from ('10.50.27.89', 64273)
+INFO 2026-10-06 14:48:34,228 backend.requests request_id=ab6cb630b32541e9b39e943cb134f45f request_finished
+INFO 2026-10-06 14:48:34,229 django.server request_id=- "GET /web/ HTTP/1.1" 200 1109
+INFO 2026-10-06 14:48:34,262 django.server request_id=- "GET /static/webapp/styles.css?v=82ccb2507a482d45 HTTP/1.1" 200 124026
+INFO 2026-10-06 14:48:34,352 django.server request_id=- - Broken pipe from ('10.50.27.89', 60027)

@@ -5737,33 +5737,6 @@ html[data-theme="dark"] .radio-list .check-row:has(input:checked) {
     color: var(--blue);
 }
 
-.compact-radio-list .check-row,
-html[data-theme="dark"] .compact-radio-list .check-row {
-    padding: 8px 10px;
-    border-radius: 8px;
-    background: transparent;
-    border-color: transparent;
-}
-
-.compact-radio-list .check-row:has(input:checked),
-html[data-theme="dark"] .compact-radio-list .check-row:has(input:checked) {
-    border-color: transparent;
-    background: transparent;
-    color: var(--text);
-}
-
-.compact-radio-list input[type="radio"],
-.compact-radio-list input[type="checkbox"] {
-    border: none;
-    padding: 0;
-    background: transparent;
-}
-
-.compact-radio-list input[type="radio"]:focus,
-.compact-radio-list input[type="checkbox"]:focus {
-    box-shadow: none;
-}
-
 html[data-theme="dark"] .budget-option:has(input[type="checkbox"]:checked) {
     border-color: var(--blue);
     background: var(--surface);
