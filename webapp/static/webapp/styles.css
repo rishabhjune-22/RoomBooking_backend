@@ -5910,3 +5910,39 @@ html[data-theme="dark"] .availability-note {
         color-scheme: dark;
     }
 }
+
+
+
+/* ===== Fix: radio/checkbox border ===== */
+.field-row input[type="radio"],
+.field-row input[type="checkbox"],
+.booking-form .field-row input[type="radio"],
+.booking-form .field-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    min-height: 0;
+    flex: 0 0 18px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+    transition: none;
+    accent-color: var(--blue);
+    cursor: pointer;
+}
+
+.field-row input[type="radio"]:focus,
+.field-row input[type="radio"]:focus-visible,
+.field-row input[type="checkbox"]:focus,
+.field-row input[type="checkbox"]:focus-visible,
+.booking-form .field-row input[type="radio"]:focus,
+.booking-form .field-row input[type="radio"]:focus-visible,
+.booking-form .field-row input[type="checkbox"]:focus,
+.booking-form .field-row input[type="checkbox"]:focus-visible {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+}

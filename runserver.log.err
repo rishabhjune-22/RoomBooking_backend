@@ -2796,3 +2796,48 @@ INFO 2026-10-06 14:48:34,228 backend.requests request_id=ab6cb630b32541e9b39e943
 INFO 2026-10-06 14:48:34,229 django.server request_id=- "GET /web/ HTTP/1.1" 200 1109
 INFO 2026-10-06 14:48:34,262 django.server request_id=- "GET /static/webapp/styles.css?v=82ccb2507a482d45 HTTP/1.1" 200 124026
 INFO 2026-10-06 14:48:34,352 django.server request_id=- - Broken pipe from ('10.50.27.89', 60027)
+WARNING 2026-10-06 14:56:13,467 backend.exceptions request_id=eb7a74ad1adc42da8f5a1b327f6fd98b api_request_rejected
+INFO 2026-10-06 14:56:13,478 backend.requests request_id=eb7a74ad1adc42da8f5a1b327f6fd98b request_finished
+Unauthorized: /api/auth/me/
+WARNING 2026-10-06 14:56:13,479 django.request request_id=- Unauthorized: /api/auth/me/
+WARNING 2026-10-06 14:56:13,480 django.server request_id=- "GET /api/auth/me/ HTTP/1.1" 401 194
+INFO 2026-10-06 14:56:13,503 backend.requests request_id=fb67713181be405c9e453d7e62591402 request_finished
+INFO 2026-10-06 14:56:13,503 django.server request_id=- "POST /api/auth/token/refresh/ HTTP/1.1" 200 245
+INFO 2026-10-06 14:56:13,544 backend.requests request_id=73bcfba9f1e14e3ca5ae2291589090c2 request_finished
+INFO 2026-10-06 14:56:13,544 django.server request_id=- "GET /api/auth/me/ HTTP/1.1" 200 259
+INFO 2026-10-06 14:56:13,650 backend.requests request_id=364324997e424f0fabf1209a6bc81da0 request_finished
+INFO 2026-10-06 14:56:13,652 django.server request_id=- "GET /api/bookings/availability/?month=10&year=2026 HTTP/1.1" 200 10174
+INFO 2026-10-06 14:56:13,667 backend.requests request_id=ebbce4fa0f1f4d7783467c1b9ec87ff8 request_finished
+INFO 2026-10-06 14:56:13,667 django.server request_id=- "GET /api/workflow-notification-counts/ HTTP/1.1" 200 4046
+INFO 2026-10-06 14:56:15,069 backend.requests request_id=d8c038bdfcd141d999c623dbd2121941 request_finished
+INFO 2026-10-06 14:56:15,069 django.server request_id=- "GET /api/bookings/availability/?month=10&year=2026 HTTP/1.1" 200 10174
+INFO 2026-10-06 14:56:19,849 backend.requests request_id=3301c6f6aca64ea684172bceeea9236d request_finished
+INFO 2026-10-06 14:56:19,860 django.server request_id=- "GET /api/bookings/availability/details/?date=2026-10-06&prefix=Delta HTTP/1.1" 200 385
+INFO 2026-10-06 14:56:24,749 backend.requests request_id=624e5a8e450c4ca59e47fb8b24f48a3a request_finished
+INFO 2026-10-06 14:56:24,761 django.server request_id=- "GET /api/bookings/?page=1&status=active HTTP/1.1" 200 2129
+INFO 2026-10-06 14:56:24,964 backend.requests request_id=251c702d230e4c4fb65f0bfcefd247e1 request_finished
+INFO 2026-10-06 14:56:24,965 django.server request_id=- "GET /api/auth/me/ HTTP/1.1" 200 259
+INFO 2026-10-06 14:56:25,387 backend.requests request_id=a1b606f71e0e491a977fd047d0e52275 request_finished
+INFO 2026-10-06 14:56:25,400 django.server request_id=- "GET /api/workflow-notification-counts/ HTTP/1.1" 200 4046
+INFO 2026-10-06 14:56:26,878 backend.requests request_id=e3876595e21442dc8bc09daeee7a57bc request_finished
+INFO 2026-10-06 14:56:26,890 django.server request_id=- "GET /api/bookings/?page=1&status=active HTTP/1.1" 200 2129
+INFO 2026-10-06 14:56:28,393 backend.requests request_id=647a6760dbcb4626a06dbceb0183c2ab request_finished
+INFO 2026-10-06 14:56:28,394 django.server request_id=- "GET /api/bookings/?page=1&status=active HTTP/1.1" 200 2129
+INFO 2026-10-06 14:56:29,316 backend.requests request_id=4380845c2df744d594a01195a7db9f17 request_finished
+INFO 2026-10-06 14:56:29,328 django.server request_id=- "GET /api/workflow-notification-counts/ HTTP/1.1" 200 4046
+INFO 2026-10-06 14:56:29,338 backend.requests request_id=a9f10a8fcb524a0b8a8b14af810b7b32 request_finished
+INFO 2026-10-06 14:56:29,339 django.server request_id=- "GET /api/bookings/47/ HTTP/1.1" 200 1099
+INFO 2026-10-06 14:56:32,539 backend.requests request_id=c2e6aaaafbf847fbb976d1fc2b9ef5ab request_finished
+INFO 2026-10-06 14:56:32,551 django.server request_id=- "GET /api/workflow-notification-counts/ HTTP/1.1" 200 4046
+INFO 2026-10-06 14:57:02,552 backend.requests request_id=ff680efee4564154925186992132b595 request_finished
+INFO 2026-10-06 14:57:02,553 django.server request_id=- "GET /api/workflow-notification-counts/ HTTP/1.1" 200 4046
+INFO 2026-10-06 14:57:13,333 backend.requests request_id=fa42d89844314761917b85ae274f2d25 request_finished
+INFO 2026-10-06 14:57:13,345 django.server request_id=- "POST /api/bookings/mail-template/ HTTP/1.1" 200 7131
+INFO 2026-10-06 14:57:22,796 backend.requests request_id=b5965d5f144b4dbe9d456076682c6ab1 request_finished
+INFO 2026-10-06 14:57:22,807 django.server request_id=- "GET /api/auth/me/ HTTP/1.1" 200 259
+INFO 2026-10-06 14:57:22,940 backend.requests request_id=cfa3cd9269bc4889afeb456b0c1f0055 request_finished
+INFO 2026-10-06 14:57:22,941 django.server request_id=- "GET /api/bookings/availability/?month=10&year=2026 HTTP/1.1" 200 10174
+INFO 2026-10-06 14:57:23,031 backend.requests request_id=0c8d0b397dad41319aa0c42fdb5157a8 request_finished
+INFO 2026-10-06 14:57:23,031 django.server request_id=- "GET /api/workflow-notification-counts/ HTTP/1.1" 200 4046
+INFO 2026-10-06 14:57:24,249 backend.requests request_id=0a19120a4b3f48a6b3bf568ba3d33942 request_finished
+INFO 2026-10-06 14:57:24,250 django.server request_id=- "GET /api/bookings/availability/?month=11&year=2026 HTTP/1.1" 200 9855
